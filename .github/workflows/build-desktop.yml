@@ -1,0 +1,284 @@
+name: Build Desktop
+
+# Builds the Electrobun desktop application for every supported native target and
+# uploads the installers as the requested formats:
+#
+#   macOS   -> .dmg
+#   Windows -> .exe (setup stub, also shipped inside its payload ZIP)
+#   Linux   -> .rpm (wrapped from the expanded Electrobun app)
+#
+# Electrobun itself emits DMG / Windows setup ZIP / Linux setup tarball; the RPM is
+# assembled here from the expanded Linux app because Electrobun 2.0.1 has no RPM target.
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel baked into the app
+        type: choice
+        options: [stable, nightly]
+        default: stable
+      version:
+        description: Version to stamp (defaults to the pushed tag or 0.0.0-dev)
+        type: string
+        required: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+# Supersede in-flight runs when the same ref is rebuilt.
+concurrency:
+  group: build-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS ARM64 (dmg)
+            artifact: thinkrail-desktop-darwin-arm64
+            os: macos-14
+            arch: arm64
+          - name: Windows x64 (exe)
+            artifact: thinkrail-desktop-windows-x64
+            os: windows-latest
+            arch: x64
+          - name: Linux x64 (rpm)
+            artifact: thinkrail-desktop-linux-x64
+            os: ubuntu-24.04
+            arch: x64
+          - name: Linux ARM64 (rpm)
+            artifact: thinkrail-desktop-linux-arm64
+            os: ubuntu-24.04-arm
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+      - name: Cache bun install
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-bun-${{ hashFiles('bun.lock') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-bun-
+      - run: bun install --frozen-lockfile
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            dbus-x11 xauth xvfb libgtk-3-0 libwebkit2gtk-4.1-0 \
+            libayatana-appindicator3-1 librsvg2-2 rpm
+
+      - id: release
+        name: Stamp release identity
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -eu
+          version="${INPUT_VERSION:-}"
+          if [ -z "$version" ] && [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          [ -n "$version" ] || version="0.0.0-dev"
+          channel="${INPUT_CHANNEL:-}"
+          if [ -z "$channel" ]; then
+            case "$version" in
+              *nightly*) channel="nightly" ;;
+              *) channel="stable" ;;
+            esac
+          fi
+          case "$channel" in
+            stable) environment="stable" ;;
+            nightly) environment="canary" ;;
+            *) echo "::error::unsupported channel: $channel"; exit 1 ;;
+          esac
+          commit=$(git rev-parse --short HEAD)
+          cat > packages/shared/src/version.ts <<EOF
+          export const version = "${version}";
+          export const channel = "${channel}";
+          export const commit = "${commit}";
+          EOF
+          cat packages/shared/src/version.ts
+          {
+            echo "version=$version"
+            echo "channel=$channel"
+            echo "environment=$environment"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build desktop package
+        shell: bash
+        env:
+          ENVIRONMENT: ${{ steps.release.outputs.environment }}
+        run: |
+          set -eu
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            system32="$(cygpath -u "$SYSTEMROOT")/System32"
+            export PATH="$system32:$PATH"
+            echo "Electrobun tar: $(command -v tar)"
+          fi
+          bun run --cwd apps/desktop "package:${ENVIRONMENT}"
+
+      - name: Collect installers
+        shell: bash
+        env:
+          CHANNEL: ${{ steps.release.outputs.channel }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -eu
+          mkdir -p apps/desktop/dist
+          case "$CHANNEL" in
+            stable) prefix=''; suffix='' ;;
+            nightly) prefix='canary-'; suffix='-canary' ;;
+          esac
+          case "$RUNNER_OS" in
+            macOS)
+              source="apps/desktop/artifacts/${prefix}macos-arm64-ThinkRail${suffix}.dmg"
+              target="apps/desktop/dist/thinkrail-desktop-darwin-arm64.dmg"
+              ;;
+            Windows)
+              source="apps/desktop/artifacts/${prefix}win-x64-ThinkRail-Setup${suffix}.zip"
+              target="apps/desktop/dist/thinkrail-desktop-windows-x64.zip"
+              ;;
+            Linux)
+              source="apps/desktop/artifacts/${prefix}linux-${ARCH}-ThinkRail${suffix}-Setup.tar.gz"
+              target="apps/desktop/dist/thinkrail-desktop-linux-${ARCH}.tar.gz"
+              ;;
+            *) echo "::error::unsupported runner $RUNNER_OS"; exit 1 ;;
+          esac
+          if [ ! -f "$source" ]; then
+            echo "::error::desktop installer not found at $source"
+            ls -la apps/desktop/artifacts || true
+            exit 1
+          fi
+          cp "$source" "$target"
+
+      - name: Extract Windows setup executable
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -eu
+          powershell -NoProfile -Command "Expand-Archive -LiteralPath 'apps/desktop/dist/thinkrail-desktop-windows-x64.zip' -DestinationPath '$RUNNER_TEMP/windows-setup' -Force"
+          setup=$(find "$RUNNER_TEMP/windows-setup" -maxdepth 2 -name '*-Setup*.exe' | head -n1)
+          if [ -z "$setup" ]; then
+            echo "::error::setup executable not found in the Windows zip"
+            find "$RUNNER_TEMP/windows-setup" -maxdepth 3
+            exit 1
+          fi
+          cp "$setup" apps/desktop/dist/thinkrail-desktop-windows-x64-setup.exe
+          echo "setup executable: $setup"
+
+      - name: Build Linux RPM
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          CHANNEL: ${{ steps.release.outputs.channel }}
+          ENVIRONMENT: ${{ steps.release.outputs.environment }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          case "$ARCH" in
+            x64) rpm_arch=x86_64 ;;
+            arm64) rpm_arch=aarch64 ;;
+            *) echo "::error::unsupported architecture $ARCH"; exit 1 ;;
+          esac
+
+          app="ThinkRail"
+          [ "$CHANNEL" = "nightly" ] && app="ThinkRail-canary"
+          app_dir="apps/desktop/build/${ENVIRONMENT}-linux-${ARCH}/${app}"
+          if [ ! -d "$app_dir" ]; then
+            app_dir=$(find apps/desktop/build -maxdepth 3 -type d -name "$app" | head -n1)
+          fi
+          if [ -z "$app_dir" ] || [ ! -d "$app_dir" ]; then
+            echo "::error::expanded desktop app not found under apps/desktop/build"
+            find apps/desktop/build -maxdepth 3 -type d || true
+            exit 1
+          fi
+          echo "Packaging $app_dir"
+
+          # RPM Version/Release cannot contain '-', so split a nightly suffix into Release.
+          rpm_version="${VERSION%%-*}"
+          rpm_release="${VERSION#*-}"
+          if [ "$rpm_release" = "$VERSION" ]; then rpm_release="1"; fi
+
+          stage=$(mktemp -d)
+          mkdir -p \
+            "$stage/opt/thinkrail" \
+            "$stage/usr/bin" \
+            "$stage/usr/share/applications" \
+            "$stage/usr/share/icons/hicolor/512x512/apps"
+          cp -a "$app_dir/." "$stage/opt/thinkrail/"
+          cat > "$stage/usr/bin/thinkrail" <<'LAUNCHER'
+          #!/bin/sh
+          exec /opt/thinkrail/bin/launcher "$@"
+          LAUNCHER
+          chmod 0755 "$stage/usr/bin/thinkrail"
+          cp apps/desktop/assets/icon.png "$stage/usr/share/icons/hicolor/512x512/apps/thinkrail.png"
+          cat > "$stage/usr/share/applications/thinkrail.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Name=ThinkRail
+          Comment=ThinkRail desktop client
+          Exec=thinkrail
+          Icon=thinkrail
+          Terminal=false
+          Type=Application
+          Categories=Development;
+          DESKTOP
+
+          topdir=$(mktemp -d)
+          mkdir -p "$topdir/BUILD" "$topdir/BUILDROOT" "$topdir/RPMS" "$topdir/SOURCES" "$topdir/SPECS" "$topdir/SRPMS"
+          cat > "$topdir/SPECS/thinkrail.spec" <<SPEC
+          Name:           thinkrail
+          Version:        ${rpm_version}
+          Release:        ${rpm_release}
+          Summary:        ThinkRail desktop client
+          License:        Proprietary
+          AutoReqProv:    yes
+
+          %description
+          ThinkRail desktop client packaged from the Electrobun Linux build.
+          Runtime libraries are resolved from the packaged ELF requirements.
+
+          %install
+          cp -a %{_sourcedir}/. %{buildroot}/
+
+          %files
+          /opt/thinkrail
+          /usr/bin/thinkrail
+          /usr/share/applications/thinkrail.desktop
+          /usr/share/icons/hicolor/512x512/apps/thinkrail.png
+          SPEC
+
+          rpmbuild -bb \
+            --define "_topdir $topdir" \
+            --define "_sourcedir $stage" \
+            --target "$rpm_arch" \
+            "$topdir/SPECS/thinkrail.spec"
+
+          built=$(find "$topdir/RPMS" -name '*.rpm' | head -n1)
+          if [ -z "$built" ]; then
+            echo "::error::rpmbuild produced no package"
+            exit 1
+          fi
+          cp "$built" "apps/desktop/dist/thinkrail-desktop-linux-${ARCH}.rpm"
+          ls -la apps/desktop/dist
+
+      - name: Upload ${{ matrix.name }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14
+          path: apps/desktop/dist/*
