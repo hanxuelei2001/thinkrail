@@ -2,12 +2,18 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { OpenPrResult, ProviderStatusReport, Workspace } from "@thinkrail/contracts";
+import type {
+	OpenPrResult,
+	ProviderStatusReport,
+	ReviewComment,
+	Workspace,
+} from "@thinkrail/contracts";
 import { CodedError } from "@thinkrail/shared/codedError";
 import { TodoStore } from "pi-todos/core";
 import {
 	type AdditionalAnalyticsCapture,
 	type AdditionalAnalyticsEvent,
+	getAdditionalAnalyticsCapture,
 	initializeAnalytics,
 	resetAnalyticsForTests,
 	setAdditionalAnalyticsEnabled,
@@ -20,9 +26,15 @@ import { handleRequest } from "./handlers";
 import { dropLogin, recordLoginStart, trackLoginOutcome } from "./loginAnalytics";
 import {
 	additionalAnalyticsEnabled,
+	applyAdditionalAnalyticsSettings,
 	captureAdditional,
+	captureReviewCommentAdded,
+	captureReviewCommentResolved,
+	captureReviewCommentsSent,
 	centralConnectOutcome,
+	directoryPickOutcome,
 	failureReason,
+	initialAdditionalAnalyticsEnabled,
 	observeCurrentSetup,
 	observePrAction,
 	observeSetupAction,
@@ -32,6 +44,8 @@ import {
 	setupObservation,
 } from "./productAnalytics";
 import { TaskObservation, taskObservation } from "./taskAnalytics";
+
+const TEST_KEY = "phc_test";
 
 let dataDir: string;
 const savedDataDir = process.env.THINKRAIL_DATA_DIR;
@@ -49,6 +63,7 @@ beforeEach(() => {
 	taskObservation.clear();
 	sent = [];
 	initializeAnalytics({
+		posthogApiKey: TEST_KEY,
 		additionalEnabled: true,
 		env: {},
 		fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
@@ -74,14 +89,34 @@ async function captured(name: string) {
 	return sent.filter((entry) => entry.event === name);
 }
 
-test("legacy enabled without confirmation never grants additional consent", () => {
+test("initialization stays off before an unconfirmed dialog, then the persisted preference gates", () => {
 	for (const analyticsEnabled of [true, false]) {
 		for (const analyticsConsentConfirmed of [true, false]) {
-			expect(additionalAnalyticsEnabled({ analyticsEnabled, analyticsConsentConfirmed })).toBe(
+			const config = { analyticsEnabled, analyticsConsentConfirmed };
+			expect(initialAdditionalAnalyticsEnabled(config)).toBe(
 				analyticsEnabled && analyticsConsentConfirmed,
 			);
+			expect(additionalAnalyticsEnabled(config)).toBe(analyticsEnabled);
 		}
 	}
+});
+
+test("an unrelated update preserves an unconfirmed legacy grant until the mount prime is applied", () => {
+	const config = { analyticsEnabled: true, analyticsConsentConfirmed: false };
+	resetAnalyticsForTests();
+	initializeAnalytics({
+		posthogApiKey: TEST_KEY,
+		additionalEnabled: initialAdditionalAnalyticsEnabled(config),
+		env: {},
+		fetchImpl: (async () => new Response("{}", { status: 200 })) as unknown as typeof fetch,
+	});
+	expect(getAdditionalAnalyticsCapture()).toBeNull();
+
+	expect(applyAdditionalAnalyticsSettings(config, { theme: "light" })).toBe(false);
+	expect(getAdditionalAnalyticsCapture()).toBeNull();
+
+	expect(applyAdditionalAnalyticsSettings(config, { analyticsEnabled: true })).toBe(true);
+	expect(getAdditionalAnalyticsCapture()).not.toBeNull();
 });
 
 test("current setup snapshots never probe without consent or outlive their initiating grant", async () => {
@@ -266,7 +301,10 @@ test("PR created, updated, push and compare are distinct; an unrefreshed update 
 			ghProblem: "unauthenticated",
 		},
 	];
-	for (const result of results) expect(await observePrAction(async () => result)).toBe(result);
+	for (let i = 0; i < results.length; i++) {
+		const result = results[i] as OpenPrResult;
+		expect(await observePrAction(async () => result, i === 0 ? "plan_page" : "other")).toBe(result);
+	}
 	await expect(
 		observePrAction(async () => {
 			throw new CodedError("PUSH_AUTH_FAILED", "private credentials");
@@ -278,14 +316,15 @@ test("PR created, updated, push and compare are distinct; an unrefreshed update 
 			event.properties.action,
 			event.properties.outcome,
 			event.properties.reason,
+			event.properties.source,
 		]),
 	).toEqual([
-		["created", "succeeded", "none"],
-		["updated", "succeeded", "none"],
-		["updated", "failed", "unknown"],
-		["pushed", "succeeded", "none"],
-		["compare", "succeeded", "auth"],
-		["unknown", "failed", "auth"],
+		["created", "succeeded", "none", "plan_page"],
+		["updated", "succeeded", "none", "other"],
+		["updated", "failed", "unknown", "other"],
+		["pushed", "succeeded", "none", "other"],
+		["compare", "succeeded", "auth", "other"],
+		["unknown", "failed", "auth", "other"],
 	]);
 	expect(JSON.stringify(sent)).not.toContain("private");
 	expect(events.every((event) => !("dirtyFiles" in event.properties))).toBe(true);
@@ -327,6 +366,48 @@ test("observational sink and projection failures cannot change a successful feat
 	expect(failureReason(new Error("PUSH_AUTH_FAILED secret"))).toBe("unknown");
 });
 
+test("project opening names its typed failures; the folder picker reports selection, cancellation and failure without paths", async () => {
+	const ctx = { clientKey: "private-client" };
+	const plain = join(dataDir, "plain-folder");
+	mkdirSync(plain);
+	await expect(handleRequest("project.open", { path: plain }, ctx)).rejects.toMatchObject({
+		code: "NOT_GIT",
+	});
+	expect(failureReason(new CodedError("ALREADY_OPEN", "/private/worktree"))).toBe("already_open");
+	const savedPick = process.env.THINKRAIL_PICK_DIR;
+	try {
+		process.env.THINKRAIL_PICK_DIR = "/private/picked";
+		expect(await handleRequest("dialog.selectDirectory", {}, ctx)).toEqual({
+			path: "/private/picked",
+		});
+		const directive = join(dataDir, "picker-directive");
+		writeFileSync(directive, "error: private picker failure");
+		process.env.THINKRAIL_PICK_DIR = directive;
+		await expect(handleRequest("dialog.selectDirectory", {}, ctx)).rejects.toThrow(
+			"private picker failure",
+		);
+	} finally {
+		if (savedPick === undefined) delete process.env.THINKRAIL_PICK_DIR;
+		else process.env.THINKRAIL_PICK_DIR = savedPick;
+	}
+	await observeSetupAction("directory_pick", () => ({ path: null }), directoryPickOutcome);
+	const events = await captured("setup_action_finished");
+	expect(
+		events.map((event) => [
+			event.properties.action,
+			event.properties.outcome,
+			event.properties.reason,
+		]),
+	).toEqual([
+		["project_open", "failed", "not_git"],
+		["directory_pick", "succeeded", "none"],
+		["directory_pick", "failed", "unknown"],
+		["directory_pick", "cancelled", "none"],
+	]);
+	expect(JSON.stringify(sent)).not.toContain("private");
+	expect(JSON.stringify(sent)).not.toContain("plain-folder");
+});
+
 function git(root: string, ...args: string[]): void {
 	const result = Bun.spawnSync(["git", "-C", root, ...args], { stdout: "ignore", stderr: "pipe" });
 	if (!result.success) throw new Error(`git fixture failed: ${args[0]}`);
@@ -365,6 +446,7 @@ test("host handlers exclude Default provisioning and hydration; observing a muta
 	const { root, ctx, workspace, store, item, ref } = await taskFixture();
 	await handleRequest("todo.list", ref, ctx);
 	await handleRequest("todo.update", { ...ref, status: "in_progress" }, ctx);
+	await maybeAttachChangeArtifacts(workspace.id, ref.sessionId);
 	writeFileSync(join(root, "README.md"), "changed\n");
 	await handleRequest("todo.update", { ...ref, status: "done" }, ctx);
 	await handleRequest("todo.list", ref, ctx);
@@ -389,6 +471,77 @@ test("host handlers exclude Default provisioning and hydration; observing a muta
 			.map((event) => [event.properties.actor, event.properties.verdict]),
 	).toEqual([["user", "approved"]]);
 	expect(JSON.stringify(sent)).not.toContain("private");
+});
+
+test("review-comment analytics distinguish author/actor and stay per-comment with no content", async () => {
+	const { workspace, ctx } = await taskFixture();
+	const workspaceId = workspace.id;
+	const review = (await handleRequest(
+		"review.commentAdd",
+		{ workspaceId, kind: "review", anchor: null, body: "private remark" },
+		ctx,
+	)) as ReviewComment;
+	await handleRequest(
+		"review.commentUpdate",
+		{ workspaceId, id: review.id, status: "dismissed" },
+		ctx,
+	);
+	await handleRequest(
+		"review.commentUpdate",
+		{ workspaceId, id: review.id, status: "dismissed" },
+		ctx,
+	);
+	const grant = getAdditionalAnalyticsCapture();
+	captureReviewCommentAdded(grant, { author: "agent", kind: "inline" } as ReviewComment);
+	captureReviewCommentResolved(grant, "agent", "resolved");
+	captureReviewCommentsSent(grant, [
+		{ anchorState: "anchored" } as ReviewComment,
+		{ anchorState: "outdated" } as ReviewComment,
+	]);
+	await shutdownAnalytics();
+	expect(
+		sent
+			.filter((event) => event.event === "review_comment_added")
+			.map((event) => [event.properties.author, event.properties.kind]),
+	).toEqual([
+		["user", "review"],
+		["agent", "inline"],
+	]);
+	expect(
+		sent
+			.filter((event) => event.event === "review_comment_resolved")
+			.map((event) => [event.properties.actor, event.properties.outcome]),
+	).toEqual([
+		["user", "dismissed"],
+		["agent", "resolved"],
+	]);
+	expect(
+		sent
+			.filter((event) => event.event === "review_comment_sent")
+			.map((event) => event.properties.outdated),
+	).toEqual(["no", "yes"]);
+	expect(JSON.stringify(sent)).not.toContain("private");
+});
+
+test("plan_opened rides an explicit todo.list open; plan_item_added rides todo.add; refetches stay silent", async () => {
+	const { ref, ctx } = await taskFixture();
+	await handleRequest("todo.list", ref, ctx);
+	await handleRequest("todo.list", { ...ref, opened: "page" }, ctx);
+	await handleRequest("todo.list", { ...ref, opened: "rail" }, ctx);
+	await handleRequest("todo.add", { ...ref, title: "user step", surface: "chat" }, ctx);
+	await handleRequest("todo.add", { ...ref, title: "page step", surface: "page" }, ctx);
+	await handleRequest("todo.add", { ...ref, title: "rail step", surface: "rail" }, ctx);
+	await handleRequest("todo.add", { ...ref, title: "defaulted step" }, ctx);
+	await expect(handleRequest("todo.add", { ...ref, title: "   " }, ctx)).rejects.toThrow();
+	await shutdownAnalytics();
+	expect(
+		sent.filter((event) => event.event === "plan_opened").map((event) => event.properties.surface),
+	).toEqual(["page", "rail"]);
+	expect(
+		sent
+			.filter((event) => event.event === "plan_item_added")
+			.map((event) => event.properties.surface),
+	).toEqual(["chat", "page", "rail", "chat"]);
 });
 
 test("canonical TODO mutation observation waits for the real artifact reconciliation", async () => {

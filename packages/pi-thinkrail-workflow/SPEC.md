@@ -13,13 +13,15 @@ references: [module-workflow-tests]
 
 `pi-thinkrail-workflow` is a pi extension that ships ThinkRail's **workflow system** — skills that
 codify how the agent should *run a piece of work*. (Contrast: `pi-spec-graph` defines what the spec
-model *is*; `pi-visualize` is a rendering tool.) It contributes exactly two things, wired by the
+model *is*; `visualize` is a rendering tool.) It contributes exactly two things, wired by the
 `package.json` pi manifest (`pi: { extensions: ["./index.ts"], skills: ["./skills"] }`):
 
 - **`index.ts`** — an `ExtensionFactory` registering one always-on `before_agent_start` rule that,
-  at the start of a new piece of work, sends project onboarding and PR lifecycle work, plus other changes
-  with unresolved product/design decisions, to the root router skill (`choosing-a-workflow`). Work already
-  routed resumes its active workflow; all other work proceeds directly without loading or announcing one.
+  at the start of a new piece of work, sends project onboarding, PR lifecycle work, and every change to
+  what the product does (a feature, a behavior change, or a bug fix) to the root router skill
+  (`choosing-a-workflow`); the entry model and its rationale live in [[submodule-workflow-skills]]
+  (rule 4). Work already routed resumes its active workflow; work that changes no behavior proceeds
+  directly without loading or announcing one.
 - **`skills/`** — the workflow skill family: the root router that classifies workflow-eligible
   work, plus the worker and concept skills reached from it. The **authoritative roster is the
   family table in [[submodule-workflow-skills]]**, alongside the system's design — concept model,
@@ -36,23 +38,25 @@ the next skill (meta-rule 12 in [[submodule-workflow-skills]]).
 
 Same mechanism as `pi-spec-graph` ([[module-spec-graph]]): each workflow lives in its own skill,
 auto-discovered via the `pi.skills` manifest / `additionalSkillPaths`. The `before_agent_start` rule
-mirrors `pi-spec-graph`'s `SPEC_RULE`: short and byte-stable so it rides every run without churning
-provider prompt-caching, and a pointer, not a restatement — it applies only at the start of new work,
-while an already-routed continuation resumes its active workflow. Routing rules live once in the router
-skill; each workflow's steps live once in its own skill. The setting-up-a-project family carries no
-rule of its own — the root router routes onboarding to the dispatcher (whose `description` also
-self-triggers), and in-app the Welcome screen's "Set up project" card seeds the
-`/skill:setting-up-a-project` command — pi's skill-command syntax that **forces** the dispatcher to load
-rather than relying on description-matching (see [[module-web]]).
+mirrors `pi-spec-graph`'s `SPEC_RULE` — including its mechanism: the handler mutates
+`systemPromptOptions.sections` under the `pi-thinkrail-workflow` tag and returns nothing, so pi patches
+that one section instead of forcing a whole prompt ([[module-spec-graph]] owns the rationale). Short and
+byte-stable so it rides every run without churning provider prompt-caching, and a pointer, not a
+restatement — it applies only at the start of new work, while an already-routed continuation resumes its
+active workflow. Routing rules live once in the router skill; each workflow's steps live once in its own
+skill. The setting-up-a-project family carries no rule of its own — the root router routes onboarding to
+the dispatcher (whose `description` also self-triggers), and in-app the Welcome screen's "Set up project"
+card seeds the `/skill:setting-up-a-project` command — pi's skill-command syntax that **forces** the
+dispatcher to load rather than relying on description-matching (see [[module-web]]).
 
 ## Boundary
 
 - **Allowed deps:** `@earendil-works/pi-coding-agent` (**types only** — `ExtensionAPI`/`ExtensionFactory`),
-  as a `peerDependency`. No `typebox` in v1: this package registers no custom tool, only a
+  as a `peerDependency`. No `typebox`: this package registers no custom tool, only a
   `before_agent_start` rule and skill content.
 - **Forbidden:** any `@thinkrail/*` package, `apps/web`, `packages/server` internals — reached only by
   tool *name* (`ask_user_question`, `spec_*`), never by import.
-- **Not portable, and honest about it.** Unlike `pi-spec-graph` and `pi-visualize`, this package's skill
+- **Not portable, and honest about it.** Unlike `pi-spec-graph` and `@thinkrail/pi-visualize`, this package's skill
   content assumes the host's `ask_user_question` tool (`packages/server/src/agent/askUserQuestion.ts`) is
   present in the session — that tool exists only in thinkrail. This package does not claim to run
   under vanilla `pi`; it is a workspace-internal module, not a portable capability. It stays its own
@@ -76,8 +80,16 @@ rather than relying on description-matching (see [[module-web]]).
 ## Testing
 
 `index.test.ts` pins the one runtime behavior this package has: the factory registers a
-`before_agent_start` handler that appends `WORKFLOW_RULE` after the existing system prompt, preserving
-it verbatim. The rule's *wording* is prose, not contract, and stays unpinned.
+`before_agent_start` handler that puts `WORKFLOW_RULE` into `systemPromptOptions.sections` and returns
+nothing — for runs started by a user prompt and by a custom message alike (pi 1.2 emits the event for
+both, discriminated by `messageType`) — and pi's own renderer (`buildSystemPromptSections` /
+`buildSystemPrompt`) turns those mutated options into a `<pi-thinkrail-workflow>` block ordered after `cwd` and ending the prompt — the tail
+position the old free-text append had. pi does not re-export that renderer from its package root or
+`core/index.ts` (only its `BuildSystemPromptOptions`/`NormalizedBuildSystemPromptOptions` types are
+root-exported), so the test reaches `dist/core/system-prompt.js` by resolved path; a pi that moves it breaks the
+import loudly rather than silently weakening the assertion. The options literal is typed
+`NormalizedBuildSystemPromptOptions`, so a shape change is a compile error. The rule's *wording* is prose,
+not contract, and stays unpinned.
 
 Skill behavior is tested headlessly by the **workflow-test harness** — design, verdict model,
 suites, and coverage live in [[module-workflow-tests]] (`bun run test:workflows`; on-demand — needs

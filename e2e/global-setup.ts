@@ -1,5 +1,4 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { chmodSync, copyFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { FullConfig } from "@playwright/test";
 import { removeTree } from "@thinkrail/shared/removeTree";
@@ -10,10 +9,12 @@ import {
 	findGlobalCentralArtifact,
 	isRealCentralE2e,
 	removeCentralModeLocalSeeds,
+	seedE2eDefaultModel,
 	stageGlobalCentralArtifact,
 	waitForCentralTarget,
 	writeE2eAgentSettings,
 } from "./fixtures/centralAgent";
+import { writeHermeticE2eShell } from "./fixtures/executables";
 import {
 	E2E_CENTRAL_BAD_EXTENSION_SOURCE,
 	E2E_CENTRAL_EXTENSION_SOURCE,
@@ -42,14 +43,9 @@ function centralSetupFailure(error: unknown): Error {
 
 function seedLocalAgentConfiguration(): void {
 	mkdirSync(E2E_PI_AGENT_DIR, { recursive: true });
-	const userAgentDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-	for (const file of ["auth.json", "models.json"]) {
-		const src = join(userAgentDir, file);
-		if (existsSync(src)) copyFileSync(src, join(E2E_PI_AGENT_DIR, file));
-	}
-	const modelsSeedSrc = join(userAgentDir, "models.json");
-	if (existsSync(modelsSeedSrc)) copyFileSync(modelsSeedSrc, E2E_PI_MODELS_SEED);
-	else rmSync(E2E_PI_MODELS_SEED, { force: true });
+	const seed = JSON.stringify({ providers: {} });
+	writeFileSync(join(E2E_PI_AGENT_DIR, "models.json"), seed);
+	writeFileSync(E2E_PI_MODELS_SEED, seed);
 	writeE2eAgentSettings();
 }
 
@@ -75,6 +71,7 @@ export default function globalSetup(config?: FullConfig): void | Promise<void> {
 			copyFileSync(new URL(`./fixtures/bin/${command}`, import.meta.url), target);
 			chmodSync(target, 0o755);
 		}
+		writeHermeticE2eShell(E2E_FAKE_BIN_DIR, process.env.SHELL ?? "/bin/bash");
 		copyFileSync(
 			new URL("./fixtures/central-extension.ts.fixture", import.meta.url),
 			E2E_CENTRAL_EXTENSION_SOURCE,
@@ -107,7 +104,17 @@ export default function globalSetup(config?: FullConfig): void | Promise<void> {
 
 	const baseURL = config?.projects[0]?.use.baseURL;
 	if (!centralMode) {
-		return baseURL ? seedAnalyticsConsent(baseURL, false, true).then(() => undefined) : undefined;
+		if (!baseURL) return undefined;
+		return E2eWire.connect(Number(new URL(baseURL).port))
+			.then(async (wire) => {
+				try {
+					await seedE2eDefaultModel(wire);
+				} finally {
+					wire.close();
+				}
+			})
+			.then(() => seedAnalyticsConsent(baseURL, false, true))
+			.then(() => undefined);
 	}
 	return E2eWire.connect()
 		.then(async (wire) => {

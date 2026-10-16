@@ -47,6 +47,8 @@ export async function hideAuxiliaryWorkbench(page: Page): Promise<void> {
 
 function resetState(): void {
 	rmSync(join(E2E_DATA_DIR, "projects.json"), { force: true });
+	rmSync(join(E2E_DATA_DIR, "turns.json"), { force: true });
+	removeTree(join(E2E_DATA_DIR, "reviews"));
 	removeTree(join(E2E_DATA_DIR, "worktrees"));
 	removeTree(join(E2E_PI_AGENT_DIR, "sessions"));
 	if (isRealCentralE2e()) {
@@ -177,6 +179,17 @@ export async function enterDefaultWorkspace(page: Page): Promise<void> {
 	await expect(page.getByTestId("center-tabs")).toBeVisible();
 }
 
+// Use this helper when a pane must be visible; rail controls toggle on each click.
+export async function revealWorkbenchTool(
+	page: Page,
+	tool: "projects" | "specs" | "files" | "changes" | "review" | "plan",
+): Promise<void> {
+	const control = page.getByTestId(`tool-rail-${tool}`);
+	await expect(control).toBeVisible();
+	if ((await control.getAttribute("aria-pressed")) !== "true") await control.click();
+	await expect(control).toHaveAttribute("aria-pressed", "true");
+}
+
 export async function openPersistedChat(page: Page, title: string): Promise<void> {
 	const chatTab = page
 		.locator('[data-testid="editor-tab"][data-kind="chat"]')
@@ -223,6 +236,19 @@ export function defaultWorkspaceRow(page: Page): Locator {
 
 export function worktreeRows(page: Page): Locator {
 	return page.locator('[data-testid="workspace-item"]:not([data-kind="default"])');
+}
+
+export function worktreeRow(page: Page, name: string): Locator {
+	return worktreeRows(page).filter({
+		has: page.getByTestId("workspace-name").getByText(name, { exact: true }),
+	});
+}
+
+export async function setWindowFocus(page: Page, focused: boolean): Promise<void> {
+	await page.evaluate((value) => {
+		Object.defineProperty(document, "hasFocus", { configurable: true, value: () => value });
+		window.dispatchEvent(new Event(value ? "focus" : "blur"));
+	}, focused);
 }
 
 export function activeWorktreeRow(page: Page): Locator {
@@ -298,6 +324,39 @@ export async function expandActivityStep(page: Page, tool: string): Promise<Loca
 		await expect(step).toHaveAttribute("data-expanded", "true");
 	}
 	return step;
+}
+
+/** Opens an `aria-expanded` disclosure (a Settings theme list, layout Advanced, …) unless it is already open. */
+export async function expandDisclosure(toggle: Locator): Promise<void> {
+	await expect(toggle).toBeVisible();
+	if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+	await expect(toggle).toHaveAttribute("aria-expanded", "true");
+}
+
+export function modelGroupToggle(page: Page, provider: string): Locator {
+	return page.locator(`[data-testid="model-group-toggle"][data-provider="${provider}"]`);
+}
+
+/**
+ * Model pickers collapse every provider group except the current model's, so an option of another
+ * provider renders only once its group is expanded.
+ */
+export async function expandModelGroup(page: Page, provider: string): Promise<void> {
+	await expandDisclosure(modelGroupToggle(page, provider));
+}
+
+/**
+ * Waits until an open picker has rendered its catalog — its provider groups, or the empty-catalog
+ * hint — first unfolding a composer picker's pinned/recent shortlist. An absent group is then
+ * evidence, not a not-yet-rendered list.
+ */
+export async function revealModelGroups(page: Page): Promise<void> {
+	const showAll = page.getByTestId("model-show-all");
+	const groups = page.getByTestId("model-group-toggle");
+	const empty = page.getByText("No models to show.", { exact: false });
+	await expect(showAll.or(groups).or(empty).first()).toBeVisible();
+	if (await showAll.isVisible()) await showAll.click();
+	await expect(groups.or(empty).first()).toBeVisible();
 }
 
 export function visibleTerminal(page: Page): Locator {

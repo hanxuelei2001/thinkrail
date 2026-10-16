@@ -1,14 +1,13 @@
 import { describe, expect, it } from "bun:test";
+import type { ToolRenderProps } from "@thinkrail/extension-api/web";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import {
-	DefaultToolRenderer,
-	getToolRenderer,
-	getToolSummary,
-	type ToolRenderProps,
-} from "../toolRegistry";
+import { registerWebExtensions } from "@/extensions";
+import { DefaultToolRenderer, getToolRenderer, getToolSummary } from "../toolRegistry";
 import "./register";
 import { specToolPaths, splitKnownPathReferences } from "./SpecToolCard";
+
+registerWebExtensions();
 
 const INTENTIONAL_TOOLS = [
 	"read",
@@ -28,6 +27,12 @@ const INTENTIONAL_TOOLS = [
 	"spec_validate",
 	"ask_user_question",
 	"resolve_comment",
+	"request_review",
+	"tool_search",
+	"list_mcp_resources",
+	"list_mcp_resource_templates",
+	"read_mcp_resource",
+	"mcp__any_server__any_tool",
 ] as const;
 
 function props(

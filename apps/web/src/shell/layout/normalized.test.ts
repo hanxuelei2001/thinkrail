@@ -11,6 +11,7 @@ import {
 	applyWorkbenchPreset,
 	BUILTIN_LAYOUT_PRESETS,
 	captureWorkbenchPreset,
+	frameMatchesPreset,
 	instantiateWorkbenchFrame,
 } from "./presets";
 import type { LayoutCenterTab, LayoutTerminalTab, WorkspaceLayoutDocument } from "./types";
@@ -46,11 +47,12 @@ function document(): WorkspaceLayoutDocument {
 			visible: true,
 			width: 0.2,
 			groups: [
+				{ id: "left", weight: 1, folded: false, tabs: [toolTab("projects")] },
 				{
-					id: "left",
+					id: "left-terminals",
 					weight: 1,
 					folded: false,
-					tabs: [terminal("before-projects"), toolTab("projects"), terminal("after-projects")],
+					tabs: [terminal("first-shell"), terminal("second-shell")],
 				},
 			],
 		},
@@ -85,8 +87,8 @@ describe("normalized workbench layout", () => {
 		const projected = document();
 		if (projected.center.kind !== "split") throw new Error("expected center split");
 		projected.center.children[0].id = "__proto__";
-		const left = projected.left.groups[0];
-		if (!left) throw new Error("missing left group");
+		const left = projected.left.groups[1];
+		if (!left) throw new Error("missing left terminal group");
 		left.id = "constructor";
 		const frame = workbenchFrameFromDocument(projected);
 		const view = workspaceViewFromDocument(projected);
@@ -218,10 +220,33 @@ describe("normalized workbench layout", () => {
 		const documentAfter = projectWorkspaceLayout(applied.frame, workspaceView);
 
 		expect(documentAfter.bottom.groups.map((group) => group.tabs.map((tab) => tab.id))).toEqual([
-			["before-projects", "third"],
-			["after-projects"],
+			["first-shell", "third"],
+			["second-shell"],
 		]);
 		expect(documentAfter.bottom).toMatchObject({ visible: true, height: 0.4, alignment: "full" });
+
+		const withToolSlot = {
+			...preset,
+			bottom: {
+				...preset.bottom,
+				groups: [
+					{ id: "changes-slot", weight: 0.5, folded: false, tools: ["changes" as const] },
+					{ id: "shells", weight: 0.5, folded: false, tools: [] },
+				],
+			},
+		};
+		const reapplied = applyWorkbenchPreset(
+			{ frame, viewsByWorkspace: { workspace: view } },
+			withToolSlot,
+		);
+		const reappliedView = reapplied.viewsByWorkspace.workspace;
+		if (!reappliedView) throw new Error("missing workspace view");
+		const toolSlotDocument = projectWorkspaceLayout(reapplied.frame, reappliedView);
+		expect(
+			toolSlotDocument.bottom.groups.map((group) =>
+				group.tabs.map((tab) => (tab.kind === "tool" ? tab.tool : tab.id)),
+			),
+		).toEqual([["changes"], ["first-shell", "second-shell", "third"]]);
 	});
 
 	test("a slotless preset keeps its frame slotless and reflows terminals into center", () => {
@@ -245,8 +270,8 @@ describe("normalized workbench layout", () => {
 		expect(documentAfter.center.tabs.map((tab) => tab.id)).toEqual([
 			"a",
 			"b",
-			"before-projects",
-			"after-projects",
+			"first-shell",
+			"second-shell",
 		]);
 	});
 
@@ -254,7 +279,7 @@ describe("normalized workbench layout", () => {
 		const previous = document();
 		const previousFrame = workbenchFrameFromDocument(previous);
 		const view = workspaceViewFromDocument(previous);
-		const next = removeLayoutGroup(previous, { area: "left", groupId: "left" });
+		const next = removeLayoutGroup(previous, { area: "left", groupId: "left-terminals" });
 		expect(next).toEqual({ reason: "Move or hide this group's tabs before removing it." });
 
 		const withoutLeft = {
@@ -263,8 +288,124 @@ describe("normalized workbench layout", () => {
 		};
 		const reconciled = reconcileWorkspaceView(previousFrame, withoutLeft, view);
 		expect(reconciled.groups.bottom?.tabs.map((tab) => tab.id)).toEqual([
-			"before-projects",
-			"after-projects",
+			"first-shell",
+			"second-shell",
 		]);
+	});
+});
+
+describe("frameMatchesPreset", () => {
+	test("matches a freshly instantiated frame to its preset", () => {
+		const preset = BUILTIN_LAYOUT_PRESETS[0];
+		if (!preset) throw new Error("missing built-in preset");
+		const frame = instantiateWorkbenchFrame(preset);
+		expect(frameMatchesPreset(frame, preset)).toBe(true);
+	});
+
+	test("detects width changes", () => {
+		const preset = BUILTIN_LAYOUT_PRESETS[0];
+		if (!preset) throw new Error("missing built-in preset");
+		const frame = instantiateWorkbenchFrame(preset);
+		const modified = { ...frame, left: { ...frame.left, width: frame.left.width + 0.05 } };
+		expect(frameMatchesPreset(modified, preset)).toBe(false);
+	});
+
+	test("detects visibility changes", () => {
+		const preset = BUILTIN_LAYOUT_PRESETS[0];
+		if (!preset) throw new Error("missing built-in preset");
+		const frame = instantiateWorkbenchFrame(preset);
+		const modified = { ...frame, left: { ...frame.left, visible: !frame.left.visible } };
+		expect(frameMatchesPreset(modified, preset)).toBe(false);
+	});
+
+	test("detects folded state changes", () => {
+		const preset = BUILTIN_LAYOUT_PRESETS[0];
+		if (!preset) throw new Error("missing built-in preset");
+		const frame = instantiateWorkbenchFrame(preset);
+		const firstGroup = frame.left.groups[0];
+		if (!firstGroup) throw new Error("missing left group");
+		const modified = {
+			...frame,
+			left: {
+				...frame.left,
+				groups: [{ ...firstGroup, folded: !firstGroup.folded }, ...frame.left.groups.slice(1)],
+			},
+		};
+		expect(frameMatchesPreset(modified, preset)).toBe(false);
+	});
+
+	test("detects weight changes", () => {
+		const preset = BUILTIN_LAYOUT_PRESETS[0];
+		if (!preset) throw new Error("missing built-in preset");
+		const frame = instantiateWorkbenchFrame(preset);
+		const firstGroup = frame.right.groups[0];
+		if (!firstGroup) throw new Error("missing right group");
+		const modified = {
+			...frame,
+			right: {
+				...frame.right,
+				groups: [
+					{ ...firstGroup, weight: firstGroup.weight + 0.1 },
+					...frame.right.groups.slice(1),
+				],
+			},
+		};
+		expect(frameMatchesPreset(modified, preset)).toBe(false);
+	});
+
+	test("detects bottom height changes", () => {
+		const preset = BUILTIN_LAYOUT_PRESETS[0];
+		if (!preset) throw new Error("missing built-in preset");
+		const frame = instantiateWorkbenchFrame(preset);
+		const modified = { ...frame, bottom: { ...frame.bottom, height: frame.bottom.height + 0.1 } };
+		expect(frameMatchesPreset(modified, preset)).toBe(false);
+	});
+
+	test("detects bottom alignment changes", () => {
+		const preset = BUILTIN_LAYOUT_PRESETS[0];
+		if (!preset) throw new Error("missing built-in preset");
+		const frame = instantiateWorkbenchFrame(preset);
+		const alignment: typeof frame.bottom.alignment =
+			frame.bottom.alignment === "center" ? "full" : "center";
+		const modified = { ...frame, bottom: { ...frame.bottom, alignment } };
+		expect(frameMatchesPreset(modified, preset)).toBe(false);
+	});
+
+	test("ignores minted IDs but compares structure", () => {
+		const preset = BUILTIN_LAYOUT_PRESETS[0];
+		if (!preset) throw new Error("missing built-in preset");
+		const frame1 = instantiateWorkbenchFrame(preset);
+		const frame2 = instantiateWorkbenchFrame(preset);
+		expect(frame1.center.id).not.toBe(frame2.center.id);
+		expect(frameMatchesPreset(frame1, preset)).toBe(true);
+		expect(frameMatchesPreset(frame2, preset)).toBe(true);
+	});
+
+	test("tolerates tiny floating-point differences", () => {
+		const preset = BUILTIN_LAYOUT_PRESETS[0];
+		if (!preset) throw new Error("missing built-in preset");
+		const frame = instantiateWorkbenchFrame(preset);
+		const modified = { ...frame, left: { ...frame.left, width: frame.left.width + 0.0001 } };
+		expect(frameMatchesPreset(modified, preset)).toBe(true);
+	});
+
+	test("detects tool order changes", () => {
+		const preset = BUILTIN_LAYOUT_PRESETS[0];
+		if (!preset) throw new Error("missing built-in preset");
+		const frame = instantiateWorkbenchFrame(preset);
+		const firstGroup = frame.right.groups[0];
+		if (!firstGroup || firstGroup.tools.length < 2)
+			throw new Error("missing multi-tool right group");
+		const modified = {
+			...frame,
+			right: {
+				...frame.right,
+				groups: [
+					{ ...firstGroup, tools: [...firstGroup.tools].reverse() },
+					...frame.right.groups.slice(1),
+				],
+			},
+		};
+		expect(frameMatchesPreset(modified, preset)).toBe(false);
 	});
 });

@@ -15,6 +15,7 @@ export interface BootHostOptions {
 	analytics?: CreateServerOptions["analytics"];
 	hostUpdate?: CreateServerOptions["hostUpdate"];
 	verbose?: boolean;
+	resolveShellEnv?: boolean;
 }
 
 const log = logger("host");
@@ -50,6 +51,7 @@ function attachProcessSignals(server: RunningServer): RunningServer {
 		get port() {
 			return server.port;
 		},
+		startAttributionClaim: () => server.startAttributionClaim(),
 		stop,
 		shutdown,
 	};
@@ -61,7 +63,7 @@ export async function bootHost(options: BootHostOptions): Promise<BootedHost> {
 		...(options.appVersion ? { appVersion: options.appVersion } : {}),
 	});
 	installCrashLog(options.appVersion);
-	resolveShellEnv();
+	if (options.resolveShellEnv) resolveShellEnv();
 	await initializeJbcentralRuntime();
 
 	const requested = options.port;

@@ -8,7 +8,11 @@ import {
 	isRealCentralE2e,
 	REAL_CENTRAL_E2E_ENV,
 } from "./e2e/fixtures/centralAgent";
-import { hermeticE2ePath, resolveBunExecutable } from "./e2e/fixtures/executables";
+import {
+	hermeticE2ePath,
+	hermeticE2eShell,
+	resolveBunExecutable,
+} from "./e2e/fixtures/executables";
 import {
 	E2E_CENTRAL_BAD_EXTENSION_SOURCE,
 	E2E_CENTRAL_EXTENSION_SOURCE,
@@ -37,7 +41,8 @@ const bunExecutable = resolveBunExecutable();
 const hostPath = hermeticE2ePath(E2E_FAKE_BIN_DIR);
 if (hostPath.split(delimiter).some((directory) => existsSync(join(directory, "pi"))))
 	throw new Error("e2e host PATH must not contain pi");
-const isShardLane = process.env.THINKRAIL_E2E_LANE !== undefined;
+const isShardLane =
+	process.env.THINKRAIL_E2E_LANE !== undefined || !!process.env.THINKRAIL_E2E_JOB_SHARD;
 const hostCommand =
 	process.env.THINKRAIL_E2E_SKIP_BUILD === "1"
 		? `${JSON.stringify(bunExecutable)} packages/server/src/dev.ts`
@@ -96,6 +101,7 @@ export default defineConfig({
 			PI_OFFLINE: "1",
 			// Lane-local `central` + `code` stubs: deterministic and safe under process-level sharding.
 			PATH: hostPath,
+			SHELL: hermeticE2eShell(E2E_FAKE_BIN_DIR),
 			CENTRAL_STUB_STATE: E2E_CENTRAL_STATE,
 			CENTRAL_STUB_LOG: E2E_CENTRAL_LOG,
 			CENTRAL_STUB_EXTENSION_SOURCE: E2E_CENTRAL_EXTENSION_SOURCE,

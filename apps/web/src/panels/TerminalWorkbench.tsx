@@ -1,8 +1,8 @@
 import { RiAddLine as Plus } from "@remixicon/react";
 import type { TerminalTabsPush } from "@thinkrail/contracts";
 import { WS_CHANNELS } from "@thinkrail/contracts";
+import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { lazy, type ReactNode, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { IconTooltip } from "../components/ui/tooltip";
 import type { TerminalTab } from "../store";
 import { isConnectedGeneration, toast, useAppStore } from "../store";
 import { errorText, getTransport } from "../transport";
@@ -13,7 +13,7 @@ const TerminalInstance = lazy(() => import("./TerminalInstance"));
 export function useTerminalCatalog(workspaceId: string | null): boolean {
 	const connectionGeneration = useAppStore((state) => state.connectionGeneration);
 	const status = useAppStore((state) => state.status);
-	const [ready, setReady] = useState(false);
+	const [readyFor, setReadyFor] = useState<string | null>(null);
 	const pushEpochByWorkspace = useRef(new Map<string, number>());
 	useEffect(
 		() =>
@@ -29,7 +29,7 @@ export function useTerminalCatalog(workspaceId: string | null): boolean {
 	);
 
 	useEffect(() => {
-		setReady(false);
+		setReadyFor(null);
 		if (!workspaceId || status !== "connected" || connectionGeneration === 0) return;
 		let current = true;
 		const pushEpoch = pushEpochByWorkspace.current.get(workspaceId) ?? 0;
@@ -45,18 +45,18 @@ export function useTerminalCatalog(workspaceId: string | null): boolean {
 					return;
 				}
 				if ((pushEpochByWorkspace.current.get(workspaceId) ?? 0) !== pushEpoch) {
-					setReady(true);
+					setReadyFor(workspaceId);
 					return;
 				}
 				state.setWorkspaceTerminals(workspaceId, tabs);
-				setReady(true);
+				setReadyFor(workspaceId);
 			})
 			.catch(() => {});
 		return () => {
 			current = false;
 		};
 	}, [connectionGeneration, status, workspaceId]);
-	return ready;
+	return readyFor === workspaceId;
 }
 
 export function TerminalWorkbenchBody({ tab, onAdd }: { tab: TerminalTab; onAdd: () => void }) {
@@ -68,7 +68,7 @@ export function TerminalWorkbenchBody({ tab, onAdd }: { tab: TerminalTab; onAdd:
 					data-testid="terminal-add"
 					aria-label="New terminal"
 					onClick={onAdd}
-					className="absolute top-4 right-4 z-10 flex size-20 items-center justify-center rounded-[var(--radius-sm)] bg-container-elevated-bg text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
+					className="absolute top-4 right-4 z-10 flex size-20 items-center justify-center rounded-sm bg-container-elevated-bg text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
 				>
 					<Plus className="size-14" />
 				</button>

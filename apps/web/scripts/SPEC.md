@@ -12,7 +12,8 @@ Build-time tooling for `apps/web`. **Nothing here ships**: these modules run und
 machine or in CI, never in the browser bundle. They read files from `src/`, write generated files back
 into `src/`, and exit with a status code.
 
-The directory holds three pipelines — typography, colour and spacing — built the same way. They live here rather than in `src/` because
+The directory holds four pipelines — typography, colour, spacing and provider glyphs — built the same way, plus the
+React Compiler census: a diagnostic whose baseline is a ratchet gate. They live here rather than in `src/` because
 they are *generators*: they use `node:fs` and `node:path`, which must never reach browser-bundled code.
 
 ## What it owns
@@ -27,30 +28,52 @@ they are *generators*: they use `node:fs` and `node:path`, which must never reac
 | `spacing.ts` | the library: load → validate → render. It enforces step identity and is the only place the generated spacing-CSS shape and `--spacing: 1px` (number = px) base are derived; the step lengths live only in `spacing.json`. |
 | `spacing.test.ts` | Pins the spacing source validator's closed root/metadata shapes and value types against the schema. |
 | `generate-spacing.ts` | CLI. Writes `src/styles/generated/spacing.css` — the `--space-<n>` tokens + the Tailwind base; `--check` fails when it is stale. |
+| `providerGlyphs.ts` | the library: the **only** pi-provider-id → vendor-mark mapping, plus the reader that accepts a vendored SVG only when it is a 24×24, path-only, `currentColor` glyph (layered marks keep their per-path opacity) and the renderer that shares one constant per mark. Source set: the dev-only `@lobehub/icons-static-svg` (MIT; the marks stay their owners' trademarks). |
+| `generate-provider-glyphs.ts` | CLI. Writes `src/chat/generated/providerGlyphs.ts`; `--check` fails when it is stale. The generated module is Biome-ignored like `styles/generated`. |
+| `providerGlyphs.test.ts` | pins that every mapped mark exists in the vendored set and that coloured, oddly sized or non-path SVGs are rejected rather than flattened. |
 | `generatedFiles.ts` | what every generate CLI does with a rendered file: `--check` reports drift, otherwise write. The **only** definition of "stale", so the three pipelines and the tests cannot disagree. |
 | `generatedFiles.test.ts` | pins that definition — content drift and a missing file are stale, a CRLF working tree is not. |
+| `compiler-census.ts` | CLI. Runs `babel-plugin-react-compiler` with a logger over app, shared UI, and extension web sources (tests, stories and generated data excluded) and prints every function the compiler bails out on as `file:line: [fn] category: reason`, plus totals; `--json` prints the full census. Run: `bun run --cwd apps/web compiler:census [--json]`. `--write` renders the bailed-out functions to `compiler-census.baseline.txt` as `file fnName`, line-free so edits above them don't churn it. `fnName` is lexical, never positional: the binding a function is assigned to (through wrapping calls like `memo(…)`), else its own name, qualified by its named enclosing functions (`factory.Row`). Two compiler units in one file with the same identity fail the census, because neither a line nor an ordinal survives an insertion above them. `--check` (`bun run check:compiler`, CI) fails on any drift and names each function that newly bails out or now compiles. A new bail-out is fixed, or accepted by regenerating (`bun run compiler:census:generate`). |
+| `compiler-census.baseline.txt` | The committed census baseline. |
+| `compiler-census.test.ts` | pins that a function's baseline identity survives inserting a sibling before it, that nested functions are qualified by their owners, and that indistinguishable compiler units are rejected. |
 
-Public surface: the `typography.ts`, `colors.ts`, `spacing.ts` and `generatedFiles.ts` exports. There is no `index.ts` barrel — the CLIs are entry points
+`designSources.ts` owns the shared adoption-guard and compiler-census source scan: app source, `packages/ui`, and every
+`thinkrail-extensions/*/web` source tree, excluding tests, generated output, and installed dependencies.
+The same SDK/extension roots are explicit Tailwind `@source` directives in the app stylesheet. Extension
+sources name recursive file globs: a wildcard directory ending in `*/web` alone does not discover the
+nested files, silently dropping extension-only classes such as fullscreen zoom. The browser zoom probe
+checks rendered dimensions, not just the zoom label, to pin actual CSS generation. Each token `*:check`
+command checks generated output and its corresponding adoption guard, so moving a primitive
+out of the app cannot hide token misuse or make a live token look unused.
+
+Public surface: the `typography.ts`, `colors.ts`, `spacing.ts`, `providerGlyphs.ts`, `generatedFiles.ts` and `designSources.ts` exports. There is no `index.ts` barrel — the CLIs are entry points
 invoked by name from `package.json`, and the one importer outside this directory
 (`src/styles/*.test.ts`) imports the library directly, which keeps the tests and the generator provably
 in agreement about the same functions.
 
 ## Boundary
 
-- **Allowed deps:** `node:fs`, `node:path`, the three JSON sources + their schemas, and two further reads
+- **Allowed deps:** `node:fs`, `node:path`, `node:module` (resolving the vendored glyph set), the three JSON sources + their schemas, the dev-only `@lobehub/icons-static-svg` files read as *data*, and two further reads
   taken as *data*, never as imports: `src/themes/schema.ts` (for `colors.ts`, so the roles and
   `THEME_COLOR_KEYS` cannot drift) and `apps/web/package.json` (for `typography.ts`, so a `selfHosted`
   entry and the installed font packages cannot drift).
-- **Forbidden:** React, Tailwind, anything under `src/` other than the three JSON files, any
-  `@thinkrail/*` package, and any network or shell access. A generator that needed one of those would be
+- **Forbidden:** runtime imports of React, Tailwind, `src/`, or any `@thinkrail/*` package, any runtime
+  (non-dev) dependency, and any network or shell access. Adoption guards read source as data; generators
+  read only their declared inputs. A generator that needed one of those would be
   the wrong shape.
+- **Census exception:** `compiler-census.ts` also uses `@babel/core` and `babel-plugin-react-compiler`
+  and reads authored TypeScript from the shared source scan as *text*, so extracting a component into
+  the SDK or an extension does not silently remove it from the report. It must pass the compiler the same options as
+  `reactCompilerPreset()` in `vite.config.ts` and mirror the preset's file filter, so its counts match
+  the real build. Build-time compiler validations differ from the lint rules (for example
+  `StaticComponents` is lint-only), so its counts differ from an oxlint React scan by design.
 - **Imported by:** `apps/web/package.json` scripts (`typography:generate` / `:validate` / `:check`,
-  `colors:generate` / `:check`, `spacing:generate` / `:check`, re-exported from the root `package.json`), and
+  `colors:generate` / `:check`, `spacing:generate` / `:check`, `provider-glyphs:generate` / `:check`, `compiler:census:generate`, re-exported from the root `package.json`, plus `compiler:census:check` as the root `check:compiler`; `compiler:census` itself is web-only), and
   `src/styles/typography.test.ts` + `src/styles/typographyUsage.test.ts` +
   `src/styles/colorUsage.test.ts` + `src/styles/spacingUsage.test.ts`. Nothing in the shipped app may import from here — the generated
   CSS is the interface.
-- **Writes:** `src/styles/generated/` only. That directory is committed (so every typography, colour or spacing
-  change is reviewable as a diff) and excluded from biome in `biome.json`.
+- **Writes:** `src/styles/generated/` and `src/chat/generated/`, plus the census's `compiler-census.baseline.txt`. Both directories are committed (so every typography, colour, spacing
+  or glyph change is reviewable as a diff) and excluded from biome in `biome.json`.
 
 ## Invariants
 

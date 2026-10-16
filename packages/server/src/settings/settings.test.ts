@@ -9,7 +9,14 @@ import {
 	type LayoutPreset,
 } from "@thinkrail/contracts";
 import { validateCustomLayoutPresets } from "./layoutPresets";
-import { getConfig, resetConfigCache, setSettingsPublisher, updateConfig } from "./settings";
+import {
+	getConfig,
+	noteRecentModel,
+	resetConfigCache,
+	type SettingsPublisher,
+	setSettingsPublisher,
+	updateConfig,
+} from "./settings";
 
 let dataDir: string;
 const savedDataDir = process.env.THINKRAIL_DATA_DIR;
@@ -226,11 +233,12 @@ test("invalid theme updates are rejected and a legacy theme choice exits system 
 	expect(fixed.systemThemePair).toEqual(pair);
 });
 
-test("updateConfig broadcasts the new config through the injected publisher", () => {
-	const seen: string[] = [];
-	setSettingsPublisher((c) => seen.push(c.theme));
-	updateConfig({ theme: "acme.broadcast" });
-	expect(seen).toEqual(["acme.broadcast"]);
+test("updateConfig publishes both the merged config and the successful applied update", () => {
+	const seen: Array<{ config: AppConfig; update: AppConfigUpdate }> = [];
+	const publisher: SettingsPublisher = (config, update) => seen.push({ config, update });
+	setSettingsPublisher(publisher);
+	const config = updateConfig({ theme: "acme.broadcast" });
+	expect(seen).toEqual([{ config, update: { theme: "acme.broadcast" } }]);
 });
 
 test("a null publisher makes updates silent no-ops (still persisted)", () => {
@@ -254,6 +262,68 @@ test("an older host preserves unknown top-level config extensions when updating 
 	updateConfig({ theme: "acme.changed" });
 	const onDisk = JSON.parse(readFileSync(join(dataDir, "config.json"), "utf8"));
 	expect(onDisk.futureSetting).toEqual({ mode: "new" });
+});
+
+test("an unknown update key rejects the whole update before persistence or broadcast", () => {
+	writeFileSync(join(dataDir, "config.json"), JSON.stringify(DEFAULT_CONFIG));
+	resetConfigCache();
+	const before = getConfig();
+	const published: AppConfig[] = [];
+	setSettingsPublisher((config) => published.push(config));
+
+	expect(() => updateConfig({ futureSetting: true } as unknown as AppConfigUpdate)).toThrow(
+		"Unknown setting: futureSetting",
+	);
+	expect(() =>
+		updateConfig({ theme: "acme.dark", futureSetting: 1 } as unknown as AppConfigUpdate),
+	).toThrow("Unknown setting: futureSetting");
+	expect(() => updateConfig(JSON.parse('{"__proto__":{"theme":"x"}}') as AppConfigUpdate)).toThrow(
+		"Unknown setting: __proto__",
+	);
+	expect(() => updateConfig({ toString: "x" } as unknown as AppConfigUpdate)).toThrow(
+		"Unknown setting: toString",
+	);
+
+	expect(getConfig()).toEqual(before);
+	expect(JSON.parse(readFileSync(join(dataDir, "config.json"), "utf8"))).toEqual(before);
+	expect(published).toEqual([]);
+});
+
+test.each([
+	["a string", "theme"],
+	["an array", ["theme"]],
+	["null", null],
+	["undefined", undefined],
+])("a non-object update (%s) is rejected", (_label, update) => {
+	const published: AppConfig[] = [];
+	setSettingsPublisher((config) => published.push(config));
+	expect(() => updateConfig(update as unknown as AppConfigUpdate)).toThrow(
+		"settings update must be an object",
+	);
+	expect(existsSync(join(dataDir, "config.json"))).toBe(false);
+	expect(published).toEqual([]);
+});
+
+test("empty and multi-key valid updates persist and publish", () => {
+	const published: AppConfig[] = [];
+	setSettingsPublisher((config) => published.push(config));
+	expect(updateConfig({})).toEqual(DEFAULT_CONFIG);
+	const next = updateConfig({
+		theme: "acme.dark",
+		chatLineWidth: 100,
+		reviewAutoFix: false,
+		defaultEffort: "high",
+		subagentsEnabled: false,
+	});
+	expect(next).toMatchObject({
+		theme: "acme.dark",
+		chatLineWidth: 100,
+		reviewAutoFix: false,
+		defaultEffort: "high",
+		subagentsEnabled: false,
+	});
+	expect(JSON.parse(readFileSync(join(dataDir, "config.json"), "utf8"))).toEqual(next);
+	expect(published).toEqual([DEFAULT_CONFIG, next]);
 });
 
 test("loadConfig replaces an invalid composer growth preset with the default", () => {
@@ -284,15 +354,28 @@ test("retired chat message order is stripped from disk and stale updates", () =>
 	expect(onDisk).not.toHaveProperty("chatMessageOrder");
 });
 
-test("reviewAutoFix defaults on; an old config without it loads the default; toggling off round-trips", () => {
-	expect(DEFAULT_CONFIG.reviewAutoFix).toBe(true);
+test("reviewAutoFix defaults off; an old config without it loads the default; toggling on round-trips", () => {
+	expect(DEFAULT_CONFIG.reviewAutoFix).toBe(false);
 	writeFileSync(join(dataDir, "config.json"), JSON.stringify({ theme: "dark" }));
 	resetConfigCache();
-	expect(getConfig().reviewAutoFix).toBe(true);
-	const next = updateConfig({ reviewAutoFix: false });
-	expect(next.reviewAutoFix).toBe(false);
-	resetConfigCache();
 	expect(getConfig().reviewAutoFix).toBe(false);
+	const next = updateConfig({ reviewAutoFix: true });
+	expect(next.reviewAutoFix).toBe(true);
+	resetConfigCache();
+	expect(getConfig().reviewAutoFix).toBe(true);
+});
+
+test("agentReviewEnabled defaults off; an old config loads the default; toggling on round-trips; non-boolean rejected", () => {
+	expect(DEFAULT_CONFIG.agentReviewEnabled).toBe(false);
+	writeFileSync(join(dataDir, "config.json"), JSON.stringify({ theme: "dark" }));
+	resetConfigCache();
+	expect(getConfig().agentReviewEnabled).toBe(false);
+	const next = updateConfig({ agentReviewEnabled: true });
+	expect(next.agentReviewEnabled).toBe(true);
+	resetConfigCache();
+	expect(getConfig().agentReviewEnabled).toBe(true);
+	const invalid = { agentReviewEnabled: "nope" } as unknown as AppConfigUpdate;
+	expect(() => updateConfig(invalid)).toThrow("agentReviewEnabled must be a boolean");
 });
 
 test("subagents default on; an old config inherits that default; toggling off round-trips", () => {
@@ -304,6 +387,69 @@ test("subagents default on; an old config inherits that default; toggling off ro
 	expect(next.subagentsEnabled).toBe(false);
 	resetConfigCache();
 	expect(getConfig().subagentsEnabled).toBe(false);
+});
+
+test("the subagent limit defaults to 4, round-trips, and a malformed stored value falls back", () => {
+	expect(DEFAULT_CONFIG.subagentMaxConcurrent).toBe(4);
+	writeFileSync(join(dataDir, "config.json"), JSON.stringify({ subagentMaxConcurrent: 40 }));
+	resetConfigCache();
+	expect(getConfig().subagentMaxConcurrent).toBe(4);
+	expect(updateConfig({ subagentMaxConcurrent: 8 }).subagentMaxConcurrent).toBe(8);
+	resetConfigCache();
+	expect(getConfig().subagentMaxConcurrent).toBe(8);
+});
+
+test("disabled extensions default empty, round-trip deduped, and keep unknown names", () => {
+	expect(DEFAULT_CONFIG.disabledExtensions).toEqual([]);
+	const published: AppConfigUpdate[] = [];
+	setSettingsPublisher((_config, applied) => published.push(applied));
+	expect(getConfig().disabledExtensions).toEqual([]);
+	const next = updateConfig({ disabledExtensions: ["visualize", "retired", "visualize"] });
+	expect(next.disabledExtensions).toEqual(["visualize", "retired"]);
+	expect(published.at(-1)?.disabledExtensions).toEqual(["visualize", "retired", "visualize"]);
+	resetConfigCache();
+	expect(getConfig().disabledExtensions).toEqual(["visualize", "retired"]);
+	expect(updateConfig({ disabledExtensions: [] }).disabledExtensions).toEqual([]);
+});
+
+test("a malformed disabled-extensions update is rejected; a malformed stored list keeps valid names", () => {
+	const published: AppConfig[] = [];
+	setSettingsPublisher((config) => published.push(config));
+	const before = getConfig();
+	for (const value of ["visualize", [""], ["  "], [1], null]) {
+		const invalid = { disabledExtensions: value } as unknown as AppConfigUpdate;
+		expect(() => updateConfig(invalid)).toThrow(
+			"disabledExtensions must be a list of extension names",
+		);
+	}
+	expect(getConfig()).toEqual(before);
+	expect(published).toEqual([]);
+	expect(existsSync(join(dataDir, "config.json"))).toBe(false);
+
+	writeFileSync(
+		join(dataDir, "config.json"),
+		JSON.stringify({ disabledExtensions: ["visualize", 3, "", "visualize"] }),
+	);
+	resetConfigCache();
+	expect(getConfig().disabledExtensions).toEqual(["visualize"]);
+	writeFileSync(join(dataDir, "config.json"), JSON.stringify({ disabledExtensions: "visualize" }));
+	resetConfigCache();
+	expect(getConfig().disabledExtensions).toEqual([]);
+});
+
+test("an out-of-range subagent limit is rejected before persistence or broadcast", () => {
+	const published: AppConfig[] = [];
+	setSettingsPublisher((config) => published.push(config));
+	const before = getConfig();
+	for (const value of [0, 17, 2.5, "4"]) {
+		const invalid = { subagentMaxConcurrent: value } as unknown as AppConfigUpdate;
+		expect(() => updateConfig(invalid)).toThrow(
+			"subagentMaxConcurrent must be a whole number from 1 to 16",
+		);
+	}
+	expect(getConfig()).toEqual(before);
+	expect(published).toEqual([]);
+	expect(existsSync(join(dataDir, "config.json"))).toBe(false);
 });
 
 test("Windows shell updates reject unknown values before persistence or broadcast", () => {
@@ -324,6 +470,34 @@ test("Windows shell updates reject unknown values before persistence or broadcas
 		"terminalWindowsShell",
 		"cmd",
 	);
+});
+
+test("replay budget and composer growth updates reject malformed values before persistence or broadcast", () => {
+	const published: AppConfig[] = [];
+	setSettingsPublisher((config) => published.push(config));
+	const before = getConfig();
+
+	for (const terminalReplayKb of ["64", Number.NaN, Number.POSITIVE_INFINITY, null, true]) {
+		expect(() => updateConfig({ terminalReplayKb } as unknown as AppConfigUpdate)).toThrow(
+			"terminalReplayKb must be a finite number",
+		);
+	}
+	for (const composerGrowthLimit of ["enormous", 3, { kind: "roomy" }, null]) {
+		expect(() => updateConfig({ composerGrowthLimit } as unknown as AppConfigUpdate)).toThrow(
+			"composerGrowthLimit must be one of compact, roomy, half-chat",
+		);
+	}
+	expect(getConfig()).toEqual(before);
+	expect(published).toEqual([]);
+	expect(existsSync(join(dataDir, "config.json"))).toBe(false);
+
+	const next = updateConfig({ terminalReplayKb: 0, composerGrowthLimit: "compact" });
+	expect(next).toMatchObject({ terminalReplayKb: 0, composerGrowthLimit: "compact" });
+	expect(published).toEqual([next]);
+	expect(JSON.parse(readFileSync(join(dataDir, "config.json"), "utf8"))).toMatchObject({
+		terminalReplayKb: 0,
+		composerGrowthLimit: "compact",
+	});
 });
 
 test("JetBrains quota preferences default, persist, and survive an old partial config", () => {
@@ -453,6 +627,42 @@ test("a failed config write leaves the live cache and publisher unchanged", () =
 	expect(published).toEqual([]);
 });
 
+test("defaultModel/defaultEffort persist through the top-level partial merge", () => {
+	const model = {
+		id: "m",
+		name: "M",
+		provider: "p",
+		contextWindow: 1,
+		reasoning: false,
+		thinkingLevels: [],
+	};
+	updateConfig({ defaultModel: model, defaultEffort: "high" });
+	resetConfigCache();
+	expect(getConfig().defaultModel).toEqual(model);
+	expect(getConfig().defaultEffort).toBe("high");
+});
+
+test("null defaultModel/defaultEffort clear the overrides and persist them as unset", () => {
+	const model = {
+		id: "m",
+		name: "M",
+		provider: "p",
+		contextWindow: 1,
+		reasoning: false,
+		thinkingLevels: [],
+	};
+	updateConfig({ defaultModel: model, defaultEffort: "high" });
+	const next = updateConfig({ defaultModel: null, defaultEffort: null });
+	expect(next.defaultModel).toBeUndefined();
+	expect(next.defaultEffort).toBeUndefined();
+	resetConfigCache();
+	expect(getConfig().defaultModel).toBeUndefined();
+	expect(getConfig().defaultEffort).toBeUndefined();
+	const onDisk = JSON.parse(readFileSync(join(dataDir, "config.json"), "utf8"));
+	expect(onDisk).not.toHaveProperty("defaultModel");
+	expect(onDisk).not.toHaveProperty("defaultEffort");
+});
+
 test("reviewModel/reviewEffort persist through the top-level partial merge", () => {
 	const model = {
 		id: "m",
@@ -484,6 +694,23 @@ test("a null reviewModel/reviewEffort clears the override back to unset, and it 
 	resetConfigCache();
 	expect(getConfig().reviewModel).toBeUndefined();
 	expect(getConfig().reviewEffort).toBeUndefined();
+});
+
+test("a malformed defaultModel or reviewModel rejects the whole update before persistence or broadcast", () => {
+	const published: AppConfig[] = [];
+	setSettingsPublisher((config) => published.push(config));
+	const before = getConfig();
+	for (const model of ["p/m", { provider: "p" }, { provider: "p", id: "m" }, [], 1]) {
+		expect(() => updateConfig({ defaultModel: model } as unknown as AppConfigUpdate)).toThrow(
+			"defaultModel must be a model or null",
+		);
+		expect(() => updateConfig({ reviewModel: model } as unknown as AppConfigUpdate)).toThrow(
+			"reviewModel must be a model or null",
+		);
+	}
+	expect(getConfig()).toEqual(before);
+	expect(published).toEqual([]);
+	expect(existsSync(join(dataDir, "config.json"))).toBe(false);
 });
 
 test("loadConfig ignores the old layout settings object", () => {
@@ -551,4 +778,89 @@ test("stored custom presets keep only complete current-schema entries", () => {
 	);
 	resetConfigCache();
 	expect(getConfig().customLayoutPresets).toEqual([preset("valid")]);
+});
+
+const wireModel = (id: string, provider = "p") => ({
+	id,
+	name: id.toUpperCase(),
+	provider,
+	contextWindow: 1,
+	reasoning: false,
+	thinkingLevels: [],
+});
+
+test("favoriteModels persist as a whole list, deduped by provider/id", () => {
+	const published: AppConfig[] = [];
+	setSettingsPublisher((config) => published.push(config));
+	const next = updateConfig({
+		favoriteModels: [wireModel("a"), wireModel("b"), { ...wireModel("a"), name: "stale" }],
+	});
+	expect(next.favoriteModels.map((m) => m.id)).toEqual(["a", "b"]);
+	resetConfigCache();
+	expect(getConfig().favoriteModels.map((m) => m.id)).toEqual(["a", "b"]);
+	expect(published).toHaveLength(1);
+});
+
+test("a malformed favoriteModels list rejects the whole update before persisting", () => {
+	expect(() => updateConfig({ favoriteModels: [{ id: "x" }] as never })).toThrow(
+		"favoriteModels must be a list of models",
+	);
+	expect(() => updateConfig({ favoriteModels: "nope" as never })).toThrow();
+	expect(getConfig().favoriteModels).toEqual([]);
+});
+
+test("recentModels is host-owned: client writes are ignored, noteRecentModel caps and dedupes", () => {
+	updateConfig({ recentModels: [wireModel("client")] } as AppConfigUpdate);
+	expect(getConfig().recentModels).toEqual([]);
+	for (const id of ["a", "b", "c", "d", "e", "f"]) noteRecentModel(wireModel(id));
+	expect(getConfig().recentModels.map((m) => m.id)).toEqual(["f", "e", "d", "c", "b"]);
+	noteRecentModel(wireModel("d"));
+	expect(getConfig().recentModels.map((m) => m.id)).toEqual(["d", "f", "e", "c", "b"]);
+	noteRecentModel(wireModel("d", "other"));
+	expect(getConfig().recentModels.map((m) => `${m.provider}/${m.id}`)[0]).toBe("other/d");
+	resetConfigCache();
+	expect(getConfig().recentModels).toHaveLength(5);
+});
+
+test("stored favorites and recents survive reload while malformed ones fall back to empty", () => {
+	updateConfig({ favoriteModels: [wireModel("a")] });
+	noteRecentModel(wireModel("b"));
+	resetConfigCache();
+	expect(getConfig().favoriteModels.map((m) => m.id)).toEqual(["a"]);
+	expect(getConfig().recentModels.map((m) => m.id)).toEqual(["b"]);
+	writeFileSync(
+		join(dataDir, "config.json"),
+		JSON.stringify({ ...DEFAULT_CONFIG, favoriteModels: "x", recentModels: 3 }),
+	);
+	resetConfigCache();
+	expect(getConfig().favoriteModels).toEqual([]);
+	expect(getConfig().recentModels).toEqual([]);
+	writeFileSync(
+		join(dataDir, "config.json"),
+		JSON.stringify({
+			...DEFAULT_CONFIG,
+			favoriteModels: [wireModel("ok"), { id: 7 }, null, "junk", { provider: "p" }],
+		}),
+	);
+	resetConfigCache();
+	expect(getConfig().favoriteModels.map((m) => m.id)).toEqual(["ok"]);
+});
+
+test("the settle idle window defaults to 7 days, accepts null for never, and rejects fractions", () => {
+	expect(DEFAULT_CONFIG.settleIdleDays).toBe(7);
+	writeFileSync(join(dataDir, "config.json"), JSON.stringify({ settleIdleDays: "soon" }));
+	resetConfigCache();
+	expect(getConfig().settleIdleDays).toBe(7);
+
+	const before = getConfig();
+	expect(() => updateConfig({ settleIdleDays: 0 })).toThrow(
+		"settleIdleDays must be a whole number of days from 1 to 365, or null",
+	);
+	expect(() => updateConfig({ settleIdleDays: 2.5 })).toThrow("settleIdleDays must be");
+	expect(getConfig()).toEqual(before);
+
+	expect(updateConfig({ settleIdleDays: 14 }).settleIdleDays).toBe(14);
+	expect(updateConfig({ settleIdleDays: null }).settleIdleDays).toBeNull();
+	resetConfigCache();
+	expect(getConfig().settleIdleDays).toBeNull();
 });

@@ -3,14 +3,15 @@ import {
 	RiGitCommitLine as GitCommitHorizontal,
 } from "@remixicon/react";
 import type { GitCommit } from "@thinkrail/contracts";
-import { useEffect, useRef, useState } from "react";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuLabel,
 	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@thinkrail/ui/dropdown-menu";
+import { useEffect, useRef, useState } from "react";
+import { useNow } from "@/components/useNow";
 import { relativeTime } from "@/lib";
 import { getTransport } from "../transport";
 
@@ -23,6 +24,7 @@ export function PlanCommitsMenu({
 	reloadSignal: number;
 	onOpenCommit: (sha: string) => void;
 }) {
+	const now = useNow();
 	const [open, setOpen] = useState(false);
 	const [commits, setCommits] = useState<GitCommit[] | null>(null);
 	const generation = useRef(0);
@@ -49,7 +51,7 @@ export function PlanCommitsMenu({
 				data-testid="plan-commits-trigger"
 				data-open={open}
 				title="Commits on this branch"
-				className="flex h-24 shrink-0 items-center gap-4 rounded-[var(--radius-sm)] px-4 tr-text-metadata text-text-subtle outline-none transition-colors hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary data-[open=true]:bg-control-bg-selected data-[open=true]:text-text-default"
+				className="flex h-24 shrink-0 items-center gap-4 rounded-sm px-4 tr-text-metadata text-text-subtle outline-none transition-colors hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary data-[open=true]:bg-control-bg-selected data-[open=true]:text-text-default"
 			>
 				<GitCommitHorizontal className="size-12 shrink-0" />
 				<span>
@@ -71,7 +73,9 @@ export function PlanCommitsMenu({
 							<span className="truncate">{commit.subject || commit.shortSha}</span>
 							<span className="truncate tr-text-metadata text-text-muted">
 								{commit.shortSha} · {commit.author}
-								{commit.committedAt ? ` · ${relativeTime(Date.parse(commit.committedAt))}` : ""}
+								{commit.committedAt
+									? ` · ${relativeTime(Date.parse(commit.committedAt), now)}`
+									: ""}
 							</span>
 						</span>
 					</DropdownMenuItem>

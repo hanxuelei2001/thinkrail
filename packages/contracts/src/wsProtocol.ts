@@ -1,13 +1,16 @@
 import type {
-	ActivityStatus,
 	AppConfig,
 	AppConfigUpdate,
+	BackgroundCommandCompletionDetails,
+	BackgroundCommandOutputResult,
 	BranchList,
+	ChangeReceipt,
 	DelegationRunDetails,
 	DelegationRunStatus,
 	DiffStats,
 	EditorInfo,
 	ExistingWorktreeCandidate,
+	ExtensionCatalogEntry,
 	FileNode,
 	GitCommit,
 	GitDiffScope,
@@ -21,18 +24,30 @@ import type {
 	JbcentralLoginResult,
 	JbcentralQuotaSnapshot,
 	LoginReply,
+	McpExposure,
+	McpListResult,
+	McpReadOutputResult,
+	McpServerEntryInput,
+	McpServerLog,
+	McpServerScope,
+	McpStatusSnapshot,
 	OpenBranchReview,
 	OpenPrResult,
 	PrDraft,
 	Project,
 	ProjectPathStatus,
+	ProjectTrustSummary,
 	ProviderStatusReport,
+	ResourceMeta,
+	RevertTarget,
 	ReviewAnchor,
 	ReviewComment,
 	ReviewCommentKind,
 	ReviewCommentStatus,
+	ReviewFixDetails,
 	ReviewSnapshot,
-	SessionActivity,
+	SessionResources,
+	SessionStateRecord,
 	SpecGraphSnapshot,
 	SubagentOverride,
 	Template,
@@ -41,6 +56,7 @@ import type {
 	TodoItem,
 	TodoPlan,
 	TodoStatus,
+	TurnChangeSet,
 	Workspace,
 } from "./domain";
 import { isDelegationRunDetails } from "./domain";
@@ -96,7 +112,25 @@ export type TemplateReadLocation =
 	| { projectId: string; workspaceId?: never }
 	| { workspaceId?: never; projectId?: never };
 
-export const PROTOCOL_VERSION = 66;
+export const PROTOCOL_VERSION = 83;
+export const MCP_PROTOCOL_VERSION = 83;
+export const EXTENSION_CATALOG_PROTOCOL_VERSION = 82;
+export const PROJECT_TRUST_PROTOCOL_VERSION = 81;
+export const TURN_CHANGES_PROTOCOL_VERSION = 80;
+export const SUBAGENT_CONCURRENCY_PROTOCOL_VERSION = 79;
+export const WORKSPACE_SETTLE_PROTOCOL_VERSION = 78;
+export const MODEL_PICKER_PROTOCOL_VERSION = 77;
+export const CONTEXT_WINDOW_SETTINGS_PROTOCOL_VERSION = 76;
+export const CHANGE_MUTATIONS_PROTOCOL_VERSION = 75;
+export const RESOURCE_META_PROTOCOL_VERSION = 75;
+export const REVIEW_RICH_ANCHORS_PROTOCOL_VERSION = 74;
+export const DEFAULT_MODEL_PROTOCOL_VERSION = 72;
+export const CHAT_RESOURCES_PROTOCOL_VERSION = 71;
+export const HOST_UPDATE_RUN_PROTOCOL_VERSION = 70;
+export const PLAN_REVIEW_SUBAGENT_PROTOCOL_VERSION = 67;
+export const AGENT_REVIEW_SETTING_PROTOCOL_VERSION = 68;
+export const PLAN_SUMMARY_GENERATION_PROTOCOL_VERSION = 69;
+export const SESSION_STATE_PROTOCOL_VERSION = 73;
 export const ANALYTICS_CONSENT_PROTOCOL_VERSION = 65;
 export const SESSION_RENAME_PROTOCOL_VERSION = 66;
 export const SESSION_TITLE_MAX_LENGTH = 80;
@@ -114,14 +148,16 @@ export const SUBAGENT_SETTINGS_PROTOCOL_VERSION = 57;
 export const JBCENTRAL_QUOTA_PROTOCOL_VERSION = 59;
 export const WORKSPACE_RENAME_PROTOCOL_VERSION = 55;
 export const FEEDBACK_INTERVIEW_PROTOCOL_VERSION = 56;
-export const ACTIVITY_PROTOCOL_VERSION = 60;
 
 export type HostPlatform = "darwin" | "linux" | "win32";
+
+export type HostUpdateStatus = "available" | "running" | "succeeded" | "failed";
 
 export interface HostUpdateNotice {
 	currentVersion: string;
 	availableVersion: string;
 	channel: string;
+	status?: HostUpdateStatus;
 }
 
 export interface ServerWelcome {
@@ -146,13 +182,6 @@ export interface SessionDeletedPayload {
 	sessionId: string;
 }
 
-export interface SessionActivityPayload {
-	workspaceId: string;
-	projectId: string;
-	sessionId: string;
-	status: ActivityStatus | null;
-}
-
 export const WS_METHODS = {
 	projectOpen: "project.open",
 	projectList: "project.list",
@@ -164,6 +193,7 @@ export const WS_METHODS = {
 	projectAcknowledgeSkills: "project.acknowledgeSkills",
 	projectSetSkillEnabled: "project.setSkillEnabled",
 	projectAliasSkills: "project.aliasSkills",
+	projectTrustSummary: "project.trustSummary",
 	projectSetGroupEnabled: "project.setGroupEnabled",
 	projectSkills: "project.skills",
 	workspaceCreate: "workspace.create",
@@ -176,7 +206,10 @@ export const WS_METHODS = {
 	workspaceDiffStats: "workspace.diffStats",
 	workspaceSetSkillOverride: "workspace.setSkillOverride",
 	workspaceSetSubagentsOverride: "workspace.setSubagentsOverride",
+	workspaceSetSubagentMaxConcurrent: "workspace.setSubagentMaxConcurrent",
 	workspaceSetDiffBase: "workspace.setDiffBase",
+	workspaceSettle: "workspace.settle",
+	workspaceUnsettle: "workspace.unsettle",
 	workspaceWatchReady: "workspace.watchReady",
 	workspaceOpenIn: "workspace.openIn",
 	workspaceReveal: "workspace.reveal",
@@ -198,9 +231,13 @@ export const WS_METHODS = {
 	todoRequestFix: "todo.requestFix",
 	todoStartReview: "todo.startReview",
 	todoReviewAll: "todo.reviewAll",
+	todoGenerateSummary: "todo.generateSummary",
 	gitStatus: "git.status",
 	gitDiffFile: "git.diffFile",
 	gitListCommits: "git.listCommits",
+	workspaceTurns: "workspace.turns",
+	changeRevert: "change.revert",
+	changeUndo: "change.undo",
 	terminalReserve: "terminal.reserve",
 	terminalAttach: "terminal.attach",
 	terminalList: "terminal.list",
@@ -210,6 +247,7 @@ export const WS_METHODS = {
 	dialogSelectDirectory: "dialog.selectDirectory",
 	skillList: "skill.list",
 	skillsState: "skills.state",
+	extensionList: "extension.list",
 	sessionCreate: "session.create",
 	sessionPrompt: "session.prompt",
 	sessionSteer: "session.steer",
@@ -229,12 +267,22 @@ export const WS_METHODS = {
 	sessionExtUiReply: "session.extUiReply",
 	sessionAnswerQuestion: "session.answerQuestion",
 	sessionList: "session.list",
+	sessionStateList: "session.stateList",
+	sessionAcknowledgeCompletion: "session.acknowledgeCompletion",
+	sessionNudge: "session.nudge",
 	sessionActivityList: "session.activityList",
 	sessionGetMessages: "session.getMessages",
 	subagentGetTranscript: "subagent.getTranscript",
+	sessionResources: "session.resources",
+	backgroundCommandOutput: "backgroundCommand.output",
+	backgroundCommandStop: "backgroundCommand.stop",
+	subagentStop: "subagent.stop",
+	subagentStopAll: "subagent.stopAll",
 	modelList: "model.list",
 	modelRefresh: "model.refresh",
 	modelDefault: "model.default",
+	modelContextSettings: "model.contextSettings",
+	modelSetContextWindow: "model.setContextWindow",
 	modelClampThinking: "model.clampThinking",
 	providerStatus: "provider.status",
 	providerLoginStart: "provider.loginStart",
@@ -247,6 +295,7 @@ export const WS_METHODS = {
 	providerJbcentralLogin: "provider.jbcentralLogin",
 	providerJbcentralUpdate: "provider.jbcentralUpdate",
 	providerJbcentralQuota: "provider.jbcentralQuota",
+	hostUpdate: "host.update",
 	settingsUpdate: "settings.update",
 	feedbackRespond: "feedback.respond",
 	historySearch: "history.search",
@@ -262,6 +311,20 @@ export const WS_METHODS = {
 	templateGet: "template.get",
 	templateSave: "template.save",
 	templateDelete: "template.delete",
+	mcpList: "mcp.list",
+	mcpAdd: "mcp.add",
+	mcpUpdate: "mcp.update",
+	mcpRemove: "mcp.remove",
+	mcpSetProjectOverride: "mcp.setProjectOverride",
+	mcpSetSessionOverride: "mcp.setSessionOverride",
+	mcpApprove: "mcp.approve",
+	mcpShareWithRepo: "mcp.shareWithRepo",
+	mcpLogin: "mcp.login",
+	mcpLogout: "mcp.logout",
+	mcpTestConnection: "mcp.testConnection",
+	mcpReconnect: "mcp.reconnect",
+	mcpReadOutput: "mcp.readOutput",
+	mcpReadLog: "mcp.readLog",
 } as const;
 
 export const WS_CHANNELS = {
@@ -271,7 +334,8 @@ export const WS_CHANNELS = {
 	piExtensionUi: "pi.extensionUi",
 	sessionCreated: "session.created",
 	sessionDeleted: "session.deleted",
-	sessionActivity: "session.activity",
+	sessionResourcesChanged: "session.resourcesChanged",
+	sessionState: "session.state",
 	providerLogin: "provider.login",
 	providerChanged: "provider.changed",
 	terminalData: "terminal.data",
@@ -286,9 +350,13 @@ export const WS_CHANNELS = {
 	hostUpdateAvailable: "host.updateAvailable",
 	feedbackInterview: "feedback.interview",
 	reviewChanged: "review.changed",
+	reviewFailed: "review.failed",
+	turnChanged: "turn.changed",
+	mcpStatus: "mcp.status",
 } as const;
 
-export type WsMethod = (typeof WS_METHODS)[keyof typeof WS_METHODS];
+type SameUnion<A extends B, B extends C, C = A> = A;
+type _MethodsMatchMap = SameUnion<(typeof WS_METHODS)[keyof typeof WS_METHODS], WsMethodName>;
 export type WsChannel = (typeof WS_CHANNELS)[keyof typeof WS_CHANNELS];
 
 export const ASK_USER_ANSWERS_CUSTOM_TYPE = "ask-user-answers";
@@ -327,6 +395,71 @@ export function isSubagentCompletionMessage(
 	return isDelegationRunDetails(m.details);
 }
 
+export const TODO_REVIEW_FIX_CUSTOM_TYPE = "todo-review-fix";
+
+export interface TodoReviewFixMessage extends WireCustomMessage<ReviewFixDetails> {
+	customType: typeof TODO_REVIEW_FIX_CUSTOM_TYPE;
+	details: ReviewFixDetails;
+}
+
+export function isTodoReviewFixMessage(message: unknown): message is TodoReviewFixMessage {
+	if (!message || typeof message !== "object") return false;
+	const m = message as { role?: unknown; customType?: unknown; details?: unknown };
+	if (m.role !== "custom" || m.customType !== TODO_REVIEW_FIX_CUSTOM_TYPE) return false;
+	const details = m.details as Partial<ReviewFixDetails> | undefined;
+	return (
+		typeof details?.itemId === "string" &&
+		typeof details.itemTitle === "string" &&
+		Array.isArray(details.comments)
+	);
+}
+
+export const BACKGROUND_COMMAND_COMPLETION_CUSTOM_TYPE = "background-command-completion";
+
+export interface BackgroundCommandCompletionMessage
+	extends WireCustomMessage<BackgroundCommandCompletionDetails> {
+	customType: typeof BACKGROUND_COMMAND_COMPLETION_CUSTOM_TYPE;
+	display: true;
+	details: BackgroundCommandCompletionDetails;
+}
+
+export function isBackgroundCommandCompletionMessage(
+	message: unknown,
+): message is BackgroundCommandCompletionMessage {
+	if (!message || typeof message !== "object") return false;
+	const m = message as {
+		role?: unknown;
+		customType?: unknown;
+		display?: unknown;
+		details?: unknown;
+	};
+	if (
+		m.role !== "custom" ||
+		m.customType !== BACKGROUND_COMMAND_COMPLETION_CUSTOM_TYPE ||
+		m.display !== true
+	)
+		return false;
+	if (!m.details || typeof m.details !== "object") return false;
+	const d = m.details as Partial<BackgroundCommandCompletionDetails>;
+	if ([d.id, d.sessionId, d.name].some((field) => typeof field !== "string")) return false;
+	if (d.status !== "completed" && d.status !== "error" && d.status !== "stopped") return false;
+	if (
+		typeof d.startedAt !== "number" ||
+		!Number.isFinite(d.startedAt) ||
+		typeof d.finishedAt !== "number" ||
+		!Number.isFinite(d.finishedAt)
+	)
+		return false;
+	if (
+		d.exitCode !== undefined &&
+		d.exitCode !== null &&
+		(typeof d.exitCode !== "number" || !Number.isFinite(d.exitCode))
+	)
+		return false;
+	if (d.errorMessage !== undefined && typeof d.errorMessage !== "string") return false;
+	return !!d.output && typeof d.output.text === "string" && typeof d.output.truncated === "boolean";
+}
+
 export function customMessageText(content: WireCustomMessage["content"]): string {
 	if (typeof content === "string") return content;
 	return content
@@ -350,6 +483,44 @@ export interface WorkspaceWatchReadyResult {
 	startupNudge: boolean;
 }
 
+export interface ModelDefault {
+	model: WireModel | null;
+	thinkingLevel: ThinkingLevel;
+}
+
+export const MODEL_CONTEXT_WINDOW_LIMITS = { min: 272_000, max: 1_000_000 } as const;
+
+export function isModelContextWindow(value: unknown): value is number {
+	return (
+		typeof value === "number" &&
+		Number.isSafeInteger(value) &&
+		value >= MODEL_CONTEXT_WINDOW_LIMITS.min &&
+		value <= MODEL_CONTEXT_WINDOW_LIMITS.max
+	);
+}
+
+export type ModelContextTarget = "available" | Pick<WireModel, "provider" | "id">;
+
+export interface ModelContextSetting
+	extends Pick<WireModel, "provider" | "id" | "name" | "contextWindow"> {
+	override: number | null;
+}
+
+export function isSharedModelContextTarget(
+	setting: Pick<ModelContextSetting, "override">,
+): boolean {
+	return setting.override === null || isModelContextWindow(setting.override);
+}
+
+/**
+ * The entry a rewrite or removal was rendered from: its scope and the `McpServerSummary.fingerprint` the
+ * client rendered it with. The host refuses the write when the entry on disk no longer has it.
+ */
+export interface McpRenderedTarget {
+	scope: McpServerScope;
+	expectedFingerprint: string;
+}
+
 export interface WsMethodMap {
 	"project.open": { params: { path: string }; result: Project };
 	"project.list": { params: Record<string, never>; result: Project[] };
@@ -357,13 +528,17 @@ export interface WsMethodMap {
 	"project.inspect": { params: { path: string }; result: ProjectPathStatus };
 	"project.init": { params: { path: string }; result: Project };
 	"project.hasSpecs": { params: { projectId: string }; result: { hasSpecs: boolean } };
-	"project.setTrust": { params: { id: string; trusted: boolean }; result: Project };
+	"project.setTrust": {
+		params: { id: string; trusted: boolean; resources?: boolean };
+		result: Project;
+	};
 	"project.acknowledgeSkills": { params: { id: string; names: string[] }; result: Project };
 	"project.setSkillEnabled": {
 		params: { id: string; name: string; enabled: boolean };
 		result: Project;
 	};
 	"project.aliasSkills": { params: { projectId: string }; result: string[] };
+	"project.trustSummary": { params: { projectId: string }; result: ProjectTrustSummary };
 	"project.setGroupEnabled": {
 		params: { id: string; group: string; enabled: boolean };
 		result: Project;
@@ -400,7 +575,13 @@ export interface WsMethodMap {
 		params: { id: string; override: SubagentOverride | null };
 		result: Workspace;
 	};
+	"workspace.setSubagentMaxConcurrent": {
+		params: { id: string; value: number | null };
+		result: Workspace;
+	};
 	"workspace.setDiffBase": { params: { id: string; ref: string | null }; result: Workspace };
+	"workspace.settle": { params: { id: string }; result: Workspace };
+	"workspace.unsettle": { params: { id: string }; result: Workspace };
 	"workspace.watchReady": {
 		params: { workspaceId: string; prewarm?: boolean };
 		result: WorkspaceWatchReadyResult;
@@ -424,18 +605,28 @@ export interface WsMethodMap {
 			titleEdited?: boolean;
 			body?: string;
 			draft?: boolean;
+			source?: "plan_page";
 		};
 		result: OpenPrResult;
 	};
 	"fs.readDir": { params: { workspaceId: string; path: string }; result: FileNode[] };
-	"fs.readFile": { params: { workspaceId: string; path: string }; result: { content: string } };
+	"fs.readFile": {
+		params: { workspaceId: string; path: string };
+		result: { content: string; meta: ResourceMeta };
+	};
 	"spec.graph": { params: { workspaceId: string }; result: SpecGraphSnapshot };
 	"todo.list": {
-		params: { workspaceId: string; sessionId: string };
+		params: { workspaceId: string; sessionId: string; opened?: "page" | "rail" };
 		result: TodoPlan;
 	};
 	"todo.add": {
-		params: { workspaceId: string; sessionId: string; title: string; note?: string };
+		params: {
+			workspaceId: string;
+			sessionId: string;
+			title: string;
+			note?: string;
+			surface?: "chat" | "page" | "rail";
+		};
 		result: TodoItem;
 	};
 	"todo.update": {
@@ -457,18 +648,42 @@ export interface WsMethodMap {
 	};
 	"todo.startReview": {
 		params: { workspaceId: string; sessionId: string; id: string };
-		result: { ok: true; reviewerSessionId: string };
+		result: { ok: true };
 	};
 	"todo.reviewAll": {
 		params: { workspaceId: string; sessionId: string };
 		result: { ok: true; total: number; alreadyRunning?: true };
 	};
+	"todo.generateSummary": {
+		params: { workspaceId: string; sessionId: string };
+		result: { summary: string | null };
+	};
 	"git.status": { params: { workspaceId: string; scope?: GitDiffScope }; result: GitStatus };
 	"git.diffFile": {
 		params: { workspaceId: string; path: string; scope?: GitDiffScope };
-		result: { original: string; modified: string };
+		result: {
+			original: string;
+			modified: string;
+			originalOid: string | null;
+			meta: { original: ResourceMeta; modified: ResourceMeta };
+		};
 	};
 	"git.listCommits": { params: { workspaceId: string }; result: { commits: GitCommit[] } };
+	"workspace.turns": { params: { workspaceId: string }; result: { turns: TurnChangeSet[] } };
+	"change.revert": {
+		params: {
+			workspaceId: string;
+			path: string;
+			scope: GitDiffScope;
+			target: RevertTarget;
+			expect: { originalHash: string | null; modifiedHash: string | null };
+		};
+		result: { receipt: ChangeReceipt };
+	};
+	"change.undo": {
+		params: { workspaceId: string; receiptId: string; expect: { modifiedHash: string | null } };
+		result: { receipt: ChangeReceipt };
+	};
 	"terminal.reserve": {
 		params: { workspaceId: string; tabKey: string; title: string };
 		result: { tab: TerminalTabInfo };
@@ -490,6 +705,7 @@ export interface WsMethodMap {
 	"dialog.selectDirectory": { params: Record<string, never>; result: { path: string | null } };
 	"skill.list": { params: { projectId: string }; result: SlashCommandInfo[] };
 	"skills.state": { params: { workspaceId: string }; result: SkillCatalogEntry[] };
+	"extension.list": { params: Record<string, never>; result: ExtensionCatalogEntry[] };
 	"session.create": {
 		params: { workspaceId: string; model?: WireModel; thinkingLevel?: ThinkingLevel };
 		result: { sessionId: string; model: WireModel | null; thinkingLevel: ThinkingLevel };
@@ -536,10 +752,39 @@ export interface WsMethodMap {
 		result: Ack;
 	};
 	"session.list": { params: { workspaceId: string }; result: SessionSummary[] };
-	"session.activityList": { params: Record<string, never>; result: SessionActivity[] };
+	"session.stateList": { params: Record<string, never>; result: SessionStateRecord[] };
+	"session.acknowledgeCompletion": {
+		params: { sessionId: string; completionId: string };
+		result: { acknowledged: boolean; record: SessionStateRecord };
+	};
+	"session.nudge": {
+		params: { workspaceId: string; sessionId: string; text: string; images?: ImageContent[] };
+		result: { disposition: "needs_input" | "queued" | "prompted" };
+	};
+	"session.activityList": { params: Record<string, never>; result: [] };
 	"session.getMessages": {
 		params: { sessionId: string; workspaceId: string };
 		result: { summary: SessionSummary; messages: TranscriptMessage[] };
+	};
+	"session.resources": {
+		params: { workspaceId: string; sessionId: string };
+		result: SessionResources;
+	};
+	"backgroundCommand.output": {
+		params: { workspaceId: string; sessionId: string; commandId: string };
+		result: BackgroundCommandOutputResult;
+	};
+	"backgroundCommand.stop": {
+		params: { workspaceId: string; sessionId: string; commandId: string };
+		result: Ack;
+	};
+	"subagent.stop": {
+		params: { workspaceId: string; parentSessionId: string; childSessionId: string };
+		result: Ack;
+	};
+	"subagent.stopAll": {
+		params: { workspaceId: string; parentSessionId: string };
+		result: Ack & { targeted: number };
 	};
 	"subagent.getTranscript": {
 		params: { workspaceId: string; parentSessionId: string; childSessionId: string };
@@ -551,9 +796,11 @@ export interface WsMethodMap {
 		result: { level: ThinkingLevel };
 	};
 	"model.refresh": { params: { force?: boolean }; result: RefreshedModels };
-	"model.default": {
-		params: Record<string, never>;
-		result: { model: WireModel | null; thinkingLevel: ThinkingLevel };
+	"model.default": { params: Record<string, never>; result: ModelDefault };
+	"model.contextSettings": { params: Record<string, never>; result: ModelContextSetting[] };
+	"model.setContextWindow": {
+		params: { target: ModelContextTarget; contextWindow: number | null };
+		result: ModelContextSetting[];
 	};
 	"provider.status": { params: Record<string, never>; result: ProviderStatusReport };
 	"provider.loginStart": {
@@ -569,6 +816,7 @@ export interface WsMethodMap {
 	"provider.jbcentralLogin": { params: Record<string, never>; result: JbcentralLoginResult };
 	"provider.jbcentralUpdate": { params: Record<string, never>; result: JbcentralActionResult };
 	"provider.jbcentralQuota": { params: { force?: boolean }; result: JbcentralQuotaSnapshot };
+	"host.update": { params: Record<string, never>; result: Ack };
 	"settings.update": { params: { config: AppConfigUpdate }; result: AppConfig };
 	"feedback.respond": { params: { action: InterviewResponse }; result: Ack };
 	"history.search": {
@@ -634,7 +882,61 @@ export interface WsMethodMap {
 		params: { workspaceId?: string; scope: TemplateScope; name: string };
 		result: Ack;
 	};
+	"mcp.list": { params: { workspaceId: string }; result: McpListResult };
+	"mcp.add": {
+		params: {
+			workspaceId: string;
+			scope: McpServerScope;
+			name: string;
+			entry: McpServerEntryInput;
+		};
+		result: McpListResult;
+	};
+	"mcp.update": {
+		params: { workspaceId: string; name: string; entry: McpServerEntryInput } & McpRenderedTarget;
+		result: McpListResult;
+	};
+	"mcp.remove": {
+		params: { workspaceId: string; name: string } & McpRenderedTarget;
+		result: McpListResult;
+	};
+	"mcp.setProjectOverride": {
+		params: {
+			workspaceId: string;
+			name: string;
+			enabled?: boolean;
+			exposure?: Exclude<McpExposure, "codemode">;
+		};
+		result: McpListResult;
+	};
+	"mcp.setSessionOverride": {
+		params: { workspaceId: string; sessionId: string; name: string; enabled: boolean };
+		result: Ack;
+	};
+	"mcp.approve": {
+		params: { workspaceId: string; name: string; fingerprint: string };
+		result: McpListResult;
+	};
+	"mcp.shareWithRepo": { params: { workspaceId: string; name: string }; result: McpListResult };
+	"mcp.login": { params: { workspaceId: string; name: string }; result: { loginId: string } };
+	"mcp.logout": { params: { workspaceId: string; name: string }; result: Ack };
+	"mcp.testConnection": {
+		params: { workspaceId: string; name: string };
+		result: { loginId: string };
+	};
+	"mcp.reconnect": {
+		params: { workspaceId: string; sessionId: string; name: string };
+		result: Ack;
+	};
+	"mcp.readOutput": {
+		params: { workspaceId: string; sessionId: string; toolCallId: string };
+		result: McpReadOutputResult;
+	};
+	"mcp.readLog": { params: { workspaceId: string; name: string }; result: McpServerLog };
 }
+
+/** Payload of the `mcp.status` channel: one per-session snapshot per publish. */
+export type McpStatusPayload = McpStatusSnapshot;
 
 export type WsMethodName = keyof WsMethodMap;
 export type WsParams<M extends WsMethodName> = WsMethodMap[M]["params"];
@@ -657,7 +959,22 @@ export interface WsResume {
 
 export type WsClientMessage = WsRequest | WsAck | WsResume;
 
-export type WsErrorCode = "UNKNOWN_COMMIT" | "PUSH_AUTH_FAILED" | "SUBAGENT_TRANSCRIPT_NOT_FOUND";
+export type WsErrorCode =
+	| "UNKNOWN_COMMIT"
+	| "PUSH_AUTH_FAILED"
+	| "NOT_GIT"
+	| "ALREADY_OPEN"
+	| "SUBAGENT_TRANSCRIPT_NOT_FOUND"
+	| "RESOURCE_UNAVAILABLE"
+	| "STALE_VIEW"
+	| "SCOPE_IMMUTABLE"
+	| "RANGE_INVALID"
+	| "RECEIPT_UNKNOWN"
+	| "UNSUPPORTED_CHANGE"
+	| "LOGIN_NOT_OWNER"
+	| "MCP_CONFIG_INVALID"
+	| "MCP_PATH_UNSAFE"
+	| "MCP_HANDLED_ELSEWHERE";
 
 export interface WsResponse {
 	id: string;

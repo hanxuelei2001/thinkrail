@@ -1,38 +1,20 @@
+import {
+	parseToolResultContent,
+	type ToolChrome,
+	type ToolProminence,
+	type ToolRegistrationOptions,
+	type ToolRenderer,
+	type ToolRenderProps,
+	toolValueText,
+} from "@thinkrail/extension-api/web";
 import type { ReactNode } from "react";
-import { parseToolResultContent, toolValueText } from "./toolResultContent";
-import type { ToolStatus } from "./types";
-
-export interface ToolRenderProps {
-	toolCallId: string;
-	toolName: string;
-	args: Record<string, unknown>;
-	result: unknown;
-	status: ToolStatus;
-	workspaceRoot?: string | undefined;
-	onOpenFile?: ((path: string) => void) | undefined;
-	streaming: boolean;
-}
-
-export type ToolChrome = "card" | "bare";
-
-export type ToolProminence = "routine" | "primary";
-
-export type ToolRenderer = (props: ToolRenderProps) => ReactNode;
-
-export type ToolSummary = (props: ToolRenderProps) => string;
-
-export interface ToolRegistrationOptions {
-	summary?: ToolSummary;
-	chrome?: ToolChrome;
-	prominence?: ToolProminence;
-	defaultExpanded?: boolean;
-}
 
 interface ToolRegistration extends ToolRegistrationOptions {
 	renderer: ToolRenderer;
 }
 
 const registry = new Map<string, ToolRegistration>();
+const prefixRegistry = new Map<string, ToolRegistration>();
 
 export function registerToolRenderer(
 	toolName: string,
@@ -42,16 +24,38 @@ export function registerToolRenderer(
 	registry.set(toolName, { renderer, ...options });
 }
 
+export function registerToolRendererPrefix(
+	prefix: string,
+	renderer: ToolRenderer,
+	options: ToolRegistrationOptions = {},
+): void {
+	prefixRegistry.set(prefix, { renderer, ...options });
+}
+
+function resolveRegistration(toolName: string): ToolRegistration | undefined {
+	const exact = registry.get(toolName);
+	if (exact) return exact;
+	let match: ToolRegistration | undefined;
+	let matchLength = 0;
+	for (const [prefix, registration] of prefixRegistry) {
+		if (prefix.length > matchLength && toolName.startsWith(prefix)) {
+			match = registration;
+			matchLength = prefix.length;
+		}
+	}
+	return match;
+}
+
 export function getToolRenderer(toolName: string): ToolRenderer {
-	return registry.get(toolName)?.renderer ?? DefaultToolRenderer;
+	return resolveRegistration(toolName)?.renderer ?? DefaultToolRenderer;
 }
 
 export function getToolSummary(toolName: string, props: ToolRenderProps): string {
-	return registry.get(toolName)?.summary?.(props) ?? "";
+	return resolveRegistration(toolName)?.summary?.(props) ?? "";
 }
 
 export function getToolChrome(toolName: string): ToolChrome {
-	return registry.get(toolName)?.chrome ?? "card";
+	return resolveRegistration(toolName)?.chrome ?? "card";
 }
 
 export interface ResolvedProminence {
@@ -60,7 +64,7 @@ export interface ResolvedProminence {
 }
 
 export function resolveProminence(toolName: string): ResolvedProminence {
-	const reg = registry.get(toolName);
+	const reg = resolveRegistration(toolName);
 	const prominence = reg?.chrome === "bare" ? "primary" : (reg?.prominence ?? "routine");
 	return { prominence, defaultExpanded: reg?.defaultExpanded ?? false };
 }

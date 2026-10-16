@@ -2,35 +2,33 @@ import {
 	RiCheckLine as Check,
 	RiFileCopyLine as Copy,
 	RiParagraph as Pilcrow,
+	RiArrowGoBackLine as Revert,
 } from "@remixicon/react";
-import { lazy, Suspense, useState } from "react";
-import { IconTooltip } from "@/components/ui/tooltip";
-import { copyText, isMarkdownPath } from "@/lib/utils";
-import { LoadingRegion } from "../components/Skeleton";
+import { useMemo, useState } from "react";
+import { copyText, isPhoneViewport } from "@/lib";
 import type { DiffTab } from "../store";
 import { selectDiffTabTargetRef, useAppStore } from "../store";
 import { getTransport } from "../transport";
 import { splitPath } from "./changesModel";
+import { DiffSurfaceBody, useDiffSurface } from "./DiffSurface";
+import { HeaderIconButton } from "./HeaderIconButton";
+import {
+	rendererImplementationKey,
+	rendererTestId,
+	useResetViewStateOnImplementationChange,
+} from "./resourcePane";
 import { SendReviewButton } from "./SendReviewButton";
 import { ToggleSegment } from "./ToggleSegment";
 import { useLiveTabContent } from "./useLiveTabContent";
-import { useFileReview } from "./useReviewCommenting";
-
-const MonacoDiff = lazy(() => import("./MonacoDiff"));
-const RenderedDiff = lazy(() => import("./RenderedDiff"));
-
-const loading = <LoadingRegion rows={12} className="h-full p-12" />;
 
 export function DiffPane({ tab }: { tab: DiffTab }) {
-	const setDiffTabView = useAppStore((s) => s.setDiffTabView);
-	const setDiffTabRendered = useAppStore((s) => s.setDiffTabRendered);
-	const setDiffTabIgnoreWhitespace = useAppStore((s) => s.setDiffTabIgnoreWhitespace);
+	const setTabRenderer = useAppStore((state) => state.setTabRenderer);
+	const setDiffTabView = useAppStore((state) => state.setDiffTabView);
+	const setDiffTabIgnoreWhitespace = useAppStore((state) => state.setDiffTabIgnoreWhitespace);
 	const [copied, setCopied] = useState(false);
-	const reviewable = tab.scope.kind !== "commit";
-	const review = useFileReview(tab.workspaceId, tab.path, "diff", tab.scope);
+	const targetRef = useAppStore((state) => selectDiffTabTargetRef(state, tab));
 
-	const targetRef = useAppStore((s) => selectDiffTabTargetRef(s, tab));
-	useLiveTabContent(
+	const { reload } = useLiveTabContent(
 		tab,
 		{
 			read: () =>
@@ -39,10 +37,19 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 					path: tab.path,
 					scope: tab.scope,
 				}),
-			applyFresh: ({ original, modified }, tick) =>
+			applyFresh: ({ original, modified, meta, originalOid }, tick) =>
 				useAppStore
 					.getState()
-					.updateDiffTabContent(tab.workspaceId, tab.id, original, modified, tick, targetRef),
+					.updateDiffTabContent(
+						tab.workspaceId,
+						tab.id,
+						original,
+						modified,
+						meta,
+						originalOid,
+						tick,
+						targetRef,
+					),
 			keepCurrent: (tick) =>
 				useAppStore
 					.getState()
@@ -51,6 +58,8 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 						tab.id,
 						tab.original,
 						tab.modified,
+						tab.meta,
+						tab.originalOid,
 						tick,
 						tab.loadedTarget,
 					),
@@ -59,9 +68,27 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 		tab.loadedTarget,
 	);
 
-	const markdown = isMarkdownPath(tab.path);
-	const view = tab.view ?? "split";
-	const rendered = markdown && (tab.rendered ?? false);
+	const content = useMemo(
+		() => ({
+			original: tab.original,
+			modified: tab.modified,
+			meta: tab.meta,
+			originalOid: tab.originalOid,
+		}),
+		[tab.meta, tab.modified, tab.original, tab.originalOid],
+	);
+	const surface = useDiffSurface({
+		workspaceId: tab.workspaceId,
+		path: tab.path,
+		scope: tab.scope,
+		content,
+		rendererId: tab.rendererId,
+		reload,
+	});
+	const { renderer, candidates, implementationKey, mobile, hunkActions } = surface;
+	useResetViewStateOnImplementationChange(tab.workspaceId, tab.id, implementationKey);
+
+	const view = mobile ? "inline" : (tab.view ?? "split");
 	const ignoreWhitespace = tab.ignoreWhitespace ?? false;
 	const { dir, base } = splitPath(tab.path);
 	const copy = async () => {
@@ -69,37 +96,19 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 		setCopied(true);
 		setTimeout(() => setCopied(false), 1500);
 	};
-	const toggles = markdown ? (
-		<>
-			<ToggleSegment
-				testid="diff-toggle-source"
-				label="Source"
-				active={!rendered}
-				onClick={() => setDiffTabRendered(tab.id, false)}
-			/>
-			<ToggleSegment
-				testid="diff-toggle-rendered"
-				label="Rendered"
-				active={rendered}
-				onClick={() => setDiffTabRendered(tab.id, true)}
-			/>
-		</>
-	) : (
-		<>
-			<ToggleSegment
-				testid="diff-toggle-split"
-				label="Split"
-				active={view === "split"}
-				onClick={() => setDiffTabView(tab.id, "split")}
-			/>
-			<ToggleSegment
-				testid="diff-toggle-inline"
-				label="Inline"
-				active={view === "inline"}
-				onClick={() => setDiffTabView(tab.id, "inline")}
-			/>
-		</>
-	);
+	const saveViewState = (state: unknown) => {
+		const current = useAppStore
+			.getState()
+			.tabsByWorkspace[tab.workspaceId]?.find((candidate) => candidate.id === tab.id);
+		if (
+			current?.kind === "diff" &&
+			(current.rendererId === undefined || current.rendererId === renderer.id) &&
+			rendererImplementationKey(renderer.id, isPhoneViewport()) === implementationKey
+		) {
+			useAppStore.getState().setTabViewState(tab.workspaceId, tab.id, state);
+		}
+	};
+
 	return (
 		<div data-testid="diff-pane" className="flex h-full min-h-0 flex-col">
 			<div
@@ -126,7 +135,16 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 					</span>
 				</span>
 				<SendReviewButton workspaceId={tab.workspaceId} path={tab.path} />
-				{rendered ? null : (
+				{hunkActions ? (
+					<HeaderIconButton
+						testid="diff-revert-file"
+						label="Revert file"
+						onClick={() => void hunkActions.revertFile()}
+					>
+						<Revert className="size-14" />
+					</HeaderIconButton>
+				) : null}
+				{renderer.capabilities.whitespace ? (
 					<HeaderIconButton
 						testid="diff-toggle-whitespace"
 						label="Hide whitespace changes"
@@ -135,68 +153,56 @@ export function DiffPane({ tab }: { tab: DiffTab }) {
 					>
 						<Pilcrow className="size-14" />
 					</HeaderIconButton>
-				)}
-				<HeaderIconButton testid="diff-copy" label="Copy file contents" onClick={() => void copy()}>
-					{copied ? (
-						<Check className="size-14 text-feedback-success" />
-					) : (
-						<Copy className="size-14" />
-					)}
-				</HeaderIconButton>
-				{toggles}
-			</div>
-			<div className="min-h-0 flex-1">
-				<Suspense fallback={loading}>
-					{rendered ? (
-						<div className="h-full motion-safe:animate-reveal">
-							<RenderedDiff tab={tab} />
-						</div>
-					) : (
-						<MonacoDiff
-							path={tab.path}
-							original={tab.original}
-							modified={tab.modified}
-							view={markdown ? "split" : view}
-							ignoreWhitespace={ignoreWhitespace}
-							{...(reviewable ? { review } : {})}
+				) : null}
+				{renderer.capabilities.copy ? (
+					<HeaderIconButton
+						testid="diff-copy"
+						label="Copy file contents"
+						onClick={() => void copy()}
+					>
+						{copied ? (
+							<Check className="size-14 text-feedback-success" />
+						) : (
+							<Copy className="size-14" />
+						)}
+					</HeaderIconButton>
+				) : null}
+				{candidates.length >= 2
+					? candidates.map((candidate) => (
+							<ToggleSegment
+								key={candidate.id}
+								testid={rendererTestId(candidate.id)}
+								label={candidate.label}
+								active={candidate.id === renderer.id}
+								onClick={() => setTabRenderer(tab.workspaceId, tab.id, candidate.id)}
+							/>
+						))
+					: null}
+				{renderer.capabilities.layout && !mobile ? (
+					<>
+						<ToggleSegment
+							testid="diff-toggle-split"
+							label="Split"
+							active={view === "split"}
+							onClick={() => setDiffTabView(tab.id, "split")}
 						/>
-					)}
-				</Suspense>
+						<ToggleSegment
+							testid="diff-toggle-inline"
+							label="Inline"
+							active={view === "inline"}
+							onClick={() => setDiffTabView(tab.id, "inline")}
+						/>
+					</>
+				) : null}
 			</div>
+			<DiffSurfaceBody
+				surface={surface}
+				view={view}
+				ignoreWhitespace={ignoreWhitespace}
+				viewState={tab.viewState}
+				onViewState={saveViewState}
+				onSelectRenderer={(rendererId) => setTabRenderer(tab.workspaceId, tab.id, rendererId)}
+			/>
 		</div>
-	);
-}
-
-function HeaderIconButton({
-	testid,
-	label,
-	active,
-	onClick,
-	children,
-}: {
-	testid: string;
-	label: string;
-	active?: boolean;
-	onClick: () => void;
-	children: React.ReactNode;
-}) {
-	return (
-		<IconTooltip label={label}>
-			<button
-				type="button"
-				data-testid={testid}
-				data-active={active}
-				aria-pressed={active}
-				aria-label={label}
-				onClick={onClick}
-				className={`flex size-24 items-center justify-center rounded-[var(--radius-sm)] outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary ${
-					active
-						? "bg-container-elevated-bg text-text-default"
-						: "text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
-				}`}
-			>
-				{children}
-			</button>
-		</IconTooltip>
 	);
 }

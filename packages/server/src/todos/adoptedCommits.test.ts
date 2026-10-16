@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TodoStore } from "pi-todos/core";
 import { gitCommitPaths } from "../git";
+import { maybeAttachChangeArtifacts, settleChangeArtifacts } from "./artifacts";
 import { approveTodoReview, listTodos, startTodoReview } from "./todos";
 
 let dataDir: string;
@@ -85,6 +86,25 @@ test("a branch commit no item owns surfaces as an adopted, unreviewed commit —
 	expect(adopted?.review?.state).toBe("unreviewed");
 });
 
+test("a commit a subagent makes during an item's window attaches to the step, not adoptedCommits", async () => {
+	const store = new TodoStore(repo, SESSION);
+	const todo = store.add({ title: "implement feature" });
+	store.update(todo.id, { status: "in_progress" });
+	await maybeAttachChangeArtifacts("w1", SESSION); // opens the work window (baseline head)
+
+	// a subagent commits its own work directly into the shared worktree
+	const sha = commitFile("impl.ts", "export const x = 1;\n", "feat: implement x");
+
+	store.update(todo.id, { status: "done" });
+	await maybeAttachChangeArtifacts("w1", SESSION);
+	await settleChangeArtifacts("w1");
+
+	const plan = await listTodos({ workspaceId: "w1", sessionId: SESSION });
+	const item = plan.todos.find((t) => t.id === todo.id);
+	expect(item?.artifacts?.some((a) => a.kind === "commit" && a.sha === sha)).toBe(true);
+	expect((plan.adoptedCommits ?? []).some((a) => a.artifacts?.[0]?.sha === sha)).toBe(false);
+});
+
 test("a commit owned by a todo item is NOT adopted (no double-counting)", async () => {
 	const store = new TodoStore(repo, SESSION);
 	writeFileSync(join(repo, "owned.ts"), "export const b = 2;\n");
@@ -150,12 +170,22 @@ test("review resolution rejects an abbreviated commit:<short-sha> id", () => {
 
 test("review resolution rejects a commit past the newest-200 listCommits cap", () => {
 	const oldest = commitFile("first.ts", "export const f = 0;\n", "feat: first");
-	const loop = Bun.spawnSync([
-		"bash",
-		"-c",
-		`for i in $(seq 1 200); do git -C "${repo}" commit --allow-empty -m e$i -q; done`,
-	]);
-	if (!loop.success) throw new Error("bulk commits failed");
+	const since = Math.floor(Date.now() / 1000);
+	const stream = Array.from({ length: 200 }, (_, index) => {
+		const subject = `e${index + 1}\n`;
+		return [
+			"commit refs/heads/feature",
+			`committer test <t@thinkrail.test> ${since + index + 1} +0000`,
+			`data ${subject.length}`,
+			subject,
+			...(index === 0 ? [`from ${oldest}`] : []),
+			"",
+		].join("\n");
+	}).join("");
+	const bulk = Bun.spawnSync(["git", "-C", repo, "fast-import", "--quiet"], {
+		stdin: Buffer.from(stream),
+	});
+	if (!bulk.success) throw new Error(`bulk commits failed: ${bulk.stderr.toString()}`);
 	const newest = headSha(repo);
 	expect(() =>
 		startTodoReview({ workspaceId: "w1", sessionId: SESSION, id: `commit:${oldest}` }),

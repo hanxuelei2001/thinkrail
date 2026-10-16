@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { removeTree } from "@thinkrail/shared/removeTree";
-import { channel, version } from "@thinkrail/shared/version";
+import { channel, posthogProjectKey, version } from "@thinkrail/shared/version";
 import {
 	type ArtifactHostAdapter,
 	hostEnvironment,
@@ -104,35 +104,42 @@ export function analyticsProbeEnvironment(
 export function assertDesktopLaunch(
 	events: CollectedEvent[],
 	expected: { app_version: string; channel: string; os: string; arch: string },
+	expectAppInstalled: boolean,
 ): string {
+	const expectedNames = expectAppInstalled ? ["app_installed", "app_started"] : ["app_started"];
 	assert(
-		events.length === 1 && events[0]?.event === "app_started",
-		`expected only app_started before consent (no app_installed/additional events), got ${events.map((entry) => entry.event).join(", ")}`,
+		events.map((event) => event.event).join(",") === expectedNames.join(","),
+		`expected ${expectedNames.join(" then ")}, got ${events.map((entry) => entry.event).join(", ")}`,
 	);
-	const event = events[0];
-	assert(
-		/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(event.distinct_id),
-		"invalid installation UUID",
-	);
-	for (const [key, value] of Object.entries({ ...expected, build: "desktop" })) {
-		assert(event.properties[key] === value, `unexpected ${key}: ${event.properties[key]}`);
+	const first = events[0];
+	assert(first !== undefined, "missing analytics event");
+	for (const event of events) {
+		assert(
+			/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(event.distinct_id),
+			"invalid installation UUID",
+		);
+		assert(event.distinct_id === first.distinct_id, "installation UUID changed within launch");
+		for (const [key, value] of Object.entries({ ...expected, build: "desktop" })) {
+			assert(event.properties[key] === value, `unexpected ${key}: ${event.properties[key]}`);
+		}
+		const plainKeys = Object.keys(event.properties)
+			.filter((key) => !key.startsWith("$"))
+			.sort();
+		assert(
+			plainKeys.join(",") === "app_version,arch,build,channel,os",
+			`unexpected ${event.event} properties: ${plainKeys.join(",")}`,
+		);
+		assert(
+			event.properties.$process_person_profile === false,
+			"person profile processing must be off",
+		);
+		assert(event.properties.$geoip_disable === true, "GeoIP enrichment must be off");
 	}
-	const plainKeys = Object.keys(event.properties)
-		.filter((key) => !key.startsWith("$"))
-		.sort();
-	assert(
-		plainKeys.join(",") === "app_version,arch,build,channel,os",
-		`unexpected app_started properties: ${plainKeys.join(",")}`,
-	);
-	assert(
-		event.properties.$process_person_profile === false,
-		"person profile processing must be off",
-	);
-	assert(event.properties.$geoip_disable === true, "GeoIP enrichment must be off");
-	return event.distinct_id;
+	return first.distinct_id;
 }
 
 export async function runDesktopAnalyticsProbe(adapter: ArtifactHostAdapter): Promise<void> {
+	assert(posthogProjectKey !== "", "the analytics probe needs a release-stamped (keyed) build");
 	const root = mkdtempSync(join(tmpdir(), "thinkrail-desktop-analytics-"));
 	const collector = startAnalyticsCollector();
 	let host: RunningArtifactHost | undefined;
@@ -182,7 +189,11 @@ export async function runDesktopAnalyticsProbe(adapter: ArtifactHostAdapter): Pr
 					`${scenario.label} made analytics requests`,
 				);
 			} else {
-				const id = assertDesktopLaunch(collector.events.slice(previousEvents), expected);
+				const id = assertDesktopLaunch(
+					collector.events.slice(previousEvents),
+					expected,
+					installationId === undefined,
+				);
 				if (installationId)
 					assert(id === installationId, "installation UUID changed across restarts");
 				installationId = id;

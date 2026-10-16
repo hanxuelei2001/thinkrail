@@ -1,7 +1,7 @@
-import { type ReactNode, useMemo } from "react";
+import { memo, type ReactNode, useMemo } from "react";
 import { type Components, defaultUrlTransform } from "react-markdown";
 import { isWindowsAbsolutePath, workspaceFileTarget } from "./fileTargets";
-import { Markdown } from "./Markdown";
+import { BlockMarkdown } from "./Markdown";
 
 export function assistantUrlTransform(
 	value: string,
@@ -68,7 +68,7 @@ function AssistantLink({
 	);
 }
 
-export function AssistantMarkdown({
+export const AssistantMarkdown = memo(function AssistantMarkdown({
 	text,
 	workspaceRoot,
 	onOpenFile,
@@ -87,5 +87,5 @@ export function AssistantMarkdown({
 		}),
 		[workspaceRoot, onOpenFile],
 	);
-	return <Markdown text={text} urlTransform={assistantUrlTransform} components={components} />;
-}
+	return <BlockMarkdown text={text} urlTransform={assistantUrlTransform} components={components} />;
+});

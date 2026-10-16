@@ -11,7 +11,10 @@ export {
 	isJbcentralConnected,
 	isJbcentralQuotaRefreshSeconds,
 	isLineWidth,
+	isPlanReviewResult,
 	isRetriedAttempt,
+	isSettleIdleDays,
+	isSubagentMaxConcurrent,
 	isSystemThemePair,
 	isTerminalWindowsShell,
 	isThemeMode,
@@ -20,7 +23,12 @@ export {
 	MAX_HISTORY_LIMIT,
 	MAX_HISTORY_QUERY_LENGTH,
 	normalizeThemePreference,
+	PLAN_REVIEW_VERDICTS,
+	RECENT_MODELS_LIMIT,
 	REQUEST_IMAGE_BASE64_BUDGET,
+	REVIEW_READING_ORDER_LIMIT,
+	SETTLE_IDLE_DAYS,
+	SUBAGENT_MAX_CONCURRENT,
 	TERMINAL_REPLAY_KB,
 	TERMINAL_WINDOWS_SHELLS,
 	THEME_MODES,
@@ -28,5 +36,12 @@ export {
 } from "./domain";
 export type * from "./nativeClient";
 export type * from "./piProtocol";
-export { assistantToolCallsAreExecutable, isTranscriptMessageRole } from "./piProtocol";
+export {
+	assistantToolCallsAreExecutable,
+	isSessionWorking,
+	isTranscriptMessageRole,
+	sameModel,
+} from "./piProtocol";
+export type { QuitConfirmationDependencies } from "./quitConfirmation";
+export { createQuitConfirmation, QUIT_CONFIRMATION } from "./quitConfirmation";
 export * from "./wsProtocol";

@@ -1,4 +1,5 @@
 export type {
+	AcquisitionCampaignProperties,
 	AdditionalAnalyticsCapture,
 	AdditionalAnalyticsEvent,
 	AnalyticsAuthMethod,
@@ -12,11 +13,24 @@ export type {
 	BasicAnalyticsEvent,
 	BuildKind,
 	LoginMethod,
+	PlanActionSource,
+	PlanAddSurface,
+	PlanOpenSurface,
 	ProviderAnalyticsProperties,
+	ReviewCommentActor,
+	ReviewCommentKindProp,
+	ReviewResolveOutcome,
 	SendMode,
 	SetupAction,
 } from "./events";
-export { bucketCount, bucketDuration, bucketProvider, bucketProviderModel } from "./events";
+export {
+	acquisitionCampaignProperties,
+	bucketCount,
+	bucketDuration,
+	bucketProvider,
+	bucketProviderModel,
+	NONE_BUCKET,
+} from "./events";
 export {
 	type AnalyticsOptions,
 	getAdditionalAnalyticsCapture,
@@ -24,5 +38,6 @@ export {
 	resetAnalyticsForTests,
 	setAdditionalAnalyticsEnabled,
 	shutdownAnalytics,
+	startAttributionClaim,
 	track,
 } from "./service";

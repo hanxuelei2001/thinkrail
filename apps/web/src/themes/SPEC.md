@@ -16,20 +16,28 @@ fixed id plus fixed/system mode and optional light/dark pair; this module owns w
 this client, including operating-system color-scheme observation and same-appearance fallback. **Adding a
 theme = adding one `bundled/*.theme.json` file** (a PR + rebuild) — no code, contract, CSS, or test changes.
 
+Six manifests ship: the standard **Dark** and **Light** (the configured default and its pair, unchanged),
+**Minimal Dark** and **Minimal Light** (the quiet neutral surface hierarchy, restrained green accent and
+neutral `bubbleAccent` of the Minimal interface study, sharing the standard pair's syntax and terminal
+palettes), and the two High Contrast palettes with their stricter accessibility contract. Minimal is a
+palette a user picks in Appearance and nothing more: every theme renders the same roles, so a component
+never branches on the active theme or its contrast metadata to drop a fill or a border. What a palette
+cannot express through the manifest keys is a product decision for all themes, not a theme.
+
 ## Boundary
 
 - **Owns:** the versioned `ThemeManifest` contract + JSON schema; the bundled manifest set; catalog
   construction and fixed/system resolution; deterministic pair derivation and same-appearance fallback;
   operating-system color-scheme reads/subscription; atomic CSS-custom-property application; the versioned
-  first-paint preference hint; the semantic syntax-variable contract, and Shiki's generic CSS-variable
-  TextMate scope map (Monaco consumes the same palette through its fixed adapter).
+  first-paint preference hint; the semantic syntax-variable contract; Shiki's generic CSS-variable TextMate
+  scope map; and the hex resolver + Monaco colour-key map that adapt that same definition for the strict
+  desktop editor API.
 - **Public surface:** `index.ts` only — `initializeBundledThemes` (the synchronous bootstrap),
   `applyTheme` / `resolveTheme`, preference-aware `applyThemePreference` /
   `resolveThemePreference`, `deriveSystemThemePair`, `readSystemAppearance`,
-  `onSystemAppearanceChange`, `getThemes`, `onThemeSwap` (subscribe to a completed theme change — this
-  module owns the `data-theme` signal, so it owns the way to observe it; Monaco/xterm/mermaid all re-read
-  their palettes through it rather than each hand-rolling a MutationObserver), `readThemeHint` /
-  `writeThemeHint`, and the manifest/descriptor/preference-result types plus the Shiki registration.
+  `onSystemAppearanceChange`, `getThemes`, `readThemeHint` /
+  `writeThemeHint`, and the manifest/descriptor/preference-result types plus the Shiki registration and its
+  `resolveThinkrailShikiTheme` strict-consumer adapter.
 - **Allowed external deps:** `@thinkrail/contracts` for the opaque ids, theme preference shapes and
   configured default; browser DOM/media/storage APIs and Vite's build-time glob; Shiki types only, to type
   the generic registration.
@@ -60,12 +68,11 @@ to the code canvas in every theme. Every bundled manifest ships `header` equal t
 split changed no pixel — it made a knob exist. The same move is what any future divergence needs: a role
 can only vary between themes if the manifest has a key for it.
 
-`accentHover` is the second instance: the primary button needed a hover *fill* rather than a faded
-resting fill, and the alpha scale cannot express one (a tint of the accent is translucent, not darker).
-The alternative — pinning the primary button to a brand constant outside the palette — would have made
-it the one control a theme cannot restyle, and would have let it drift from `accent` (the same colour it
-had always been) on any theme that tunes its accent. So the accent is a **pair**: `accent` resting,
-`accentHover` hovered, `onAccent` the label on both.
+The primary control has an explicit opaque-fill contract: `accentSolid` is its resting fill,
+`accentHover` its hover fill, and `onAccent` the label on both. The separate `accent` remains the
+foreground/ring/border and tint source. This lets a palette vary opaque controls without silently
+changing every accent tint: the Minimal palettes align their resting fill with their accent, while the
+standard Light keeps its brighter independent solid fill.
 
 **The manifest→variable name is derived, not mapped.** A key writes to its kebab-cased name —
 `borderStrong` → `--border-strong`, `editorSelection` → `--editor-selection`. `runtime.ts` applies that
@@ -84,7 +91,7 @@ resting surface (`background`, `content`, `sidebar`, `header`, `elevated`, `inpu
 floor on the transient `hover` surface — the latter being our line rather than the standard's, so that
 a theme borrowed from elsewhere keeps its signature colours. `accent` and `success` are exempt from
 `input` alone: neither is ever rendered as text on a control. Separately, `onAccent` must clear AA on
-**both** accent fills (`accent` and `accentHover`), so a theme cannot darken its hover step far enough
+**both** primary fills (`accentSolid` and `accentHover`), so a theme cannot darken its hover step far enough
 to swallow the primary button's own label. Legibility alone proved insufficient: High Contrast Light
 once shipped its `hover` fill — the palette source of the selected/hovered control roles — at 1.05:1
 against its own sidebar, an invisible selection with every check green, so the suite also pins
@@ -123,6 +130,8 @@ matching contrast, then the same normal/any fallback. A persisted pair is reused
 Application is atomic from consumers' perspective: write the complete variable set, `color-scheme`, and
 semantic contrast metadata, then publish the effective manifest id through `data-theme` last, so generic
 consumers (Monaco/xterm/mermaid) can rebuild after that signal without observing half a palette.
+The catalog-independent `onThemeSwap` subscription lives in `@thinkrail/ui/theme`; app and extension
+consumers use it rather than hand-rolling MutationObservers. Theme selection and application stay here.
 Selected-text foregrounds are removed when their manifest values are `null`. In system mode one media-query
 listener reapplies locally on `change`; it never writes config or affects another client, and its owner must
 clean it up when preference or component lifetime changes.
@@ -136,11 +145,15 @@ the native shell's already-injected stable preference adapter when present and l
 which survives Electrobun's changing loopback origins without giving the launcher theme semantics.
 
 Shiki uses one web-only TextMate registration whose colors are semantic CSS variables (an explicitly
-supported Shiki mode); Monaco reads the same semantic palette and picks its base from
-appearance/contrast metadata, never a known theme id. Thus adding a theme never adds a Shiki import, CSS
-selector, or editor-specific catalog entry, and a swap needs no re-highlight. Unit coverage pins exact and
-wrong-appearance resolution, both fallback tiers, pair derivation, absent-signal light behavior,
-legacy/versioned hints, and media-listener cleanup.
+supported Shiki mode). Chat consumes that registration directly and needs no re-highlight. Monaco passes the
+same registration through `resolveThinkrailShikiTheme`, which canonicalizes every available CSS variable to
+hex, omits an unavailable value so Monaco's inherited base remains usable, and attaches the token-owned editor
+UI map; the panel supplies `cssColorToHex` so themes retain no dependency back into `lib`. Monaco picks its
+base from appearance/contrast metadata, never a known theme id, and replaces the resolved registration under
+one fixed name after an atomic theme swap. Thus adding a theme never adds a Shiki import, CSS selector, or
+editor-specific catalog entry. Unit coverage pins exact and wrong-appearance resolution, both fallback tiers,
+pair derivation, absent-signal light behavior, legacy/versioned hints, media-listener cleanup, and complete
+hex resolution of the shared syntax map.
 
 ## Non-goals (deliberate)
 

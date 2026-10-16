@@ -7,21 +7,53 @@ import type {
 import type { ExtUiRequest, ExtUiResponse } from "@thinkrail/contracts";
 import { plainTextTheme } from "./plainTextTheme";
 
-let publish: (request: ExtUiRequest) => void = () => {};
-export function setExtUiPublisher(fn: (request: ExtUiRequest) => void): void {
+/** Clients whose protocol version is below `belowProtocol`; absent means every client. */
+export interface ExtUiAudience {
+	belowProtocol: number;
+}
+type ExtUiPublisher = (request: ExtUiRequest, audience?: ExtUiAudience) => void;
+
+let publish: ExtUiPublisher = () => {};
+export function setExtUiPublisher(fn: ExtUiPublisher): void {
 	publish = fn;
+}
+
+let stateChanged: (sessionId: string) => void = () => {};
+export function setExtUiStateChanged(fn: (sessionId: string) => void): void {
+	stateChanged = fn;
 }
 
 let seq = 0;
 const nextId = (): string => `extui_${++seq}`;
 
-let onPendingChange: (sessionId: string) => void = () => {};
-export function setExtUiPendingObserver(fn: (sessionId: string) => void): void {
-	onPendingChange = fn;
+type NotifyInterceptor = (message: string, level: "info" | "warning" | "error") => boolean;
+const interceptors = new Map<string, Set<NotifyInterceptor>>();
+
+export function interceptExtUiNotify(
+	sessionId: string,
+	interceptor: NotifyInterceptor,
+): () => void {
+	const set = interceptors.get(sessionId) ?? new Set<NotifyInterceptor>();
+	set.add(interceptor);
+	interceptors.set(sessionId, set);
+	return () => {
+		set.delete(interceptor);
+		if (set.size === 0 && interceptors.get(sessionId) === set) interceptors.delete(sessionId);
+	};
 }
+
+function intercepted(sessionId: string, message: string, level: "info" | "warning" | "error") {
+	for (const interceptor of interceptors.get(sessionId) ?? []) {
+		if (interceptor(message, level)) return true;
+	}
+	return false;
+}
+
+type DialogRequest = Extract<ExtUiRequest, { kind: "select" | "confirm" | "input" | "editor" }>;
 
 interface Pending {
 	sessionId: string;
+	request: DialogRequest;
 	finish: (value: string | boolean | null, dismiss: boolean) => void;
 }
 const pending = new Map<string, Pending>();
@@ -36,19 +68,20 @@ export function cancelExtUiForSession(sessionId: string): void {
 	}
 }
 
-export function hasPendingExtUiDialog(sessionId: string): boolean {
+export function pendingExtUiDialog(sessionId: string): DialogRequest | null {
 	for (const entry of pending.values()) {
-		if (entry.sessionId === sessionId) return true;
+		if (entry.sessionId === sessionId) return entry.request;
 	}
-	return false;
+	return null;
 }
 
 export function notifyExtUi(
 	sessionId: string,
 	message: string,
 	level: "info" | "warning" | "error",
+	audience?: ExtUiAudience,
 ): void {
-	publish({ id: nextId(), sessionId, kind: "notify", message, level });
+	publish({ id: nextId(), sessionId, kind: "notify", message, level }, audience);
 }
 
 const MAX_EXTENSION_ERROR_CHARS = 500;
@@ -74,7 +107,7 @@ export function notifyExtensionError(sessionId: string, error: ExtensionError): 
 
 export function createWebUiContext(sessionId: string): ExtensionUIContext {
 	const bridgeDialog = (
-		request: ExtUiRequest,
+		request: DialogRequest,
 		opts?: ExtensionUIDialogOptions,
 	): Promise<string | boolean | null> =>
 		new Promise((resolve) => {
@@ -85,15 +118,15 @@ export function createWebUiContext(sessionId: string): ExtensionUIContext {
 				if (settled) return;
 				settled = true;
 				pending.delete(id);
+				stateChanged(sessionId);
 				if (timer) clearTimeout(timer);
 				opts?.signal?.removeEventListener("abort", onAbort);
 				if (dismiss) publish({ id, sessionId, kind: "dismiss" });
 				resolve(value);
-				onPendingChange(sessionId);
 			};
 			const onAbort = (): void => finish(null, true);
-			pending.set(id, { sessionId, finish });
-			onPendingChange(sessionId);
+			pending.set(id, { sessionId, request, finish });
+			stateChanged(sessionId);
 			if (opts?.signal) {
 				if (opts.signal.aborted) return finish(null, true);
 				opts.signal.addEventListener("abort", onAbort, { once: true });
@@ -135,7 +168,9 @@ export function createWebUiContext(sessionId: string): ExtensionUIContext {
 			return typeof v === "string" ? v : undefined;
 		},
 		notify(message, type) {
-			publish({ id: nextId(), sessionId, kind: "notify", message, level: type ?? "info" });
+			const level = type ?? "info";
+			if (intercepted(sessionId, message, level)) return;
+			publish({ id: nextId(), sessionId, kind: "notify", message, level });
 		},
 		setStatus(key, text) {
 			publish({ id: nextId(), sessionId, kind: "setStatus", key, text: text ?? null });

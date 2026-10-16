@@ -54,16 +54,26 @@ re-deriving from code.
 ## 3. Interview only the gaps
 
 Ask **only** what the files can't answer and that would change a spec — typically: the primary job / who
-it's for, explicit non-goals, and the *why* behind a non-obvious decision. Batch them per the
-**asking-user-questions** concept skill; infer a concrete answer and let the user correct it rather
-than asking open-ended.
+it's for, explicit non-goals, and the *why* behind a non-obvious decision. Interview them in rounds
+per the **asking-user-questions** concept skill; infer a concrete answer and let the user correct it
+rather than asking open-ended.
+
+Two kinds of question belong in the round whenever the files leave them open — the code shows
+*what*, rarely *why*:
+
+- **The why behind each non-obvious decision** in your working model that the files don't explain —
+  "I see X is done this way — why?" — with your inferred reasons as options. The answer goes
+  into the spec that owns the decision.
+- **Known limitations** — one multiSelect of the gaps you saw (unhandled cases, TODOs, missing tests,
+  slow paths) for the user to confirm; confirmed ones are recorded in the owning spec.
 
 If adoption candidates exist, add one question to the same round: a multiSelect listing them (grouped
 when many — an `adr/` set is one option) — which should become spec-graph nodes? A contradiction
 between a candidate and the code found by now goes into the round too (confirm the correction).
 Skipped or declined → adopt none; candidates stay input, noted at hand-off.
 
-If the files answered everything material, **skip the interview** and say so — don't manufacture questions
+If the files answered everything material — the whys and limitations included — **skip the
+interview** and say so; don't manufacture questions
 (adoption candidates alone still make a round — the offer is never dropped as "no gaps").
 A skipped/declined question is not a blocker: record the assumption inline in the spec, marked unconfirmed.
 
@@ -71,7 +81,8 @@ A skipped/declined question is not a blocker: record the assumption inline in th
 
 Save with the spec tools as you go (`spec_create` per node, `edit` for prose). Order:
 
-1. **`goal-and-requirements.md`** (`type: goal-and-requirements`) — the goal + scope. This is the graph
+1. **`goal-and-requirements.md`** (`type: goal-and-requirements`) — what the product is and why, in the
+   goal-doc shape `writing-specs` sets; capabilities are what the code already does. This is the graph
    root; the confirmed intent lives here.
 2. **`architecture.md`** (`type: architecture-design`, `parent: <goal id>`) — topology, the module
    boundaries, the real dependency edges (a small DAG only if it carries real information), and the
@@ -100,5 +111,5 @@ with a one-line note — don't guess elaborately.
 - Tell the user the specs are drafted on this workspace's branch — **review them in Changes; nothing merges
   until they approve** — and summarize what you inferred vs. what they confirmed, which docs were
   adopted vs. left as input, and any drift corrections made.
-- Point at `brainstorming` only for later work that requires choosing product scope, user-visible
-  behavior, or architecture; fully specified work proceeds directly. **This workflow ends here**.
+- Later features, behavior changes, and bug fixes go through `brainstorming`; work that changes no
+  behavior proceeds directly. **This workflow ends here**.

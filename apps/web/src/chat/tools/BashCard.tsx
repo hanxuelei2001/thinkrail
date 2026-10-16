@@ -1,5 +1,4 @@
-import type { ToolRenderProps } from "../toolRegistry";
-import { resultText, strArg } from "./toolHelpers";
+import { resultText, strArg, type ToolRenderProps } from "@thinkrail/extension-api/web";
 
 export function BashCard({ args, result, status }: ToolRenderProps) {
 	const command = strArg(args, "command");
@@ -9,7 +8,7 @@ export function BashCard({ args, result, status }: ToolRenderProps) {
 	return (
 		<div
 			data-testid="tool-bash"
-			className="overflow-hidden rounded-[var(--radius-sm)] border border-border-default bg-container-header-bg tr-code-text"
+			className="overflow-hidden rounded-sm border border-border-default bg-container-header-bg tr-code-text"
 		>
 			<div className="border-border-default border-b px-8 py-4">
 				<span className="text-feedback-success">$</span>

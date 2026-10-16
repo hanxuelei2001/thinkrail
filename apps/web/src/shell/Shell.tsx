@@ -1,23 +1,18 @@
 import {
-	RiArrowRightSLine as ChevronRight,
 	RiCircleLine as Circle,
-	RiGitBranchLine as GitBranch,
 	RiCircleFill,
 	RiSettings3Line as Settings,
 } from "@remixicon/react";
-import { useEffect, useRef, useState } from "react";
-import { QuietScrollArea } from "../components/QuietScrollArea";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../components/ui/resizable";
-import { IconTooltip } from "../components/ui/tooltip";
+import { IconTooltip } from "@thinkrail/ui/tooltip";
+import { useEffect, useState } from "react";
+import { NotificationPermissionPrompt, useAttentionNotifications } from "../notifications";
 import { AnalyticsConsentDialog } from "../panels/AnalyticsConsentDialog";
 import { InterviewPromptDialog } from "../panels/InterviewPromptDialog";
-import { ProjectTree } from "../panels/ProjectTree";
+import { NewWorkspaceDialog } from "../panels/NewWorkspaceDialog";
 import { SettingsDialog } from "../panels/SettingsDialog";
 import { Toaster } from "../panels/Toaster";
-import { openReviewLabel, useOpenBranchReview } from "../panels/useOpenBranchReview";
-import { WelcomePanel } from "../panels/WelcomePanel";
+import { useOpenBranchReview } from "../panels/useOpenBranchReview";
 import {
-	isUserOwnedWorkspace,
 	SettingsSection,
 	selectActiveWorkspace,
 	selectAnalyticsConsentPromptOpen,
@@ -30,15 +25,20 @@ import {
 	readThemeHint,
 	writeThemeHint,
 } from "../themes";
-import type { ConnectionStatus } from "../transport";
+import { type ConnectionStatus, runHostUpdate, supportsHostUpdateRun } from "../transport";
 import { UpdateReadyButton, UpdateSettings, useUpdates } from "../updates";
+import { AppShortcuts } from "./AppShortcuts";
 import { BrandLogo } from "./BrandLogo";
-import { CollapsedPanelRail } from "./CollapsedPanelRail";
 import { JbcentralQuotaTopbar } from "./JbcentralQuotaTopbar";
 import { LayoutSettings } from "./LayoutSettings";
 import { useLocalLayoutState } from "./layoutState";
+import { LocationBar } from "./locationBar";
+import { NativeWindowControls } from "./NativeWindowControls";
+import { PROJECT_HOME_PROJECTS_REGION_ID, ProjectHome } from "./ProjectHome";
+import { SessionSwitcher } from "./SessionSwitcher";
 import { useCollapsibleRegion } from "./useCollapsibleRegion";
 import { useGlobalHotkeys } from "./useGlobalHotkeys";
+import { useNativeWindowControls } from "./useNativeWindowControls";
 import { WorkspaceWorkbench } from "./WorkspaceWorkbench";
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -55,18 +55,24 @@ const STATUS_DOT: Record<ConnectionStatus, string> = {
 
 export function Shell() {
 	useLocalLayoutState();
+	useAttentionNotifications();
 	const status = useAppStore((s) => s.status);
 	const analyticsConsentOpen = useAppStore(selectAnalyticsConsentPromptOpen);
 	const StatusDot = status === "connected" ? RiCircleFill : Circle;
 	const activeWorkspaceId = useAppStore((s) => s.activeWorkspaceId);
 	const activeWorkspace = useAppStore(selectActiveWorkspace);
 	const contextProject = useAppStore(selectContextProject);
-	const { review: openReview } = useOpenBranchReview(activeWorkspace, status);
+	const { review: openReview, url: openReviewUrl } = useOpenBranchReview(activeWorkspace, status);
+	const locationReview =
+		openReview && openReviewUrl ? { ...openReview, url: openReviewUrl } : openReview;
 	const hasActiveWorkspace = activeWorkspaceId != null;
-	const updates = useUpdates();
+	const protocolVersion = useAppStore((s) => s.protocolVersion);
+	const updates = useUpdates(supportsHostUpdateRun(protocolVersion) ? runHostUpdate : null);
+	const windowControls = useNativeWindowControls();
+	const [newWorkspaceProjectId, setNewWorkspaceProjectId] = useState<string | null>(null);
+	const sessionSwitcherOpen = useAppStore((s) => s.sessionSwitcherOpen);
 
-	const welcomeCenterRef = useRef<HTMLDivElement>(null);
-	const welcomeProjects = useCollapsibleRegion(welcomeCenterRef, "welcome-left");
+	const homeProjects = useCollapsibleRegion<HTMLDivElement>(PROJECT_HOME_PROJECTS_REGION_ID);
 
 	const [themeHint] = useState(readThemeHint);
 	const welcomeGeneration = useAppStore((s) => s.welcomeGeneration);
@@ -93,7 +99,7 @@ export function Shell() {
 						side: "left",
 					});
 				}
-			: welcomeProjects.focusOrCollapse,
+			: homeProjects.toggle,
 		...(hasActiveWorkspace
 			? {
 					onWorkspace: () => {
@@ -113,64 +119,31 @@ export function Shell() {
 					},
 				}
 			: {}),
+		...(contextProject
+			? { onNewWorkspace: () => setNewWorkspaceProjectId(contextProject.id) }
+			: {}),
+		onSessionSwitcher: () => useAppStore.getState().toggleSessionSwitcher(),
 	});
 	return (
 		<div data-testid="shell" className="grid h-full grid-cols-[minmax(0,1fr)] grid-rows-[auto_1fr]">
 			<header
 				data-testid="topbar"
-				className="window-drag flex h-topbar-row min-w-0 select-none items-center border-b border-border-default bg-container-header-bg px-16"
+				className="relative window-drag flex h-topbar-row min-w-0 select-none items-center border-b border-border-default bg-container-header-bg px-16"
 			>
 				<div
 					aria-hidden="true"
 					data-testid="window-chrome-inset-left"
 					className="w-window-chrome-inset-left shrink-0"
 				/>
-				<div className="flex min-w-0 items-center gap-12 pr-12">
+				<div className="flex min-w-0 flex-1 items-center gap-12 self-stretch pr-12">
 					<BrandLogo />
 					{contextProject ? (
-						<div
-							data-testid="scope-context"
-							data-context={activeWorkspace ? "workspace" : "project-home"}
-							className="flex min-w-0 items-center gap-4 overflow-hidden leading-tight tr-text-ui"
-						>
-							<span className="hidden min-w-0 items-center gap-4 sm:flex">
-								<span
-									data-testid="scope-project"
-									className="max-w-[160px] truncate text-text-default"
-								>
-									{contextProject.name}
-								</span>
-								<ChevronRight className="size-16 shrink-0 text-text-muted" />
-							</span>
-							<span data-testid="scope-name" className="max-w-[220px] truncate text-text-default">
-								{activeWorkspace?.name ?? "Project home"}
-							</span>
-							{activeWorkspace ? (
-								<>
-									<GitBranch className="size-14 shrink-0 text-text-muted" />
-									<span data-testid="scope-branch" className="truncate text-text-muted">
-										{activeWorkspace.branch}
-									</span>
-									{isUserOwnedWorkspace(activeWorkspace) ? null : (
-										<span
-											data-testid="scope-base"
-											className="hidden shrink-0 text-text-muted md:inline"
-										>
-											· from {activeWorkspace.baseBranch}
-										</span>
-									)}
-									{openReview ? (
-										<span
-											data-testid="scope-review"
-											data-kind={openReview.kind}
-											className="shrink-0 text-text-muted"
-										>
-											· {openReviewLabel(openReview)}
-										</span>
-									) : null}
-								</>
-							) : null}
-						</div>
+						<LocationBar
+							project={contextProject}
+							workspace={activeWorkspace}
+							review={activeWorkspace ? locationReview : null}
+							onNewWorkspace={() => setNewWorkspaceProjectId(contextProject.id)}
+						/>
 					) : null}
 				</div>
 				<div
@@ -205,7 +178,7 @@ export function Shell() {
 							data-testid="open-settings"
 							aria-label="Settings"
 							onClick={() => useAppStore.getState().openSettings()}
-							className="flex size-28 items-center justify-center rounded-[var(--radius-sm)] text-text-muted outline-none transition-colors hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
+							className="flex size-28 items-center justify-center rounded-sm text-text-muted outline-none transition-colors hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
 						>
 							<Settings className="size-16" />
 						</button>
@@ -216,88 +189,47 @@ export function Shell() {
 					data-testid="window-chrome-inset-right"
 					className="w-window-chrome-inset-right shrink-0"
 				/>
+				{windowControls ? (
+					<NativeWindowControls
+						state={windowControls.state}
+						onMinimize={windowControls.minimize}
+						onToggleMaximize={windowControls.toggleMaximize}
+						onClose={windowControls.close}
+					/>
+				) : null}
 				<SettingsDialog
 					layoutSettings={<LayoutSettings />}
-					updateSettings={
-						updates ? (
-							<UpdateSettings
-								updates={updates}
-								onLater={() => useAppStore.getState().closeSettings()}
-							/>
-						) : undefined
-					}
+					updateSettings={updates ? <UpdateSettings updates={updates} /> : undefined}
 				/>
+				{newWorkspaceProjectId !== null ? (
+					<NewWorkspaceDialog
+						open
+						projectId={newWorkspaceProjectId}
+						onOpenChange={(isOpen) => {
+							if (!isOpen) setNewWorkspaceProjectId(null);
+						}}
+					/>
+				) : null}
 			</header>
 			{hasActiveWorkspace && activeWorkspaceId ? (
 				<div data-testid="workspace-shell-layout" className="h-full min-h-0 min-w-0">
-					<WorkspaceWorkbench key={activeWorkspaceId} workspaceId={activeWorkspaceId} />
+					<WorkspaceWorkbench workspaceId={activeWorkspaceId} />
 				</div>
 			) : (
-				<div
-					data-testid="welcome-shell-layout"
-					data-left-collapsed={welcomeProjects.collapsed}
-					className="flex h-full min-h-0 min-w-0"
-				>
-					{welcomeProjects.collapsed ? (
-						<CollapsedPanelRail
-							ref={welcomeProjects.railRef}
-							side="left"
-							label="Projects"
-							shortcutKey="B"
-							onOpen={welcomeProjects.openAndFocus}
-						/>
-					) : null}
-					<ResizablePanelGroup
-						direction="horizontal"
-						autoSaveId="thinkrail-shell-welcome"
-						className="min-h-0 min-w-0 flex-1"
-					>
-						<ResizablePanel
-							ref={welcomeProjects.panelRef}
-							id="left"
-							order={1}
-							defaultSize={18}
-							minSize={12}
-							collapsedSize={0}
-							collapsible
-							onCollapse={welcomeProjects.onCollapse}
-							onExpand={welcomeProjects.onExpand}
-						>
-							<aside
-								ref={welcomeProjects.contentRef}
-								data-testid="left-nav"
-								tabIndex={-1}
-								aria-hidden={welcomeProjects.collapsed || undefined}
-								inert={welcomeProjects.collapsed ? true : undefined}
-								className="h-full bg-container-sidebar-bg outline-none"
-							>
-								<QuietScrollArea className="h-full" viewportClassName="p-12">
-									<ProjectTree />
-								</QuietScrollArea>
-							</aside>
-						</ResizablePanel>
-						<ResizableHandle
-							direction="horizontal"
-							data-testid="resize-left"
-							aria-hidden={welcomeProjects.collapsed}
-							tabIndex={welcomeProjects.collapsed ? -1 : 0}
-							onDragging={welcomeProjects.onDragging}
-							{...(welcomeProjects.collapsed ? { className: "hidden" } : {})}
-						/>
-						<ResizablePanel id="welcome" order={2} defaultSize={82} minSize={40}>
-							<div
-								ref={welcomeCenterRef}
-								tabIndex={-1}
-								className="h-full min-h-0 bg-container-content-bg outline-none"
-							>
-								<WelcomePanel />
-							</div>
-						</ResizablePanel>
-					</ResizablePanelGroup>
-				</div>
+				<ProjectHome projects={homeProjects} />
 			)}
 			{analyticsConsentOpen ? <AnalyticsConsentDialog /> : <InterviewPromptDialog />}
+			<SessionSwitcher
+				open={sessionSwitcherOpen}
+				onOpenChange={(open) => {
+					const store = useAppStore.getState();
+					if (open) store.openSessionSwitcher();
+					else store.closeSessionSwitcher();
+				}}
+			/>
+			<NotificationPermissionPrompt />
 			<Toaster />
+			<AppShortcuts />
 		</div>
 	);
 }

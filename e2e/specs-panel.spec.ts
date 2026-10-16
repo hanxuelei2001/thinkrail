@@ -72,7 +72,7 @@ test("Specs tab renders the worktree's spec tree and opens a spec as an editor t
 	await expect(page.getByTestId("spec-tree-rail")).toHaveCount(0);
 	const rootLeft = await root.evaluate((element) => element.getBoundingClientRect().left);
 	const childLeft = await child.evaluate((element) => element.getBoundingClientRect().left);
-	expect(childLeft - rootLeft).toBeGreaterThanOrEqual(10);
+	expect(childLeft - rootLeft).toBeGreaterThanOrEqual(8);
 	expect(
 		await root.evaluate((element) => element.getBoundingClientRect().height),
 	).toBeLessThanOrEqual(30);
@@ -110,11 +110,12 @@ test("Specs tab renders the worktree's spec tree and opens a spec as an editor t
 	await expect(submodule).toBeVisible();
 	await expect(page.getByRole("button", { name: "Refresh specs" })).toHaveCount(0);
 	await expect(page.getByTestId("specs-retry")).toHaveCount(0);
-	const stripBottom = await page
-		.getByTestId("right-tab-strip")
+	const headerBottom = await page
+		.getByTestId("right-panel")
+		.getByTestId("auxiliary-pane-header")
 		.evaluate((element) => element.getBoundingClientRect().bottom);
 	const rootTop = await root.evaluate((element) => element.getBoundingClientRect().top);
-	expect(rootTop - stripBottom).toBeLessThanOrEqual(24);
+	expect(rootTop - headerBottom).toBeLessThanOrEqual(24);
 	await expect(submodule).toHaveAttribute("data-depth", "2");
 	await expect(submodule).toHaveAttribute("data-spec-role", "SUBMODULE");
 	await expect(submodule.getByTestId("spec-role")).toBeHidden();
@@ -127,7 +128,7 @@ test("Specs tab renders the worktree's spec tree and opens a spec as an editor t
 	const moduleBLeft = await moduleB.evaluate((element) => element.getBoundingClientRect().left);
 	const submoduleLeft = await submodule.evaluate((element) => element.getBoundingClientRect().left);
 	expect(Math.abs(moduleBLeft - childLeftAfterUpdate)).toBeLessThanOrEqual(1);
-	expect(submoduleLeft - childLeftAfterUpdate).toBeGreaterThanOrEqual(10);
+	expect(submoduleLeft - childLeftAfterUpdate).toBeGreaterThanOrEqual(8);
 	await expect(page.getByTestId("spec-tree-branch")).toHaveCount(0);
 	await expect(page.getByTestId("spec-tree-rail")).toHaveCount(0);
 });

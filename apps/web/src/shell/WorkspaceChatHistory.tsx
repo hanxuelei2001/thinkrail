@@ -5,11 +5,13 @@ import {
 	RiArrowGoBackLine as RotateCcw,
 	RiDeleteBin6Line as Trash2,
 } from "@remixicon/react";
+import { menuItemClass } from "@thinkrail/ui/menu-styles";
+import { Popover, PopoverContent, PopoverTrigger } from "@thinkrail/ui/popover";
+import { IconTooltip } from "@thinkrail/ui/tooltip";
+import { cn } from "@thinkrail/ui/utils";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
-import { menuItemClass } from "../components/ui/menu-styles";
-import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
-import { IconTooltip } from "../components/ui/tooltip";
-import { cn, relativeTime } from "../lib";
+import { useNow } from "../components/useNow";
+import { relativeTime } from "../lib";
 import { openChatInTab } from "../panels/openChat";
 import { type ClosedChat, toast, useAppStore } from "../store";
 import { errorText, getTransport } from "../transport";
@@ -34,7 +36,7 @@ export function WorkspaceChatHistory({
 				<PopoverTrigger
 					data-testid="chat-history"
 					aria-label="Reopen a closed chat"
-					className="flex w-32 shrink-0 items-center justify-center border-border-default border-l text-text-muted outline-none hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
+					className="flex w-panel-header-row shrink-0 items-center justify-center border-border-default border-l text-text-muted outline-none hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
 				>
 					{chatStarting ? (
 						<Loader2 className="size-14 animate-spin motion-reduce:animate-none" />
@@ -88,6 +90,7 @@ function ClosedChatRow({
 	onDismiss: () => void;
 	onRenameChat?: (sessionId: string, titleInput: string, currentTitle: string) => void;
 }) {
+	const now = useNow();
 	const inputRef = useRef<HTMLInputElement>(null);
 	const reopenButtonRef = useRef<HTMLButtonElement>(null);
 	const editStartTitleRef = useRef(chat.title);
@@ -166,16 +169,15 @@ function ClosedChatRow({
 					data-session-id={chat.sessionId}
 					onClick={() => {
 						onDismiss();
-						const navigation = useAppStore
-							.getState()
-							.beginCenterNavigation(workspaceId, targetGroupId);
+						const store = useAppStore.getState();
+						const navigation = store.beginCenterNavigation(workspaceId, targetGroupId);
 						void openChatInTab(workspaceId, chat.sessionId, navigation);
 					}}
 					className={cn(menuItemClass, "min-w-0 flex-1")}
 				>
 					<span className="flex-1 truncate">{chat.title}</span>
 					<span className="shrink-0 tr-text-metadata text-text-muted">
-						{relativeTime(chat.closedAt)}
+						{relativeTime(chat.closedAt, now)}
 					</span>
 					<RotateCcw className="size-14 shrink-0 text-text-muted" />
 				</button>

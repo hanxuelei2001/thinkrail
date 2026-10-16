@@ -26,10 +26,11 @@ styles/generated/typography.css   GENERATED, committed, never edited by hand
 |---|---|
 | `bun run typography:generate` | regenerate `styles/generated/typography.css` |
 | `bun run typography:validate` | validate the JSON (shape, references, policies) |
-| `bun run typography:check` | fail if the committed CSS is stale — pre-commit + `apps/web build` |
+| `bun run typography:check` | fail if the committed CSS is stale or adoption violates the token contract — pre-commit + `apps/web build` |
 
-`bun test` adds the guard rails: `styles/typography.test.ts` (source + generated output) and
-`styles/typographyUsage.test.ts` (adoption). `e2e/typography.spec.ts` asserts *computed* styles on the
+`bun test` also runs the guard rails: `styles/typography.test.ts` (source + generated output) and
+`styles/typographyUsage.test.ts` (adoption across app source, `packages/ui`, and every extension web
+half, using the shared source scanner). `e2e/typography.spec.ts` asserts *computed* styles on the
 real surfaces (hero, dialog/card titles, entity rows, branch metadata, eyebrow, Monaco, xterm,
 both markdown surfaces, the `<body>` base).
 
@@ -47,8 +48,15 @@ both markdown surfaces, the `<body>` base).
 | `fontFamilies` | `interface` (Geist Variable, all proportional UI + reading text) · `code` (JetBrains Mono Variable, code only) · `brand` → **Orbitron Variable** (self-hosted `@fontsource-variable/orbitron`, a distinct display face for the brand role — `wordmark` + `hero`; it was formerly a `$ref` to `interface`). Orbitron is **latin-only** and `brand.hero` renders a project's own name, so the stack falls back to the *interface* face before any system font — a non-Latin name lands on Geist (cyrillic/latin-ext/vietnamese, already bundled) rather than on whatever the OS supplies |
 | `fontWeights` | `light` 370 · `regular` 400 · `medium` 500 · `semibold` 600 · `brand` 400 |
 | `fontSizes` | `s10` `s11` `s12` `s13` `s14` `s16` `s18` `s20` `s24` `s44` (px) |
-| `lineHeights` | `compact` 1.25 · `metadata` 1.3333 (12px→16px, 18px→24px) · `ui` 1.4286 (14px→20px) · `code` 1.5 · `relaxed` 1.5385 (13px→20px) · `default` 1.6 |
+| `lineHeights` | `compact` 1.25 · `metadata` 1.25 (12px→15px) · `ui` 1.3 (14px→18.2px) · `code` 1.4 · `relaxed` 1.4 (13px→18.2px) · `default` 1.3 (14px→18.2px) · `reading` 1.45 (14px→20.3px) |
 | `letterSpacings` | `normal` · `loose` 0.02em · `wide` 0.05em · `widest` 0.1em · `brand` 0.5px |
+
+The leading scale is deliberately **dense** (1.25–1.4): Geist’s x-height at 14px is 7.4px (cap height 9.9px), so
+the former 1.5–1.6 left an empty band between lines taller than the letters themselves — it read as
+near double spacing. Reading prose — `body.reading`: chat, user messages, documents — is the deliberate exception at
+`reading` 1.45: at the dense value long replies read as a compressed wall, so reading text keeps more leading
+than UI chrome. Monaco and the Pierre diff surface read `--tr-line-height-default` and stay dense; both use a whole-pixel code row (Pierre's virtualizer needs the exact row height). `codeRow` in `typography.json` names its font size and line height, and the generator emits the pre-rounded `--tr-code-row-height`, which Pierre's CSS and its virtualizer both read, because CSS `round()` is missing before Safari 15.4. Values are short exact decimals on purpose: the production minifier rounds custom properties to
+five decimals, so a repeating ratio such as 18/14 can never land on a whole pixel (it shipped as `17.9999px`).
 
 **Semantic styles** are what components use. Each names seven primitive references and nothing else, so
 it resolves deterministically — there is no inheritance, no per-usage branching, no fallback:
@@ -76,12 +84,13 @@ The rules, all enforced by `typography:validate`:
 `textStyles` groups: **brand** (`hero` — the Welcome text identity; the shell logo is supplied vector
 artwork) · **heading** (`xl`, `lg`, `md`, `sm` — the shared document heading scale) · **title**
 (`dialog`, `card`→dialog, `section`, `compact`, `entity`→body.reading)
-· **ui** (`default`, `metadata`, `eyebrow`, `labelPill`→eyebrow, `action`→title.compact,
-`emphasis`→title.compact) · **body** (`reading`) · **code** (`text` — the base 13px code style, `document`, `otp`, `textSmall` — an 11px code style for
+· **ui** (`default`, `metadata`, `eyebrow`, `labelPill`→eyebrow, `caption` — the 10px/compact uppercase
+badge and tile-initial style (row status badges, the topbar project initial), where `eyebrow`'s 18px line would
+not fit, `action`→title.compact, `emphasis`→title.compact) · **body** (`reading`) · **code** (`text` — the base 13px code style, `document`, `otp`, `textSmall` — an 11px code style for
 inline code in table cells). `proseSystems` holds one entry per markdown surface, almost entirely aliases
 into the above. Dead aliases are not retained: prose points directly to the semantic style it uses.
 
-**19 canonical definitions + 30 aliases = 49 styles.**
+**20 canonical definitions + 30 aliases = 50 styles.**
 
 One prose rule is deliberately *not* a semantic style: `<strong>` / `<b>` gets **weight only**
 (`--tr-font-weight-medium`), emitted by the generator into each prose system. A complete style there
@@ -117,7 +126,7 @@ The generator derives one class per semantic style, mechanically:
 | `heading.xl` · `heading.lg` · `heading.md` · `heading.sm` | `.tr-heading-xl` · `.tr-heading-lg` · `.tr-heading-md` · `.tr-heading-sm` |
 | `title.dialog` · `title.card` · `title.section` · `title.compact` · `title.entity` | `.tr-title-dialog` · `.tr-title-card` · `.tr-title-section` · `.tr-title-compact` · `.tr-title-entity` |
 | `ui.default` · `ui.metadata` | `.tr-text-ui` · `.tr-text-metadata` |
-| `ui.eyebrow` · `ui.labelPill` · `ui.action` · `ui.emphasis` | `.tr-text-eyebrow` · `.tr-text-label-pill` · `.tr-text-action` · `.tr-text-emphasis` |
+| `ui.eyebrow` · `ui.labelPill` · `ui.caption` · `ui.action` · `ui.emphasis` | `.tr-text-eyebrow` · `.tr-text-label-pill` · `.tr-text-caption` · `.tr-text-action` · `.tr-text-emphasis` |
 | `body.reading` | `.tr-text-reading` |
 | `code.text` · `code.document` · `code.otp` · `code.textSmall` | `.tr-code-text` · `.tr-code-document` · `.tr-code-otp` · `.tr-code-text-small` |
 | `proseSystems.<id>.*` | `.tr-prose-<id>` + one element selector each |
@@ -168,7 +177,7 @@ naming its own type. Two exist:
 | | `chat` (`.tr-prose-chat`) | `doc` (`.tr-prose-doc`) |
 |---|---|---|
 | mounted by | `chat/Markdown.tsx` | `panels/MarkdownPreview.tsx` |
-| body, blockquote, lists | 14 / 370 / 1.6 | 14 / 370 / 1.6 |
+| body, blockquote, lists | 14 / 370 / 1.45 | 14 / 370 / 1.45 |
 | h1 | 18 / 600 | **24 / 600** |
 | h2 | 14 / 600 | **20 / 600** |
 | h3 | 12 / 600 | **18 / 600** |
@@ -254,9 +263,10 @@ The allowlist is deliberately tiny, and each entry is enforced by name in
 | Surface | Why it cannot use a semantic class |
 |---|---|
 | `panels/monacoSetup.ts` | Monaco takes `fontFamily` / `fontSize` / `lineHeight` as JS options — it reads `--tr-font-family-code`, `--tr-font-size-s11`, `--tr-line-height-default`, so it cannot drift from a code block |
+| `panels/resources/code/pierreVirtualizer.ts` | Pierre's virtualizer takes its row height as a JS metric — it reads the generated `--tr-code-row-height`, the same value `.pierre-code-surface` gives `--diffs-line-height` |
 | `panels/TerminalInstance.tsx` | xterm, same reason — it reads `--tr-font-family-code` + `--tr-font-size-s13` (the primitives behind `code.text`), and owns row height through its own `lineHeight` option rather than a CSS line-height |
-| `chat/tools/visualize/mermaid.ts` | mermaid's theme config takes a family string (`--tr-font-family-code`) |
-| `index.css`, `styles/tokens.css`, `styles/global.css` | the mapping layers themselves |
+| `thinkrail-extensions/visualize/web/mermaid.ts` | mermaid's theme config takes a family string (`--tr-font-family-code`) |
+| `index.css`, `styles/tokens.css`, `styles/global.css` | the mapping layers themselves; `.pierre-code-surface` passes the code family, `s11`, and the default line-height (rounded to whole pixels) into Pierre's Shadow DOM |
 
 The OTP code is **not** an exception any more: it is the named `code.otp` style (`.tr-code-otp`).
 

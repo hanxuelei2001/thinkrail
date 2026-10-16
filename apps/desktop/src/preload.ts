@@ -1,5 +1,13 @@
-import type { NativeUpdateBridge, NativeUpdateState } from "@thinkrail/contracts";
+import type {
+	NativeNotificationBridge,
+	NativeNotificationInput,
+	NativeUpdateBridge,
+	NativeUpdateState,
+	NativeWindowControlsBridge,
+	NativeWindowState,
+} from "@thinkrail/contracts";
 import Electrobun, { Electroview } from "electrobun/view";
+import { handlePageZoomShortcut, installPageZoomGestures } from "./pageZoom";
 import {
 	INITIAL_DESKTOP_PREFERENCES_GLOBAL,
 	isDesktopPreferenceKey,
@@ -8,7 +16,14 @@ import {
 } from "./preferenceAdapter";
 import { takePreloadGlobal } from "./preloadGlobals";
 import type { DesktopRpc } from "./rpc";
-import { createWindowChromeStyleWriter, INITIAL_WINDOW_CHROME_GLOBAL } from "./windowChrome";
+import { createShortcutsBridge } from "./shortcutsBridge";
+import { installTitleBarDoubleClick } from "./titleBarDoubleClick";
+import {
+	createWindowChromeStyleWriter,
+	INITIAL_WINDOW_CHROME_GLOBAL,
+	NATIVE_WINDOW_CONTROLS_GLOBAL,
+	readWindowChromeFlag,
+} from "./windowChrome";
 
 interface DesktopPreferenceAdapter {
 	getItem(key: string): string | null;
@@ -16,13 +31,20 @@ interface DesktopPreferenceAdapter {
 	removeItem(key: string): void;
 }
 
+const initialWindowChrome = takePreloadGlobal(INITIAL_WINDOW_CHROME_GLOBAL);
 const windowChromeStyle = createWindowChromeStyleWriter(
 	() => document.documentElement?.style ?? null,
 );
 document.addEventListener("DOMContentLoaded", windowChromeStyle.flush, { once: true });
-windowChromeStyle.update(takePreloadGlobal(INITIAL_WINDOW_CHROME_GLOBAL));
+windowChromeStyle.update(initialWindowChrome);
 
 const updateListeners = new Set<(state: NativeUpdateState) => void>();
+const windowStateListeners = new Set<(state: NativeWindowState) => void>();
+let nativeWindowFocused = document.hasFocus();
+window.addEventListener("focus", () => {
+	nativeWindowFocused = true;
+});
+const shortcuts = createShortcutsBridge(() => rpc.request.quitApp());
 const rpc = Electroview.defineRPC<DesktopRpc>({
 	maxRequestTime: 5000,
 	handlers: {
@@ -32,14 +54,32 @@ const rpc = Electroview.defineRPC<DesktopRpc>({
 				for (const listener of updateListeners) listener(state);
 			},
 			windowChromeChanged: windowChromeStyle.update,
+			windowStateChanged: (state) => {
+				for (const listener of windowStateListeners) listener(state);
+			},
+			windowFocusChanged: ({ focused }) => {
+				nativeWindowFocused = focused;
+			},
+			quitHintChanged: ({ hint }) => shortcuts.emitQuitHint(hint),
+			nativeCommand: ({ command }) => shortcuts.emitCommand(command),
 		},
 	},
 });
 const electroview = new Electrobun.Electroview({ rpc });
+installTitleBarDoubleClick(window, () => electroview.rpc?.send.titleBarDoubleClick());
+window.addEventListener("keydown", (event) =>
+	handlePageZoomShortcut(event, navigator.platform, (action) => {
+		electroview.rpc?.send.pageZoomRequested({ action });
+	}),
+);
+installPageZoomGestures(window, navigator.platform, (gesture) => {
+	electroview.rpc?.send.pageZoomGestureRequested(gesture);
+});
 const globals = globalThis as typeof globalThis & Record<string, unknown>;
 const updateBridge: NativeUpdateBridge = Object.freeze({
 	getState: () => rpc.request.getUpdateState(),
 	checkForUpdates: () => rpc.request.checkForUpdates(),
+	downloadUpdate: () => rpc.request.downloadUpdate(),
 	restartToUpdate: () => rpc.request.restartToUpdate(),
 	subscribe: (listener: (state: NativeUpdateState) => void) => {
 		updateListeners.add(listener);
@@ -52,6 +92,42 @@ Object.defineProperty(globals, "__THINKRAIL_NATIVE_UPDATES__", {
 	configurable: false,
 	enumerable: false,
 });
+Object.defineProperty(globals, "__THINKRAIL_NATIVE_SHORTCUTS__", {
+	value: shortcuts.bridge,
+	writable: false,
+	configurable: false,
+	enumerable: false,
+});
+const notificationBridge: NativeNotificationBridge = Object.freeze({
+	show: (input: NativeNotificationInput) => {
+		rpc.request.showNotification(input).catch(() => undefined);
+	},
+	isWindowFocused: () => nativeWindowFocused,
+});
+Object.defineProperty(globals, "__THINKRAIL_NATIVE_NOTIFICATIONS__", {
+	value: notificationBridge,
+	writable: false,
+	configurable: false,
+	enumerable: false,
+});
+if (readWindowChromeFlag(initialWindowChrome, "windowControls") === true) {
+	const windowControlsBridge: NativeWindowControlsBridge = Object.freeze({
+		getState: () => rpc.request.getWindowState(),
+		minimize: () => rpc.request.minimizeWindow(),
+		toggleMaximize: () => rpc.request.toggleMaximizeWindow(),
+		close: () => rpc.request.closeWindow(),
+		subscribe: (listener: (state: NativeWindowState) => void) => {
+			windowStateListeners.add(listener);
+			return () => windowStateListeners.delete(listener);
+		},
+	});
+	Object.defineProperty(globals, NATIVE_WINDOW_CONTROLS_GLOBAL, {
+		value: windowControlsBridge,
+		writable: false,
+		configurable: false,
+		enumerable: false,
+	});
+}
 const injectedPreferences = takePreloadGlobal(INITIAL_DESKTOP_PREFERENCES_GLOBAL);
 const preferences = new Map<string, string>();
 if (typeof injectedPreferences === "object" && injectedPreferences !== null) {

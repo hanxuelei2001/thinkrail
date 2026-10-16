@@ -16,7 +16,7 @@ import {
 	remoteRefOid,
 } from "../git";
 import { ghSetupProblem } from "../github";
-import { listTodos } from "../todos";
+import { generateTodoSummary, listTodos } from "../todos";
 import { getWorkspace, refreshUserOwnedWorkspace } from "../workspaces";
 import { renderPrBody } from "./prBody";
 
@@ -39,12 +39,16 @@ export interface OpenPrParams {
 	draft?: boolean;
 }
 
+/** Server-only context used by the host to fence persistence; stripped before the wire response. */
+export type OpenPrHostResult = OpenPrResult & { branch: string };
+
 export async function previewPr(params: {
 	workspaceId: string;
 	sessionId: string;
 	title?: string;
 }): Promise<PrDraft> {
 	const ws = getWorkspace(params.workspaceId);
+	await generateTodoSummary({ workspaceId: params.workspaceId, sessionId: params.sessionId });
 	return {
 		title: params.title?.trim() || ws.branch,
 		body: renderPrBody(await listTodos(params)),
@@ -223,7 +227,7 @@ export async function openPr(
 	params: OpenPrParams,
 	run: PrCommandRunner = runProviderCommand,
 	ghProblem: () => Promise<GhSetupProblem | null> = ghSetupProblem,
-): Promise<OpenPrResult> {
+): Promise<OpenPrHostResult> {
 	// Default/external workspaces are user-owned checkouts the fs watcher re-syncs asynchronously —
 	// resolve the live branch synchronously here so a switch made in a terminal just before Open PR
 	// can never push/open/compare against a stale one (see SPEC). A no-op for created workspaces,
@@ -247,7 +251,7 @@ export async function openPr(
 	forgetOpenBranchReview(cwd);
 
 	const slug = providerFromRemoteUrl(origin.out) === "github" ? githubSlug(origin.out) : null;
-	if (!slug) return { action: "pushed", dirtyFiles };
+	if (!slug) return { action: "pushed", dirtyFiles, branch: ws.branch };
 
 	const draft = await previewPr(params);
 	const title = draft.title;
@@ -267,11 +271,12 @@ export async function openPr(
 			},
 			run,
 		).finally(() => forgetOpenBranchReview(cwd));
-		if (outcome) return { ...outcome, dirtyFiles };
+		if (outcome) return { ...outcome, dirtyFiles, branch: ws.branch };
 		problem = await ghProblem();
 	}
 	return {
 		action: "compare",
+		branch: ws.branch,
 		compareUrl: compareQuickPullUrl(slug, ws.baseBranch, ws.branch, title, body),
 		...(problem ? { ghProblem: problem } : {}),
 		dirtyFiles,

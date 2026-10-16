@@ -4,9 +4,9 @@ type: submodule-design
 status: active
 title: todos — a chat's per-session TODO plan (read/write)
 parent: module-server
-depends-on: [module-contracts, submodule-server-git]
+depends-on: [module-contracts, submodule-server-git, submodule-server-assist]
 references: [module-pi-todos, submodule-server-pr, submodule-web-chat]
-tags: [v2, todos]
+tags: [todos]
 ---
 
 ## Responsibility
@@ -21,16 +21,22 @@ semantics, and shipping the result keeps `apps/web` — which may import `contra
 second copy of it.
 
 Unlike the agent's own tools (which own status), the host's write surface is the **user's** edit lever:
-`todo.add` tags new items `origin: "user"` so the agent's `todo_write` re-plans never drop them, and
-`todo.remove` deletes by id. `todo.update` exists on the wire (accepts status/title/note) but no current
-UI path calls it — status stays agent-owned (see [[module-pi-todos]]). `updateTodo` unwraps the store's
+`todo.add` tags new items `origin: "user"` so the agent's `todo_write` re-plans never drop them.
+`todo.update` exists on the wire (accepts status/title/note) but no current UI path calls it — status
+stays agent-owned (see [[module-pi-todos]]). `todo.remove` is the user's queue-cancel action,
+constrained by `removeTodo`'s **done-guard**: pending / in_progress items can be removed (the UI
+shows a hover "Remove" button on them); a `done` item is rejected because completed steps are the
+plan's audit trail. The host also layers an active-review guard (`isItemUnderActiveReview`) so a
+mid-review cancellation can't strand review bookkeeping. The agent's own `todo_remove` tool goes
+through `TodoStore.remove` directly and does not run through this gate. A UI removal also drops the
+item's baseline, review record and auto-review cycle count. `updateTodo` unwraps the store's
 `TodoUpdateResult` (`{ todo, paused }` — `paused` = items auto-demoted to keep one `in_progress`); the
 wire response stays a bare `TodoItem` — the UI re-reads the whole plan on change, so demotions arrive
 with the next `todo.list`.
 
 This module does **not** push: a user edit isn't broadcast to other clients. The acting client updates
-optimistically; a second viewer reconciles on the next `pi.event`-driven refetch. Fine for single-owner
-V1 (the chat-plan UX this feeds: [[submodule-web-chat]]'s "Chat TODO plan").
+optimistically; a second viewer reconciles on the next `pi.event`-driven refetch. Fine for a single-owner
+host (the chat-plan UX this feeds: [[submodule-web-chat]]'s "Chat TODO plan").
 
 **Change artifacts (`artifacts.ts`) — a commit-based review map.** Status stays agent-owned, but the host
 *observes* the transitions to attach an item's code changes, so the plan becomes a durable review map.
@@ -43,10 +49,10 @@ already occupies the queue or a done item precedes the active one. The queued pa
 window in production — missing means capture failed, so later completion degrades to the no-baseline
 path-list fallback rather than excluding work from a late baseline. The
 whole path is best-effort and never throws into the event stream. The same chain serializes **every host
-plan/sidecar writer** — the UI's `todo.add` / `todo.update` / `todo.remove` and `session.delete`'s window
-removal enqueue behind any in-flight reconcile (`enqueueTodoMutation`) — because a reconcile reads plan +
-baselines, awaits git, and ends with a whole-map baseline write: an unqueued removal landing inside that
-window would be resurrected by the stale write, exactly the permanent-orphan case below. Agent-side
+plan/sidecar writer** — the UI's `todo.add` / `todo.update` and `session.delete`'s window removal
+enqueue behind any in-flight reconcile (`enqueueTodoMutation`) — a reconcile reads plan + baselines,
+awaits git, and ends with a whole-map baseline write; an unqueued write landing inside that window
+would be resurrected by the stale pass. Agent-side
 `todo_*` plan writes can't be queued (they happen inside pi), so a reconcile fingerprints both the plan
 and persisted baseline sidecar it read and re-checks the authoritative fingerprint before each
 corresponding write. Drift aborts that stale pass before it can open a too-late baseline, commit a
@@ -59,14 +65,13 @@ On `in_progress` it **opens the item's work window**: a baseline of the worktree
 changed-path set + the current `HEAD` sha, captured through the git module's deliberately synchronous
 `gitUncommittedPaths` leaf before the tool-end publisher returns, then **persisted** in a host-owned sidecar next to the todos JSON
 (`.thinkrail/context/todos/<sessionId>.baselines.json`, read-modify-write like the store) — so a host
-restart mid-item changes nothing; `head` is recorded for future window-commit attribution, unused today.
+restart mid-item changes nothing; `head` is the range base for **in-window commit adoption** (below).
 A window opening while **another chat** already has one records `shared: true` and marks that other
 window shared too (`markOtherSessionWindowsShared`) — the flag is **sticky**, because "was this window
 exclusive for its whole life?" is what the gate needs and can't be re-derived once the other closed.
 (Two items of *one* plan can't overlap: `pi-todos` keeps exactly one item `in_progress` and a demoted
 item's window is dropped — pinned by a test, since the gate leans on it.) **Windows never outlive their
-owner**: a baseline whose item has vanished from the plan is pruned at the top of every reconcile, the
-UI's `todo.remove` drops the removed item's baseline directly (no `todo_*` tool end fires for a UI edit),
+owner**: a baseline whose item has vanished from the plan is pruned at the top of every reconcile,
 and `session.delete` removes the chat's whole sidecar (`removeSessionTodoWindows`) — an orphan would read
 as a permanently open foreign window and force every sibling chat into the fallback forever. On `done`:
 
@@ -77,6 +82,26 @@ as a permanently open foreign window and force every sibling chat into the fallb
   `commit` artifact** (the sha, `label` = the item title) and **nothing else**: the commit is
   self-sufficient — its file list is *derived*, never denormalized into the JSON (see the `listTodos`
   decoration below).
+- **Adopt in-window commits.** The host is the intended sole committer during an item's window (the
+  worker subagent's prompt forbids it from committing — [[module-pi-subagents]]), but that is guidance,
+  not enforcement, and the user may hand-commit too. So before the delta commit, any commit that landed
+  in `base.head..HEAD` while the item was open (`git.listCommitsSince`) and is owned by no plan item is
+  **attached to the item as a `commit` artifact** — oldest-first, ahead of the delta commit, so the
+  step's revision history reads chronologically. Without this a subagent that commits its own work
+  empties the delta at `done` — the step would show no change set and the work would leak to
+  `adoptedCommits` (below) as an orphan. Adoption rides the **same exclusive-window gate** as the delta
+  commit (gate 3: never `shared`, no other chat mid-work), needs a recorded `base.head`, **and requires
+  the item's to be the sole same-session window in the pass**. The sole-window rule is load-bearing: the
+  range is `base.head..HEAD`, so on a linear branch an *earlier* item's range is a **superset** of a
+  *later* item's window — if a done item reconciled while another same-session window was open (its own
+  done-pass deferred behind the per-workspace queue while the next item started and its subagent
+  committed), a naive `base.head..HEAD` would let the earlier item greedily claim the later item's
+  commits (the `owned` dedup only stops the *same* sha being claimed twice, not this cross-window
+  over-reach). So when a second same-session window exists the item adopts **nothing** and those commits
+  degrade to the safe `adoptedCommits` fallback — the pre-existing behavior, never a mis-attribution.
+  Adoption does **not** need gate 2 (foreign *uncommitted* dirt), which governs the delta commit alone.
+  An `owned` sha set across the pass additionally prevents a commit already owned by any item (e.g. a
+  redo's prior commit) from being re-adopted.
 - **The message is a single subject line the user can push unedited.** These commits land on the user's
   own branch, in the same history as their hand-written ones, and the branch ships straight to a PR
   ([[submodule-server-pr]] pushes it) — so anything the user would have to reword before pushing is a
@@ -93,9 +118,12 @@ as a permanently open foreign window and force every sibling chat into the fallb
 - **Commit gate (safety on the user's branch).** A commit may only contain work the item can be *proven*
   to own, so all four must hold — else **no commit**, and the live-diff `change` path-list artifacts stand
   in (branch scope; `change` survives **only** as this fallback):
-  1. **A recorded baseline.** No baseline = no observed window (an item flipped straight to `done`, a plan
-     predating the sidecar), and then every dirty path in the worktree merely *looks* like the item's
-     delta. Reportable, never committable.
+  1. **A recorded baseline.** No baseline = no observed window (an item flipped straight to `done`, a
+     plan predating the sidecar). The reconcile has no honest basis for claiming anything the step
+     did, so **`deltaPaths` is empty**: no commit, **no `change` artifacts**, nothing. The dirty paths
+     surface in `unattributed` instead, which is the correct place for "work the reconcile can't
+     attribute" — claiming every dirty path would grab sibling steps' work and user WIP into a
+     bundled-done step.
   2. **No foreign dirt left** — every path dirty at the baseline is clean again by `done`. This is what
      quietly disables auto-commit in a Default workspace holding the user's WIP, the intended guard.
   3. **A window never shared** (`shared` unset) and no other chat mid-work right now — concurrent windows
@@ -110,9 +138,14 @@ as a permanently open foreign window and force every sibling chat into the fallb
   re-worked item (fresh baseline present) gets its new `commit` **appended** to the existing ones — the
   artifact list is the item's **revision history** (1 TODO = N commits is first-class; each fix cycle is
   one more commit, and the review watermark below diffs against the list) — while old `change` path-lists
-  are replaced (a live delta has no history to keep). A redo that lands in the path-list fallback also
-  **drops the item's review record** (→ `unreviewed`): a live-path delta can't be watermarked by sha, so
-  "review only the new delta" honestly degrades to reviewing the change set afresh. The **auto-cycle
+  are replaced (a live delta has no history to keep). A redo whose fresh attachment includes **any**
+  path-list `change` **drops the item's review record** (→ `unreviewed`): a live-path delta can't be
+  watermarked by sha and `reviewInfo` derives `unreviewedShas` from commits only, so a `change` riding
+  alongside adopted commits would be invisible to review state (a covered sha set could read fully
+  reviewed while the path delta went unseen) — so "review only the new delta" honestly degrades to
+  reviewing the change set afresh. The record is **kept only when the fresh attachment is entirely
+  SHA-backed** (pure in-window commit adoption, no leftover path-list): the adopted shas are
+  watermarkable, so the `unreviewedShas` delta flags them without discarding the prior verdict. The **auto-cycle
   count survives that drop** — it is kept in a separate durable map (`reviews.ts`'s `autoCycles`, keyed
   by item id, sibling to `items`/`pending`), not embedded in the review record, so dropping the record
   for the sha-watermark reset above can never silently regrant a spent auto-fix cycle (a bug once fixed:
@@ -125,11 +158,14 @@ The host's own on-disk state (anything under `WORKSPACE_INTERNAL_DIR` = `.thinkr
 JSON under `context/todos/`) is filtered out of every change set — writing a todo shows up in `git status`
 but is never a change the step *produced*. The pi-free `TodoStore` never touches git; `commit`/`change`
 are host-only, while the agent attaches `file`/`spec` itself through the `todo_*` tools (see
-[[module-pi-todos]]). Known limitations (accepted): an agent that commits *itself* mid-item leaves an empty
-delta at `done` → no artifacts; and a writer this mechanism cannot see — the user editing through a
-terminal or an external editor mid-window, or a chat with no plan at all — is indistinguishable from agent
-work in `git status`, so its edits can land in the item's commit (the app's own editor is read-only, and
-anything already dirty when the window opened is caught by gate 2).
+[[module-pi-todos]]). Known limitations (accepted): an agent that commits *itself* mid-item is handled by
+in-window commit adoption above (its commits attach to the step) **only for an exclusive, sole window
+with a recorded `base.head`** — a shared window, a missing baseline, an unborn-HEAD baseline, or a second
+same-session window open in the same pass still leaves those commits as orphan `adoptedCommits`; and a writer this mechanism cannot see — the user editing
+through a terminal or an external editor mid-window, or a chat with no plan at all — is indistinguishable
+from agent work in `git status`, so its uncommitted edits can land in the item's delta commit **and its
+commits can be adopted into the step** (the app's own editor is read-only, and anything already dirty when
+the window opened is caught by gate 2).
 
 **`listTodos` decoration — unfolding the commit.** The wire DTO's `commit` artifact carries a derived
 **`files`** list — full `GitFileChange[]` rows (path + status + `+/−` line counts), read through
@@ -185,8 +221,10 @@ action can never start/approve/fix review state against a commit that vanishes o
 Every op (`startTodoReview`,
 `approveTodoReview`, `cancelTodoReview`, `requestTodoFix`, `recordAgentChangesRequested`,
 `renderReviewPackage`) therefore drives Start-review / Review All / verdicts over an adopted commit with
-**zero store writes**; review state persists in the existing sidecar keyed by `commit:<sha>`, and the
-reviewer↔worker reverse lookups are keyed by `reviewerSessionId`, independent of item existence. The fix
+**zero store writes**; review state persists in the existing sidecar keyed by `commit:<sha>`, and each
+finding carries its origin plan session + item id (`{ todoId, sessionId }`) — the reviewer is a hidden
+delegation child of that plan session, so routing needs no reviewer-session identity and works whether or
+not a stored item exists. The fix
 package's "re-open this exact item" instruction has no todo to re-open for an adopted commit, so it reads
 as "revise the change in commit `<sha>`"; the worker's follow-up commit surfaces as a new adopted entry
 (or a revision, once appended).
@@ -207,8 +245,7 @@ that is then re-edited uncommitted appears in both `adoptedCommits` (the commit'
 change set is **reviewable** — the gate is that artifact presence, so research/verification steps never
 demand review and no LLM attribution is involved. The user's decision lives in a second host-owned
 sidecar, `.thinkrail/context/todos/<sessionId>.reviews.json` (read-modify-write, atomic, same lifecycle
-as the baselines: `todo.remove` prunes the item's record, `session.delete` removes the file; orphan
-records are inert either way) — deliberately **not** the agent-writable todos JSON: an agent re-plan must
+as the baselines: `session.delete` removes the file; orphan records are inert) — deliberately **not** the agent-writable todos JSON: an agent re-plan must
 never flip a review decision. A record is `reviewed` or `changes_requested` plus **`reviewedShas`, the
 watermark**: the sha set the reviewer actually acted on. For a HUMAN action that is the item's commit
 shas at that moment; for the AGENT flow the pending mark carries the truth — **`startTodoReview` stamps
@@ -221,6 +258,20 @@ The same `listTodos` decoration pass ships `TodoItem.review` (state, `revision` 
 re-reviews instead of the original diff — and the `feedback` echo) and `TodoPlan.summary` (the plan-level
 completion note, agent-authored via `todo_plan_summary`; item `summary` rides the item DTO as stored).
 
+- **`generateTodoSummary` (`todo.generateSummary`)** is the host's best-effort fallback for that note: when
+  a plan is **fully done but carries no `summary`**, the host drafts one. It returns an existing agent note
+  untouched, `null` when the plan isn't complete or the draft fails, else the freshly drafted note. The
+  slow model call (`assist.suggestPlanSummary` over the done steps' title/summary/verification) runs
+  OUTSIDE the write lock; the final re-check + `setSummary` runs inside `enqueueTodoMutation` and never
+  clobbers a note that landed meanwhile or a plan that re-opened, with one in-flight generation per
+  session — a concurrent caller awaits and shares that generation's result rather than getting `null`,
+  so no surface is left summary-less. It never overwrites the agent's own `todo_plan_summary`.
+  **`previewPr` (and therefore `openPr`) awaits `generateTodoSummary` before `renderPrBody` reads
+  `plan.summary`**, so a chat whose UI anchor is torn down (chat closed to history, Plan page closed)
+  can't race `pr.preview` / `pr.open` to an empty summary. The in-flight dedup keeps the extra call
+  idempotent: if the UI's `useAutoPlanSummary` already triggered a draft, `previewPr` awaits its
+  promise instead of starting a second generation.
+
 - **`approveTodoReview`** records `reviewed` + the watermark — the pending mark's start-time shas when
   an agent review is in flight, else the current shas (throws on unknown or non-reviewable ids →
   `{ ok:false }` on the wire).
@@ -229,43 +280,48 @@ completion note, agent-authored via `todo_plan_summary`; item `summary` rides th
   change-set *reference* (short shas / paths — never the full diff; the agent reads content with its own
   tools), the feedback verbatim, and the instruction to re-open **this exact item** — the revision must
   attach to the step it revises (the todos skill mirrors this from the agent's side). The **send is
-  composed in `host`** (this module never imports `agent`): `followUpSession` into the item's **own chat**
-  (per-session plan/windows force it), fired detached with the review-send pattern — a pre-turn rejection
+  composed in `host`** (this module never imports `agent`): the host delivers it as a structured
+  `todo-review-fix` custom message (`sendReviewFixToSession`) into the item's **own chat** (per-session
+  plan/windows force it) — the rendered package is the message `content` the agent reads, and
+  `ReviewFixDetails` (`buildReviewFixDetails`, exported from `reviews/`) rides as `details` for the chat
+  card; fired detached with the review-send pattern — a pre-turn rejection
   calls **`rollbackTodoFix`** (restores the record the request replaced) and surfaces in the chat, so an
   undelivered fix request never strands as `changes_requested`. Manual requests carry an opaque
   `requestId`; compensation restores the previous record only while that exact request is still current,
   so a delayed send failure cannot erase a newer verdict or retry.
 
-**The agent reviewer ([[submodule-server-reviews]] is the findings' home).** `todo.startReview` puts a
-reviewable item in front of the plan's **dedicated reviewer chat** — one per worker session, pinned as
-`reviewerSessionId` in the same sidecar (created on first use by `host`, re-attached from disk). This
-module owns the state + packages: `startTodoReview` (marks the item's in-flight `pending` mark — the
-DTO's `reviewing` — and renders `renderReviewPackage`: refs + the worker's summary/verification claims
-to VERIFY, a re-review names only the unreviewed delta), `cancelTodoReview` (pre-turn rejection),
-`approveTodoReview(…, "agent")` (labeled `reviewedBy`), `recordAgentChangesRequested` (verdict note as
-feedback + `autoCycles` — the host's **1-auto-cycle cap**: cycle 0's verdict auto-sends the reviewer's
-comments to the worker (autoCycles 1), the fixed revision auto-re-reviews once (trigger requires
-autoCycles === 1 + a fresh delta — a sha appended past the watermark, OR the state reading `unreviewed`
-because the path-list fallback reset it, itself the delta signal a path-list item has no sha to carry —
-see the fallback's autoCycles durability above), and that verdict records autoCycles 2 — terminal, the human decides;
-the whole cap is **short-circuited when the `reviewAutoFix` setting is off** — `host/todoReview` then
-records the verdict terminally (autoCycles 2) with no send, so findings just wait for the human),
-and `workerSessionForReviewer` (the verdict seam's reverse lookup, enumerating sidecars). The reviewer's
+**The agent reviewer ([[submodule-server-reviews]] is the findings' home).** `todo.startReview` and the
+worker's own `request_review` tool put a reviewable item in front of a **hidden, ephemeral review
+subagent** — a delegation child of the plan session carrying the host's reviewer role
+([[submodule-server-host]] owns the prompt + output contract). There is no reviewer chat and no pinned
+reviewer session: nothing here stores a `reviewerSessionId`, and the reviewer holds no tools of this
+module's. This module owns the state + packages: `startTodoReview` (marks the item's in-flight `pending`
+mark — the DTO's `reviewing` — and renders `renderReviewPackage`: a change-set **reference** plus the
+worker's summary/verification claims to VERIFY, a re-review naming only the unreviewed delta; it names
+no tools, because the reviewer's role and output contract are the host's, not the package's),
+`cancelTodoReview` (the review failed or returned no parsable verdict), `approveTodoReview(…, "agent")`
+(labeled `reviewedBy`), and `recordAgentChangesRequested` (verdict note as feedback + `autoCycles`). The
+last two mutate three things at once — the item's record, its `autoCycles` count, and its `pending`
+clear — so they persist all three as ONE snapshot write (`commitReviewTransition`), never a sequence: a
+partial failure between writes could otherwise strand an item `changes_requested` at a spent cycle with
+its pending mark still set, which no cancel would undo. The auto-cycle mechanics — the
+host's **1-auto-cycle cap**: cycle 0's verdict auto-sends the reviewer's findings to the worker
+(autoCycles 1), the fixed revision auto-re-reviews once (trigger requires autoCycles === 1 + a fresh
+delta — a sha appended past the watermark, OR the state reading `unreviewed` because the path-list
+fallback reset it, itself the delta signal a path-list item has no sha to carry — see the fallback's
+autoCycles durability above), and that verdict records autoCycles 2 — terminal, the human decides; the
+cap is **short-circuited when the `reviewAutoFix` setting is off** — `host/requestReview` then records
+the verdict terminally (autoCycles 2) with no send, so findings just wait for the human). The reviewer's
 findings are **agent-authored review comments** in the reviews module (`author: "agent"`), never a
-parallel store; orchestration/sends live in `host/todoReview.ts`. **Reviewer session crash safety:**
-when a reviewer session crashes/times out without sending a verdict, `host/reviewerSessionMonitor`
-detects the crash (terminal errors, unexpected stop reasons) and immediately clears the item's
-`pending` mark (the `reviewing` flag), allowing Review All to resume instead of deadlocking. The
-monitor tracks reviewer→worker session mappings (set by `startTodoReview`, checked on every settled
-turn in the session publisher hook). **Host-restart safety:** that crash-safety net is itself
-memory-only (the mappings reset on process restart), so a `pending` mark from a review still in flight
-when the host last stopped would otherwise never clear — `clearAllPendingReviews(root)` sweeps every
-session's sidecar under a workspace and drops every `pending` entry unconditionally; `host/todoReview`'s
+parallel store; orchestration/sends live in `host/requestReview.ts`. **Host-restart safety:** the
+in-flight bookkeeping is memory-only, so a `pending` mark from a review still running when the host last
+stopped would otherwise never clear — `clearAllPendingReviews(root)` sweeps every session's sidecar under
+a workspace and drops every `pending` entry unconditionally; `host/todoReview`'s
 `reconcilePendingReviewsOnBoot` calls it for every workspace once, at boot, before any client can observe
 the stale spinner (see host/SPEC.md). Only the spinner is cleared — the underlying review record, if any,
-is untouched. **Review All** (`todo.reviewAll`) is pure host orchestration over
-this same flow: `host/reviewQueue.ts` drives a per-(workspace, session) FIFO of the unsettled
-reviewable items one at a time, so it adds no state here (see host/SPEC.md).
+is untouched. **Review All** (`todo.reviewAll`) is pure host orchestration over this same flow: it starts
+every unsettled reviewable item on the plan's serial chain (`host/planReviewQueue.ts`), so it adds no
+state here (see host/SPEC.md).
 
 **The read barrier.** `listTodos` first awaits the workspace's in-flight reconciles
 (`settleChangeArtifacts` — the same per-workspace chain). A client's only refresh signal is the `pi.event`
@@ -287,17 +343,6 @@ before the already-enqueued replacement pass has reconciled the current plan.
   0),
   `addTodo(...) → TodoItem` (validates a non-empty title; tags `origin: "user"`),
   `updateTodo(...) → TodoItem` (throws on unknown id → a `{ ok:false }` WS response),
-  `removeTodo(...) → Promise<{ ok:true }>` (idempotent; enqueued on the per-workspace reconcile chain —
-  see the sidecar-writer serialization above — as is `removeSessionTodoWindows`;
-  **throws while the item is `pending` an agent review** —
-  a removal mid-review would strand `host`'s in-flight registration (`currentReview`, the per-plan
-  latch — both memory-only, cleared only by the reviewer session's settle) and let a stray
-  `add_review_comment` file a finding against an id that no longer exists; the client disables Remove
-  on a `reviewing` row the same way it already disables Start review). This durable check alone only
-  covers start→verdict: `review_verdict` clears `pending` mid-turn, before the reviewer session
-  settles, so `host/todoReview.ts`'s `todo.remove` handler layers `isItemUnderActiveReview` (reads
-  `currentReview` directly) in front of this call — closing the verdict→settle tail the durable mark
-  can't see. See host/SPEC.md.),
   `approveTodoReview(...)` / `requestTodoFix(...) → { pkg, previous }` / `rollbackTodoFix(...)` + the
   pure `renderFixPackage` (the review ops; the send itself is `host`'s composition), and the
   `TodoReviewRecord` type. **Mapping only** — no plan logic; `TodoStore` owns disk.

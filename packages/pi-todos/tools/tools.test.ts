@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type {
 	AgentToolResult,
 	ExtensionAPI,
-	ExtensionContext,
+	ExtensionToolContext,
 	ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { TODO_STATUSES, TodoStore } from "../core/index.ts";
@@ -28,7 +28,7 @@ function run(
 	return tool.execute("call-1", params, undefined, undefined, {
 		cwd,
 		sessionManager: { getSessionId: () => "sess-test" },
-	} as unknown as ExtensionContext);
+	} as unknown as ExtensionToolContext);
 }
 
 function isError(result: AgentToolResult<unknown>): boolean {
@@ -42,15 +42,72 @@ function paramEnum(toolName: string, prop: string): readonly string[] {
 	return schema.properties?.[prop]?.enum ?? [];
 }
 
-test("registers the six todo tools", () => {
+test("registers the seven todo tools", () => {
 	expect([...tools.keys()].sort()).toEqual([
 		"todo_add",
 		"todo_list",
 		"todo_plan_summary",
+		"todo_promote",
 		"todo_remove",
 		"todo_update",
 		"todo_write",
 	]);
+});
+
+test("todo_promote turns a loose user ask into a group of its own (same id, same title) in one atomic call", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	try {
+		const mine = new TodoStore(cwd, "sess-test").add({ title: "fix auth bug", origin: "user" });
+		const promoted = (await run("todo_promote", { id: mine.id }, cwd)) as AgentToolResult<{
+			group: { id: string; title: string; todos: unknown[] };
+		}>;
+		expect(isError(promoted)).toBe(false);
+		expect(promoted.details.group.id).toBe(mine.id);
+		expect(promoted.details.group.title).toBe("fix auth bug");
+		expect(promoted.details.group.todos).toEqual([]);
+
+		const plan = new TodoStore(cwd, "sess-test").read();
+		expect(plan.todos).toEqual([]);
+		expect(plan.groups).toHaveLength(1);
+		expect(plan.groups[0]?.id).toBe(mine.id);
+
+		const first = (await run(
+			"todo_add",
+			{ title: "reproduce the bug", group: "fix auth bug" },
+			cwd,
+		)) as AgentToolResult<{ todo: { id: string } }>;
+		await run("todo_update", { id: first.details.todo.id, status: "in_progress" }, cwd);
+		const live = new TodoStore(cwd, "sess-test").read();
+		expect(live.groups[0]?.todos).toHaveLength(1);
+		expect(live.groups[0]?.todos[0]?.status).toBe("in_progress");
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("todo_promote accepts a title override and errors on an unknown or already-grouped id", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	try {
+		const mine = new TodoStore(cwd, "sess-test").add({ title: "raw ask", origin: "user" });
+		const renamed = (await run(
+			"todo_promote",
+			{ id: mine.id, title: "Fix the auth bug" },
+			cwd,
+		)) as AgentToolResult<{ group: { title: string } }>;
+		expect(renamed.details.group.title).toBe("Fix the auth bug");
+
+		expect(isError(await run("todo_promote", { id: "t_nope" }, cwd))).toBe(true);
+
+		const step = (await run(
+			"todo_add",
+			{ title: "step", group: "Fix the auth bug" },
+			cwd,
+		)) as AgentToolResult<{ todo: { id: string } }>;
+		const refused = await run("todo_promote", { id: step.details.todo.id }, cwd);
+		expect(isError(refused)).toBe(true);
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+	}
 });
 
 test("finite-vocabulary param schemas derive their enum from the core tuples", () => {
@@ -165,10 +222,17 @@ test("todo_write reconciles a re-listed plan without resetting progress or nudgi
 	}
 });
 
-test("todo_add requires group or after — the agent cannot author loose items", async () => {
+test("todo_add drops a loose item when both group and after are omitted (the shared raw-input queue)", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
 	try {
-		expect(isError(await run("todo_add", { title: "loose?" }, cwd))).toBe(true);
+		const loose = (await run("todo_add", { title: "raw note" }, cwd)) as AgentToolResult<{
+			todo: { id: string; origin: string };
+		}>;
+		expect(isError(loose)).toBe(false);
+		expect(loose.details.todo.origin).toBe("agent");
+		const plan = new TodoStore(cwd, "sess-test").read();
+		expect(plan.todos.map((t) => t.title)).toEqual(["raw note"]);
+		expect(plan.groups).toHaveLength(0);
 		expect(isError(await run("todo_add", { title: "orphan", after: "t_nope" }, cwd))).toBe(true);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
@@ -230,7 +294,7 @@ test("todo_update reports paused items and suggests the next step after done", a
 	}
 });
 
-test("todo_list renders groups first, then the user's loose lane last (a mid-task add queues after the current work)", async () => {
+test("todo_list renders groups first, then the loose queue last (a mid-task add queues after the current work)", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
 	try {
 		await run("todo_add", { title: "agent step", group: "Refactor" }, cwd);
@@ -238,7 +302,7 @@ test("todo_list renders groups first, then the user's loose lane last (a mid-tas
 
 		const text = resultText(await run("todo_list", {}, cwd));
 		const groupAt = text.indexOf("▸ Refactor");
-		const headerAt = text.indexOf("Your requests:");
+		const headerAt = text.indexOf("Loose queue:");
 		const looseAt = text.indexOf("user ask");
 		expect(groupAt).toBeGreaterThanOrEqual(0);
 		expect(headerAt).toBeGreaterThan(groupAt);
@@ -277,13 +341,13 @@ test("todo_list renders group-first with derived status + progress, and nudges w
 	}
 });
 
-test("todo_add refuses an `after` anchor in the user's lane, and a re-plan keeps that lane intact", async () => {
+test("todo_add refuses an `after` anchor pointing at a loose item (promote, don’t grow siblings)", async () => {
 	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
 	try {
 		const mine = new TodoStore(cwd, "sess-test").add({ title: "user ask", origin: "user" });
 		const rejected = await run("todo_add", { title: "related step", after: mine.id }, cwd);
 		expect(isError(rejected)).toBe(true);
-		expect(resultText(rejected)).toContain("group");
+		expect(resultText(rejected)).toContain("promoted");
 
 		const plan = new TodoStore(cwd, "sess-test").read();
 		expect(plan.todos.map((t) => t.title)).toEqual(["user ask"]);
@@ -321,6 +385,33 @@ test("done-with-summary stores it and the last done nudges todo_plan_summary; th
 		const set = await run("todo_plan_summary", { summary: "Task landed; suite green." }, cwd);
 		expect(isError(set)).toBe(false);
 		expect(store.read().summary).toBe("Task landed; suite green.");
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("re-completing a plan that gained new work echoes the surviving summary and asks to extend it", async () => {
+	const cwd = mkdtempSync(join(tmpdir(), "pi-todos-tools-"));
+	try {
+		const first = (await run(
+			"todo_add",
+			{ title: "First step", group: "Task" },
+			cwd,
+		)) as AgentToolResult<{ todo: { id: string } }>;
+		await run("todo_update", { id: first.details.todo.id, status: "done" }, cwd);
+		await run("todo_plan_summary", { summary: "First step shipped." }, cwd);
+
+		// New work arrives (an add never drops the surviving plan summary), then finishes.
+		const second = (await run(
+			"todo_add",
+			{ title: "Second step", group: "Task" },
+			cwd,
+		)) as AgentToolResult<{ todo: { id: string } }>;
+		const done = await run("todo_update", { id: second.details.todo.id, status: "done" }, cwd);
+		const text = done.content[0]?.type === "text" ? done.content[0].text : "";
+		// The nudge echoes the surviving note and asks to extend it, not rewrite from scratch.
+		expect(text).toContain("EXTEND");
+		expect(text).toContain("First step shipped.");
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}

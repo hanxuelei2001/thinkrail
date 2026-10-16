@@ -6,8 +6,7 @@ import {
 	RiRefreshLine as RefreshCw,
 } from "@remixicon/react";
 import type { GhSetupProblem, HostPlatform } from "@thinkrail/contracts";
-import { useState } from "react";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@thinkrail/ui/button";
 import {
 	Dialog,
 	DialogContent,
@@ -15,7 +14,8 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
-} from "@/components/ui/dialog";
+} from "@thinkrail/ui/dialog";
+import { useState } from "react";
 import { copyText } from "@/lib";
 
 export type PrSetupState =
@@ -31,7 +31,7 @@ function CommandRow({ command, onRun }: { command: string; onRun: (command: stri
 		}
 	};
 	return (
-		<div className="flex items-center gap-8 rounded-[var(--radius-sm)] border border-border-default bg-control-bg px-12 py-8">
+		<div className="flex items-center gap-8 rounded-sm border border-border-default bg-control-bg px-12 py-8">
 			<code className="min-w-0 flex-1 truncate tr-code-text text-text-default">{command}</code>
 			<Button
 				variant="ghost"
@@ -149,7 +149,7 @@ export function PrSetupDialog({
 						</DialogHeader>
 						<pre
 							data-testid="open-pr-setup-detail"
-							className="max-h-128 overflow-auto whitespace-pre-wrap rounded-[var(--radius-sm)] border border-border-default bg-control-bg px-12 py-8 tr-code-text text-feedback-error"
+							className="max-h-128 overflow-auto whitespace-pre-wrap rounded-sm border border-border-default bg-control-bg px-12 py-8 tr-code-text text-feedback-error"
 						>
 							{state.detail}
 						</pre>

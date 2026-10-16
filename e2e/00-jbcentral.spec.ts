@@ -1,7 +1,14 @@
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { createWorkspaceViaDialog, openAppFresh, openFixtureProject } from "./fixtures/app";
+import {
+	createWorkspaceViaDialog,
+	expandModelGroup,
+	modelGroupToggle,
+	openAppFresh,
+	openFixtureProject,
+	revealModelGroups,
+} from "./fixtures/app";
 import {
 	assertOnlyReviewedArgv,
 	centralInvocations,
@@ -29,12 +36,20 @@ test("connects and follows external add, replacement, and remove without a host 
 	await expect(page.getByTestId("jetbrains-connected")).toBeVisible();
 	expect(existsSync(E2E_CENTRAL_ARTIFACT)).toBe(true);
 	expect(existsSync(join(E2E_PI_AGENT_DIR, "extensions", "jetbrains-central.ts"))).toBe(false);
+	const anthropicRow = page.locator(
+		'[data-testid="provider-row"][data-provider="anthropic"][data-kind="central"]',
+	);
+	await expect(anthropicRow).toHaveAttribute("data-configured", "true");
+	await expect(anthropicRow).toContainText("JetBrains AI");
+	await expect(anthropicRow).toContainText("Anthropic");
+	await expect(anthropicRow.getByTestId("provider-signout")).toHaveCount(0);
 	await expect(page.getByTestId("settings-dialog")).not.toContainText(
 		"E2E_PROVIDER_SECRET_SENTINEL",
 	);
 	await expect(page.getByTestId("settings-dialog")).not.toContainText(
 		"E2E_PROVIDER_CONFIG_SENTINEL",
 	);
+	await expect(page.getByTestId("settings-dialog")).not.toContainText("E2E_PROVIDER_NAME_SENTINEL");
 	await expect(
 		page.locator('[data-testid="provider-row"][data-provider="e2e-central"]'),
 	).toHaveCount(0);
@@ -42,12 +57,28 @@ test("connects and follows external add, replacement, and remove without a host 
 	rmSync(E2E_CENTRAL_ARTIFACT, { force: true });
 	await waitForCentralState(page, "supported");
 	await expect(page.getByTestId("jetbrains-connect")).toBeVisible();
+	await expect(anthropicRow).toHaveCount(0);
 
 	const replacement = readFileSync(E2E_CENTRAL_EXTENSION_SOURCE, "utf8")
 		.replaceAll("e2e-central-model", "e2e-central-model-v2")
 		.replace("Synthetic JetBrains AI model", "Synthetic JetBrains AI model v2");
 	writeFileSync(E2E_CENTRAL_ARTIFACT, replacement);
-	await waitForCentralState(page, "configuring");
+	await waitForCentralState(page, "configured");
+	await page.getByTestId("settings-nav-models").click();
+	await page
+		.getByTestId("settings-models")
+		.getByTestId("default-model-row")
+		.getByTestId("model-selector")
+		.click();
+	await expandModelGroup(page, "e2e-central");
+	await expect(
+		page.locator('[data-testid="model-option"][data-model-id="e2e-central-model-v2"]'),
+	).toBeVisible();
+	await expect(
+		page.locator('[data-testid="model-option"][data-model-id="e2e-central-model"]'),
+	).toHaveCount(0);
+	await page.keyboard.press("Escape");
+	await page.getByTestId("settings-nav-providers").click();
 	await waitForCentralState(page, "configured");
 
 	await page.getByTestId("jetbrains-disconnect").click();
@@ -216,6 +247,8 @@ test("disconnect removes Central from new chats while an existing live chat keep
 
 	await createWorkspaceViaDialog(page);
 	await page.getByTestId("model-selector").click();
+	await revealModelGroups(page);
+	await expandModelGroup(page, "e2e-central");
 	await page.locator('[data-testid="model-option"][data-model-id="e2e-central-model"]').click();
 	await expect(page.getByTestId("model-selector")).toContainText("Synthetic JetBrains AI model");
 
@@ -230,6 +263,8 @@ test("disconnect removes Central from new chats while an existing live chat keep
 	const dialog = page.getByTestId("new-workspace-dialog");
 	await expect(dialog).toBeVisible();
 	await dialog.getByTestId("model-selector").click();
+	await revealModelGroups(page);
+	await expect(modelGroupToggle(page, "e2e-central")).toHaveCount(0);
 	await expect(
 		page.locator('[data-testid="model-option"][data-model-id="e2e-central-model"]'),
 	).toHaveCount(0);

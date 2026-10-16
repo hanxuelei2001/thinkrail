@@ -1,8 +1,10 @@
 node_modules/
 dist/
+apps/web/dist-profile/
 .turbo/
 *.tsbuildinfo
 .DS_Store
+.wrangler/
 .idea/
 test-results/
 playwright-report/
@@ -16,6 +18,8 @@ docs/*
 .playwright-mcp/
 .claude/
 .mockups/
+# Local design studies and mockups — research artefacts with their own tokens/fonts, never shipped or imported
+design/
 .superpowers/
 .gsd/
 

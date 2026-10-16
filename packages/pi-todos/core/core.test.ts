@@ -37,6 +37,38 @@ test("add persists to the session file and assigns id + timestamps + pending sta
 	}
 });
 
+test("titles are flattened to one line on add, update, and group", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		const todo = s.add({ title: "Wire\nthe   route", group: "Big\nTask", origin: "user" });
+		expect(todo.title).toBe("Wire the route");
+		expect(s.read().groups[0]?.title).toBe("Big Task");
+		const updated = s.update(todo.id, { title: "New\ttitle\nhere" });
+		expect(updated?.todo.title).toBe("New title here");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("replaceAll reconciles a multi-line write against the flattened stored title", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		s.add({ title: "Ship it", group: "Task" });
+		const before = s.read().groups[0]?.todos[0];
+		s.update(before?.id ?? "", { status: "done" });
+		// A re-written plan whose title only differs by whitespace must MATCH (identity preserved, status kept).
+		const plan = s.replaceAll({ groups: [{ title: "Task", todos: [{ title: "Ship\nit" }] }] });
+		const after = plan.groups[0]?.todos[0];
+		expect(after?.id).toBe(before?.id);
+		expect(after?.status).toBe("done");
+		expect(after?.title).toBe("Ship it");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("lists are isolated per session", () => {
 	const root = tempRoot();
 	try {
@@ -165,23 +197,24 @@ test("across a re-plan done items rejoin a matching group and a dropped group's 
 	}
 });
 
-test("re-plan keeps the loose lane user-only: agent items never leak into it", () => {
+test("re-plan carries both user and agent-pending loose items (shared raw-input queue)", () => {
 	const root = tempRoot();
 	try {
 		const s = store(root);
 		const userLoose = s.add({ title: "user request", origin: "user" });
+		const agentLoose = s.add({ title: "agent note" });
 		const agentDone = s.add({ title: "agent done", group: "Gone" });
 		s.update(agentDone.id, { status: "done" });
 
 		const plan = s.replaceAll({ groups: [{ title: "Fresh", todos: [{ title: "step" }] }] });
-		expect(plan.todos.map((t) => t.id)).toEqual([userLoose.id]);
-		expect(plan.todos.every((t) => t.origin === "user")).toBe(true);
+		expect(plan.todos.map((t) => t.id).sort()).toEqual([userLoose.id, agentLoose.id].sort());
+		expect(plan.todos.map((t) => t.origin).sort()).toEqual(["agent", "user"]);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
 });
 
-test("re-plan carries a legacy agent done loose item into a group, never leaving it in the user lane", () => {
+test("re-plan parks a done agent loose item in Completed and keeps a pending one in the loose lane", () => {
 	const root = tempRoot();
 	try {
 		const file = join(root, storeRel(SESSION));
@@ -201,10 +234,9 @@ test("re-plan carries a legacy agent done loose item into a group, never leaving
 		const plan = store(root).replaceAll({
 			groups: [{ title: "Fresh", todos: [{ title: "step" }] }],
 		});
-		expect(plan.todos).toHaveLength(0);
+		expect(plan.todos.map((t) => t.title)).toEqual(["legacy agent open"]);
 		const completed = plan.groups.find((g) => g.title === "Completed");
 		expect(completed?.todos.map((t) => t.title)).toEqual(["legacy agent done"]);
-		expect(flatItems(plan).map((t) => t.title)).not.toContain("legacy agent open");
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
@@ -295,6 +327,89 @@ test("literal \\uXXXX escapes in titles/notes/group names are decoded, not shown
 	}
 });
 
+test("literal `\\n` is decoded in summary/verification only when the next chars start a Markdown separator", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		s.setSummary("## Summary\\n\\nFirst line.\\n\\n- bullet\\n- bullet two");
+		expect(s.read().summary).toBe("## Summary\n\nFirst line.\n\n- bullet\n- bullet two");
+		const todo = s.add({ title: "step" });
+		s.update(todo.id, {
+			status: "done",
+			verification: "- unit \u2192 pass\\n- lint \u2192 pass\\n- typecheck \u2192 green",
+		});
+		expect(s.get(todo.id)?.verification).toBe(
+			"- unit \u2192 pass\n- lint \u2192 pass\n- typecheck \u2192 green",
+		);
+		s.setSummary("Adjusted C:\\new file for parity.");
+		expect(s.read().summary).toBe("Adjusted C:\\new file for parity.");
+		const t2 = s.add({
+			title: "step 2",
+			note: "line one\\n- not a bullet because note isn't markdown",
+		});
+		expect(s.get(t2.id)?.note).toBe("line one\\n- not a bullet because note isn't markdown");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("agent text with real newlines is stored verbatim; `\\n` inside code / paths / regex survives", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		const richSummary =
+			"## Summary\n\n" +
+			"The `\\n` character means newline, and `\\t` is a tab.\n\n" +
+			'```ts\nconsole.log("a\\nb");\n```';
+		s.setSummary(richSummary);
+		expect(s.read().summary).toBe(richSummary);
+		const todo = s.add({
+			title: "step",
+			note: "Line one.\nThen `/\\n/g` as a regex pattern.",
+		});
+		expect(s.get(todo.id)?.note).toBe("Line one.\nThen `/\\n/g` as a regex pattern.");
+		s.update(todo.id, { summary: "before \\\\n after" });
+		expect(s.get(todo.id)?.summary).toBe("before \\\\n after");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("an agent-written Windows path / regex in a non-summary field survives verbatim", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		const t1 = s.add({ title: "fix C:\\new file.ts", note: "ran /^\\n/.test(x)" });
+		expect(s.get(t1.id)?.title).toBe("fix C:\\new file.ts");
+		expect(s.get(t1.id)?.note).toBe("ran /^\\n/.test(x)");
+		s.update(t1.id, {
+			status: "done",
+			verification: "grep '\\n' src/foo.ts \u2192 2 matches",
+			commitSubject: "fix: handle C:\\new on windows",
+		});
+		expect(s.get(t1.id)?.verification).toBe("grep '\\n' src/foo.ts \u2192 2 matches");
+		expect(s.get(t1.id)?.commitSubject).toBe("fix: handle C:\\new on windows");
+		s.update(t1.id, {
+			artifacts: [{ kind: "change", path: "src\\win.ts", label: "src\\win.ts \\n lane" }],
+		});
+		expect(s.get(t1.id)?.artifacts?.[0]?.label).toBe("src\\win.ts \\n lane");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("stored text is pass-through on read; no silent mutation on reload", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		const todo = s.add({ title: "step", note: "first\nsecond — mentions \\n inline" });
+		const reopened = store(root);
+		expect(reopened.get(todo.id)?.note).toBe("first\nsecond — mentions \\n inline");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("user-authored text is stored verbatim — \\uXXXX is NOT decoded for user input", () => {
 	const root = tempRoot();
 	try {
@@ -321,7 +436,7 @@ test("an empty-string note clears the note", () => {
 	}
 });
 
-test("an agent item stored with literal escapes self-heals on the next write", () => {
+test("a legacy on-disk agent item with literal \\uXXXX is NOT decoded on read, and the next write preserves it verbatim", () => {
 	const root = tempRoot();
 	try {
 		const file = join(root, storeRel(SESSION));
@@ -343,10 +458,10 @@ test("an agent item stored with literal escapes self-heals on the next write", (
 			"utf8",
 		);
 		const s = store(root);
-		expect(s.get("t_old")?.title).toBe("БЛОК");
+		expect(s.get("t_old")?.title).toBe("\\u0411\\u041b\\u041e\\u041a");
 		s.update("t_old", { status: "done" });
 		const raw = JSON.parse(readFileSync(file, "utf8")) as { todos: { title: string }[] };
-		expect(raw.todos[0]?.title).toBe("БЛОК");
+		expect(raw.todos[0]?.title).toBe("\\u0411\\u041b\\u041e\\u041a");
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
@@ -375,7 +490,7 @@ test("add defaults origin to agent; the caller can mark it user", () => {
 	}
 });
 
-test("update/remove find items inside a group by id", () => {
+test("update/remove find items inside a group by id, pruning a group that just lost its last item", () => {
 	const root = tempRoot();
 	try {
 		const s = store(root);
@@ -383,7 +498,41 @@ test("update/remove find items inside a group by id", () => {
 		expect(s.get(todo.id)?.title).toBe("grouped");
 		expect(s.update(todo.id, { status: "in_progress" })?.todo.status).toBe("in_progress");
 		expect(s.remove(todo.id)).toBe(true);
-		expect(s.read().groups).toHaveLength(0);
+		expect(s.read().groups).toEqual([]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("remove preserves a promote-born empty group that was already empty before the call", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		const parked = s.add({ title: "parked ask", origin: "user" });
+		const grouped = s.add({ title: "other step", group: "Other" });
+		s.promote(parked.id);
+		expect(
+			s
+				.read()
+				.groups.map((g) => g.title)
+				.sort(),
+		).toEqual(["Other", "parked ask"]);
+		expect(s.remove(grouped.id)).toBe(true);
+		expect(s.read().groups.map((g) => g.title)).toEqual(["parked ask"]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("remove of one item in a multi-item group leaves the group with its remaining items", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		const first = s.add({ title: "a", group: "G" });
+		const second = s.add({ title: "b", group: "G" });
+		expect(s.remove(first.id)).toBe(true);
+		expect(s.read().groups).toHaveLength(1);
+		expect(s.read().groups[0]?.todos.map((t) => t.id)).toEqual([second.id]);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}
@@ -648,7 +797,7 @@ test("item summary/verification/commitSubject: set with done, cleared by empty s
 	}
 });
 
-test("reopening a done item clears its stale completion fields and the plan summary", () => {
+test("reopening a done item clears its stale completion fields but keeps the plan summary", () => {
 	const root = tempRoot();
 	try {
 		const s = store(root);
@@ -666,7 +815,9 @@ test("reopening a done item clears its stale completion fields and the plan summ
 		expect(s.get(todo.id)?.summary).toBeUndefined();
 		expect(s.get(todo.id)?.verification).toBeUndefined();
 		expect(s.get(todo.id)?.commitSubject).toBeUndefined();
-		expect(s.read().summary).toBeUndefined();
+		// The plan-level summary survives the re-open (stale) so the UI can show "Updating…" and the next
+		// completion can extend it; only display/export gate it out.
+		expect(s.read().summary).toBe("All tasks landed; e2e suite green.");
 
 		s.update(todo.id, {
 			status: "done",
@@ -713,6 +864,133 @@ test("plan summary: setSummary round-trips, empty clears, survives item edits, d
 		store(root).setSummary("v2");
 		store(root).setSummary("   ");
 		expect(store(root).read().summary).toBeUndefined();
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("promote lifts a loose item into a group of its own, keeping its id as the group id", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		const loose = s.add({ title: "fix auth bug", origin: "user" });
+		const result = s.promote(loose.id);
+		expect(result.ok).toBe(true);
+		const group = result.ok ? result.group : undefined;
+		expect(group?.id).toBe(loose.id);
+		expect(group?.title).toBe("fix auth bug");
+		expect(group?.todos).toEqual([]);
+		const plan = s.read();
+		expect(plan.todos).toEqual([]);
+		expect(plan.groups).toHaveLength(1);
+		expect(plan.groups[0]?.id).toBe(loose.id);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("promote accepts a title override, flattens it, and decodes agent escapes", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		const loose = s.add({ title: "raw ask", origin: "user" });
+		const result = s.promote(loose.id, "  Fix \\u2705 bug  now  ");
+		expect(result.ok).toBe(true);
+		const group = result.ok ? result.group : undefined;
+		expect(group?.title).toBe("Fix \u2705 bug now");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("promote refuses when its title collides with an existing group \u2014 the loose item is left in place", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		const existing = s.add({ title: "step", group: "Fix auth" });
+		const loose = s.add({ title: "fix auth", origin: "user" });
+		const col = s.promote(loose.id, "Fix auth");
+		expect(col.ok).toBe(false);
+		expect(col.ok || col.reason).toBe("title-collision");
+		const plan = s.read();
+		expect(plan.todos.map((t) => t.id)).toEqual([loose.id]);
+		expect(plan.groups).toHaveLength(1);
+		expect(plan.groups[0]?.todos.map((t) => t.id)).toEqual([existing.id]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("promote refuses an empty or whitespace-only override \u2014 a blank group is unaddressable", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		const loose = s.add({ title: "ask", origin: "user" });
+		const emp1 = s.promote(loose.id, "");
+		expect(emp1.ok).toBe(false);
+		expect(emp1.ok || emp1.reason).toBe("empty-title");
+		const emp2 = s.promote(loose.id, "   \n\t  ");
+		expect(emp2.ok).toBe(false);
+		expect(emp2.ok || emp2.reason).toBe("empty-title");
+		expect(s.read().todos.map((t) => t.id)).toEqual([loose.id]);
+		expect(s.read().groups).toEqual([]);
+		const okr = s.promote(loose.id, "Real title");
+		expect(okr.ok).toBe(true);
+		const group = okr.ok ? okr.group : undefined;
+		expect(group?.title).toBe("Real title");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("promote refuses an id that is a grouped step (already in a group), not a loose item", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		const step = s.add({ title: "step", group: "Task" });
+		const gs = s.promote(step.id);
+		expect(gs.ok).toBe(false);
+		expect(gs.ok || gs.reason).toBe("grouped-step");
+		expect(s.read().groups[0]?.todos.map((t) => t.id)).toEqual([step.id]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("a promote-born empty group survives a replaceAll that doesn't re-emit it", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		const userAsk = s.add({ title: "Design the X workflow", origin: "user" });
+		const promoted = s.promote(userAsk.id);
+		expect(promoted.ok).toBe(true);
+		const parkedId = promoted.ok ? promoted.group.id : "";
+		expect(parkedId).toBe(userAsk.id);
+
+		s.replaceAll({
+			groups: [{ title: "Other work", todos: [{ title: "a" }, { title: "b" }] }],
+		});
+
+		const next = s.read();
+		const parked = next.groups.find((g) => g.title === "Design the X workflow");
+		expect(parked).toBeDefined();
+		expect(parked?.id).toBe(parkedId);
+		expect(parked?.todos).toEqual([]);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("promote returns undefined for an unknown id and writes nothing", () => {
+	const root = tempRoot();
+	try {
+		const s = store(root);
+		s.add({ title: "something", origin: "user" });
+		const before = s.read();
+		const un = s.promote("t_nope");
+		expect(un.ok).toBe(false);
+		expect(un.ok || un.reason).toBe("unknown-id");
+		expect(s.read()).toEqual(before);
 	} finally {
 		rmSync(root, { recursive: true, force: true });
 	}

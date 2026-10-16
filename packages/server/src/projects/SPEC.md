@@ -5,7 +5,7 @@ status: active
 title: projects — git repos as projects
 parent: module-server
 depends-on: [module-contracts]
-tags: [v1, public-surface-checked]
+tags: [public-surface-checked]
 ---
 
 ## Responsibility
@@ -20,7 +20,8 @@ bootstrap it into one so it can be opened.
   or mutating it: host-absolute paths pass, exact `~` and `~/…` expand against the host account, and every
   other relative path is rejected rather than interpreted against the host process cwd. The same resolved
   path feeds `openProject`, `inspectProjectPath`, and `initProject`, so their classifications and actions
-  cannot disagree. It then validates a path is a repo (`git rev-parse --show-toplevel`), dedupes by root,
+  cannot disagree. It then validates a path is a repo (`git rev-parse --show-toplevel`; a non-repo rejects
+  with the named `NOT_GIT` code), dedupes by root,
   and assigns a stable unique readable `slug`; `getProjects` returns all known records with slug backfill,
   `listProjects` returns open records by `lastOpened`, and `listRecentProjects` returns open + closed records
   by `lastOpened`. A persisted
@@ -28,7 +29,7 @@ bootstrap it into one so it can be opened.
   records migrate as open. **`openProject`** finds a known root even when closed, clears `closed`, bumps
   `lastOpened`, preserves its id, persists, and publishes the full snapshot; **`closeProject`** marks that
   same record closed and publishes it without deleting the project, repository, workspace records, or
-  live runtimes. **One cwd, one ThinkRail identity:** `openProject` rejects a root already held as some
+  live runtimes. **One cwd, one ThinkRail identity:** `openProject` rejects (named `ALREADY_OPEN`) a root already held as some
   workspace's `worktreePath` — pi keys chat transcripts by *directory*, so a second identity on an owned
   folder would serve that workspace's chats as its own and have them purged when either side is archived.
   Compared **canonically** (a managed worktree's stored path is composed, `--show-toplevel` answers
@@ -48,11 +49,32 @@ bootstrap it into one so it can be opened.
   trust is granted explicitly and revocably; the grant snapshots the currently discovered project aliases
   as acknowledged so later arrivals remain pending; and disabled skill/group sets form the project baseline
   beneath any workspace override. The host composes discovery with these mutation operations; this module
-  stores no skill catalog and imports no agent code.
+  stores no skill catalog and imports no agent code. Project records also carry the pi-level trust state
+  `piResourceTrust` (trust for the project's native `.pi/` resources — settings, extensions, skills,
+  prompts, themes, `SYSTEM.md`, subagent definitions — distinct from the alias-skill grant). A newly added
+  project starts `untrusted`, or `granted` when pi itself already trusts its path; that answer arrives
+  through the host-injected `setPiTrustSeed` (this module imports no pi code). There is **no
+  grandfathering**: a record that predates the field is left as stored and reads as untrusted, so a project
+  added before pi-level trust existed asks once through the trust notice instead of keeping code-running
+  resources nobody consented to (user decision, PR #690 review). pi-level trust never enables MCP by itself:
+  the record also carries `mcpApprovals` (repo-defined MCP server name → fingerprint of the whole original
+  project-file entry) and `mcpOverrides` (per-project enablement/exposure of user-level servers, kept out of
+  the tracked `.pi/mcp.json`). `setProjectMcpOverride` synchronously merges only supplied fields into the
+  latest stored override, so overlapping enablement and exposure patches do not lose each other. An empty
+  patch is a no-op; `null` clears the override. It rejects non-boolean enablement and exposure outside
+  `deferred`, `direct`, `hidden` before persistence. `setProjectTrust(id, trusted, acknowledged?,
+  { resources? })` keeps the two grants separate because they consent to different things: pi-level
+  resources include code (extensions, settings packages), so only a surface that names them asks for them.
+  `trusted: true` sets the alias grant and sets `piResourceTrust: "granted"` only with `resources: true`,
+  leaving it untouched otherwise; `trusted: false` revokes both. A trust change persists and publishes the
+  record, so every client shows the persisted trust even when the host request that made it then fails
+  (an open chat could not reload).
 - **Public surface (barrel):** `openProject`, `listProjects`, `listRecentProjects`, `closeProject`,
   `getProjects`, `setProjectPublisher`, `inspectProjectPath`, `initProject`, `setProjectTrust`,
-  `setProjectSkillEnabled`, `setProjectGroupEnabled`, `acknowledgeProjectSkills`.
+  `setProjectSkillEnabled`, `setProjectGroupEnabled`, `acknowledgeProjectSkills`,
+  `approveProjectMcpServer`, `setProjectMcpOverride`, `setPiTrustSeed`.
 - **Allowed deps:** `persistence`; the `git` sub-module (shared `git()` runner, which now owns the
-  environment its children spawn under — this module passes none); `contracts` (`Project`, `ProjectPathStatus`); Node/Bun.
+  environment its children spawn under — this module passes none); `contracts` (`Project`, `ProjectPathStatus`);
+  `shared/codedError` (the two named open failures); Node/Bun.
 - **Forbidden:** `host`; sibling features other than `git` (`workspaces` depends on `projects`, never the
   reverse).

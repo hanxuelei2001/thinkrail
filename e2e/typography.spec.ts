@@ -4,6 +4,7 @@ import {
 	openAppFresh,
 	openFixtureProject,
 	openWorkspaceChat,
+	revealWorkbenchTool,
 	visibleTerminalScreen,
 	waitTerminalReady,
 } from "./fixtures/app";
@@ -69,7 +70,7 @@ test("entity rows, branch metadata and eyebrows are proportional", async ({ page
 	expect(await typeOf(page.locator(".tr-text-eyebrow").first())).toMatchObject({
 		size: "12px",
 		weight: "500",
-		lineHeight: "18.4615px",
+		lineHeight: "16.8px",
 		transform: "uppercase",
 		spacing: "0.24px",
 	});
@@ -78,7 +79,7 @@ test("entity rows, branch metadata and eyebrows are proportional", async ({ page
 test("Monaco and xterm render the generated code family and size", async ({ page }) => {
 	await openFixtureProject(page);
 	await createWorkspaceViaDialog(page);
-	await page.getByTestId("tab-files").click();
+	await revealWorkbenchTool(page, "files");
 	await page.getByTestId("file-node").filter({ hasText: "notes.txt" }).first().dblclick();
 	const editor = page.locator(".monaco-editor .view-lines").first();
 	await expect(editor).toBeVisible({ timeout: 30_000 });
@@ -96,12 +97,12 @@ test("the chat and document markdown surfaces each wear their own prose system",
 	page,
 }) => {
 	await openWorkspaceChat(page);
-	await page.getByTestId("tab-files").click();
+	await revealWorkbenchTool(page, "files");
 	await page.getByTestId("file-node").filter({ hasText: "README.md" }).first().dblclick();
 	await expect(page.getByTestId("markdown-preview")).toContainText("sample-project");
 
 	const doc = page.locator(".tr-prose-doc").first();
-	expect(await typeOf(doc)).toMatchObject({ size: "14px", weight: "370", lineHeight: "22.4px" });
+	expect(await typeOf(doc)).toMatchObject({ size: "14px", weight: "370", lineHeight: "20.3px" });
 	expect(await typeOf(doc.locator("h1").first())).toMatchObject({ size: "24px", weight: "600" });
 
 	expect(await doc.evaluate((el) => el.classList.contains("tr-prose-chat"))).toBe(false);
@@ -291,7 +292,7 @@ test("a Tailwind utility at a call site overrides the semantic default it names"
 	expect(measured.metadataItalic.lineHeight).toBe(measured.metadata.lineHeight);
 
 	expect(measured.uiTight.lineHeight).toBe("17.5px");
-	expect(measured.ui.lineHeight).toBe("20px");
+	expect(measured.ui.lineHeight).toBe("18.2px");
 	expect(measured.uiTight.fontSize).toBe(measured.ui.fontSize);
 
 	expect(measured.metadataSnug.lineHeight).toBe("16.5px");

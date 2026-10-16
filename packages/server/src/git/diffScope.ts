@@ -12,6 +12,7 @@ export interface DiffRange {
 	untracked: boolean;
 	originalRef: string | null;
 	modifiedRef: string | null;
+	resolvedOriginalOid: string | null;
 }
 
 const OID = /^[0-9a-f]{4,64}$/;
@@ -43,6 +44,7 @@ export async function resolveDiffRange(
 			untracked: true,
 			originalRef: "HEAD",
 			modifiedRef: null,
+			resolvedOriginalOid: resolveCommitOid(ws.worktreePath, "HEAD"),
 		};
 	}
 	if (scope.kind === "pinned") {
@@ -62,6 +64,33 @@ export async function resolveDiffRange(
 			untracked: true,
 			originalRef: resolved.out,
 			modifiedRef: null,
+			resolvedOriginalOid: resolved.out,
+		};
+	}
+	if (scope.kind === "turn") {
+		if (!OID.test(scope.baseTree) || !OID.test(scope.headTree))
+			throw new Error(`Not a tree id: ${scope.baseTree}..${scope.headTree}`);
+		for (const tree of [scope.baseTree, scope.headTree]) {
+			const resolved = await gitAsync(ws.worktreePath, [
+				"rev-parse",
+				"--verify",
+				"--quiet",
+				`${tree}^{tree}`,
+			]);
+			throwExecutionFailure(resolved);
+			if (!resolved.ok || !resolved.out)
+				throw new CodedError(
+					"UNKNOWN_COMMIT",
+					"That turn's snapshot is no longer in this repository",
+				);
+		}
+		return {
+			listPrefix: ["diff"],
+			listRevs: [scope.baseTree, scope.headTree],
+			untracked: false,
+			originalRef: scope.baseTree,
+			modifiedRef: scope.headTree,
+			resolvedOriginalOid: scope.baseTree,
 		};
 	}
 	if (scope.kind === "commit") {
@@ -90,6 +119,7 @@ export async function resolveDiffRange(
 				untracked: false,
 				originalRef: null,
 				modifiedRef: sha,
+				resolvedOriginalOid: null,
 			};
 		}
 		return {
@@ -98,6 +128,7 @@ export async function resolveDiffRange(
 			untracked: false,
 			originalRef: parent.out,
 			modifiedRef: sha,
+			resolvedOriginalOid: parent.out,
 		};
 	}
 	const base = diffBaseRef(ws);
@@ -108,13 +139,15 @@ export async function resolveDiffRange(
 		"HEAD",
 	]);
 	throwExecutionFailure(mergeBase);
-	const forkPoint = mergeBase.ok && mergeBase.out ? mergeBase.out : base;
+	const resolvedForkPoint = mergeBase.ok && mergeBase.out ? mergeBase.out : null;
+	const forkPoint = resolvedForkPoint ?? base;
 	return {
 		listPrefix: ["diff"],
 		listRevs: [forkPoint],
 		untracked: true,
 		originalRef: forkPoint,
 		modifiedRef: null,
+		resolvedOriginalOid: resolvedForkPoint ?? resolveCommitOid(ws.worktreePath, base),
 	};
 }
 

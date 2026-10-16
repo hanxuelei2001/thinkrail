@@ -3,11 +3,28 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
-import { buildResourceLoader, listProjectAliasSkillNames, listSkillCommands } from "./extensions";
+import { registryInlineExtensions } from "../extensions";
+import {
+	buildResourceLoader,
+	childBaseExtensionFactories,
+	childExtensionFactories,
+	disabledExtensions,
+	listProjectAliasSkillNames,
+	listSkillCommands,
+	setDisabledExtensionsResolver,
+} from "./extensions";
+import { oversizedImageGuard } from "./imageGuard";
 import type { SkillAdmissionContext } from "./skillAdmission";
 
 function ctx(trusted: boolean, acknowledged: string[] = []): SkillAdmissionContext {
-	return { trusted, acknowledged, disabled: [], disabledGroups: [], overrides: {} };
+	return {
+		trusted,
+		piResourceTrusted: trusted,
+		acknowledged,
+		disabled: [],
+		disabledGroups: [],
+		overrides: {},
+	};
 }
 
 function stubSkillEnv(home: string, agentDir: string): () => void {
@@ -176,13 +193,20 @@ describe("listSkillCommands", () => {
 			const untrusted = await listSkillCommands(project, ctx(false));
 			expect(untrusted.some((command) => command.name === "skill:repo-alias")).toBe(false);
 			expect(untrusted.some((command) => command.name === "skill:personal-skill")).toBe(true);
-			expect(untrusted.some((command) => command.name === "skill:repo-native")).toBe(true);
+			expect(untrusted.some((command) => command.name === "skill:repo-native")).toBe(false);
+			const nativeOnly = await listSkillCommands(project, {
+				...ctx(false),
+				piResourceTrusted: true,
+			});
+			expect(nativeOnly.some((command) => command.name === "skill:repo-native")).toBe(true);
+			expect(nativeOnly.some((command) => command.name === "skill:repo-alias")).toBe(false);
 
 			const trusted = await listSkillCommands(
 				project,
 				ctx(true, await listProjectAliasSkillNames(project)),
 			);
 			expect(trusted.some((command) => command.name === "skill:repo-alias")).toBe(true);
+			expect(trusted.some((command) => command.name === "skill:repo-native")).toBe(true);
 		} finally {
 			restoreEnvironment(original);
 			rmSync(root, { recursive: true, force: true });
@@ -204,6 +228,7 @@ describe("listSkillCommands", () => {
 
 			const enabled = await listSkillCommands(project, {
 				trusted: true,
+				piResourceTrusted: true,
 				acknowledged: [],
 				disabled: [],
 				disabledGroups: [],
@@ -213,6 +238,7 @@ describe("listSkillCommands", () => {
 
 			const groupOff = await listSkillCommands(project, {
 				trusted: true,
+				piResourceTrusted: true,
 				acknowledged: [],
 				disabled: [],
 				disabledGroups: ["personal"],
@@ -227,6 +253,55 @@ describe("listSkillCommands", () => {
 });
 
 describe("buildResourceLoader", () => {
+	for (const excluding of [false, true]) {
+		it(`runs a project's .pi/extensions code only under pi-level trust (exclusion branch: ${excluding})`, async () => {
+			const root = mkdtempSync(join(tmpdir(), "thinkrail-project-extension-"));
+			const project = join(root, "project");
+			const home = join(root, "home");
+			const agentDir = join(root, "pi-agent");
+			const generationArtifact = join(agentDir, "extensions", "generation.ts");
+			const loads = `__thinkrailProjectExtensionLoads_${excluding}`;
+			const counters = globalThis as typeof globalThis & Record<string, number | undefined>;
+			mkdirSync(join(project, ".pi", "extensions"), { recursive: true });
+			mkdirSync(join(agentDir, "extensions"), { recursive: true });
+			mkdirSync(home, { recursive: true });
+			writeFileSync(generationArtifact, "export default function generation() {}\n");
+			writeFileSync(
+				join(project, ".pi", "extensions", "repo-code.ts"),
+				`export default function repoCode() { globalThis.${loads} = (globalThis.${loads} ?? 0) + 1; }\n`,
+			);
+			const restore = stubSkillEnv(home, agentDir);
+			let piResourceTrusted = false;
+			try {
+				const loader = await buildResourceLoader(
+					project,
+					SettingsManager.create(project, agentDir, { projectTrusted: false }),
+					() => ({ ...ctx(false), piResourceTrusted }),
+					excluding ? [generationArtifact] : [],
+				);
+				const loadsRepoCode = () =>
+					loader
+						.getExtensions()
+						.extensions.some((extension) => extension.path.endsWith("repo-code.ts"));
+				expect(counters[loads]).toBeUndefined();
+				expect(loadsRepoCode()).toBe(false);
+
+				piResourceTrusted = true;
+				await loader.reload();
+				expect(counters[loads]).toBe(1);
+				expect(loadsRepoCode()).toBe(true);
+
+				piResourceTrusted = false;
+				await loader.reload();
+				expect(loadsRepoCode()).toBe(false);
+			} finally {
+				delete counters[loads];
+				restore();
+				rmSync(root, { recursive: true, force: true });
+			}
+		});
+	}
+
 	it("reload re-reads admission so a mid-session group toggle applies", async () => {
 		const root = mkdtempSync(join(tmpdir(), "thinkrail-skill-reload-"));
 		const project = join(root, "project");
@@ -242,6 +317,7 @@ describe("buildResourceLoader", () => {
 
 			let admission: SkillAdmissionContext = {
 				trusted: true,
+				piResourceTrusted: true,
 				acknowledged: [],
 				disabled: [],
 				disabledGroups: [],
@@ -276,6 +352,7 @@ describe("buildResourceLoader", () => {
 		try {
 			const admission: SkillAdmissionContext = {
 				trusted: true,
+				piResourceTrusted: true,
 				acknowledged: [],
 				disabled: [],
 				disabledGroups: [],
@@ -309,6 +386,7 @@ describe("buildResourceLoader", () => {
 		try {
 			const admission: SkillAdmissionContext = {
 				trusted: false,
+				piResourceTrusted: false,
 				acknowledged: [],
 				disabled: [],
 				disabledGroups: [],
@@ -324,5 +402,106 @@ describe("buildResourceLoader", () => {
 			restore();
 			rmSync(root, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("registry extensions", () => {
+	async function visualizeTool(cwd: string, agentDir: string) {
+		const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: true });
+		const loader = await buildResourceLoader(cwd, settingsManager, () => ctx(true));
+		const extension = loader
+			.getExtensions()
+			.extensions.find((candidate) => candidate.tools.has("visualize"));
+		if (!extension) throw new Error("visualize is not loaded");
+		const tool = extension.tools.get("visualize");
+		if (!tool) throw new Error("visualize tool is missing");
+		return {
+			extension,
+			execute: (params: unknown) =>
+				tool.definition.execute("call", params, undefined, undefined, undefined as never),
+		};
+	}
+
+	it("loads visualize as a named inline extension with the strict mermaid validator", async () => {
+		const root = mkdtempSync(join(tmpdir(), "thinkrail-registry-"));
+		const project = join(root, "project");
+		const home = join(root, "home");
+		const agentDir = join(root, "pi-agent");
+		mkdirSync(project, { recursive: true });
+		mkdirSync(home, { recursive: true });
+		mkdirSync(agentDir, { recursive: true });
+		const restore = stubSkillEnv(home, agentDir);
+		try {
+			const { extension, execute } = await visualizeTool(project, agentDir);
+			expect(extension.path).toBe("<inline:visualize>");
+			await expect(
+				execute({ type: "diagram", mermaid: "flowchart LR\n A --> B" }),
+			).resolves.toMatchObject({ details: { type: "diagram" } });
+			await expect(execute({ type: "diagram", mermaid: "flowchart LR\n A -->" })).rejects.toThrow(
+				/invalid Mermaid syntax in `mermaid`[\s\S]*Parse error/,
+			);
+		} finally {
+			restore();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("omits a disabled extension from a new loader and re-decides on reload", async () => {
+		const root = mkdtempSync(join(tmpdir(), "thinkrail-registry-off-"));
+		const project = join(root, "project");
+		const home = join(root, "home");
+		const agentDir = join(root, "pi-agent");
+		mkdirSync(project, { recursive: true });
+		mkdirSync(home, { recursive: true });
+		mkdirSync(agentDir, { recursive: true });
+		const restore = stubSkillEnv(home, agentDir);
+		let disabled = new Set(["visualize"]);
+		setDisabledExtensionsResolver(() => disabled);
+		try {
+			const settingsManager = SettingsManager.create(project, agentDir, { projectTrusted: true });
+			const loader = await buildResourceLoader(project, settingsManager, () => ctx(true));
+			const paths = () => loader.getExtensions().extensions.map((extension) => extension.path);
+			const tools = () =>
+				loader.getExtensions().extensions.flatMap((extension) => [...extension.tools.keys()]);
+			expect(paths()).not.toContain("<inline:visualize>");
+			expect(tools()).not.toContain("visualize");
+
+			disabled = new Set();
+			expect(paths()).not.toContain("<inline:visualize>");
+			await loader.reload();
+			expect(paths()).toContain("<inline:visualize>");
+			expect(tools()).toContain("visualize");
+
+			disabled = new Set(["visualize", "retired-extension"]);
+			await loader.reload();
+			expect(paths()).not.toContain("<inline:visualize>");
+		} finally {
+			setDisabledExtensionsResolver(() => new Set());
+			restore();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("treats a throwing resolver as nothing disabled", () => {
+		setDisabledExtensionsResolver(() => {
+			throw new Error("settings unavailable");
+		});
+		try {
+			expect([...disabledExtensions()]).toEqual([]);
+		} finally {
+			setDisabledExtensionsResolver(() => new Set());
+		}
+	});
+
+	it("keeps the curated child set and appends registry children", () => {
+		const children = childExtensionFactories();
+		expect(children).toHaveLength(3 + registryInlineExtensions("childExtensions").length);
+		expect(children.slice(0, 3).every((inline) => typeof inline === "function")).toBe(true);
+		expect(children.slice(3)).toEqual(registryInlineExtensions("childExtensions"));
+	});
+
+	it("guards every child's images from the base set, not the opt-in curated set", () => {
+		expect(childBaseExtensionFactories()).toEqual([oversizedImageGuard]);
+		expect(childExtensionFactories()).not.toContain(oversizedImageGuard);
 	});
 });

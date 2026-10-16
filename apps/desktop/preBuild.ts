@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { basename, join, relative, resolve, sep } from "node:path";
 import type { BundledExtensions } from "@thinkrail/server";
-import { resolveBuildRuntimeSources } from "@thinkrail/server/build-support";
+import type { BuildRuntimeSources } from "@thinkrail/server/build-support";
 import { ptyLibraryName, runtimeTarget } from "./src/runtimeTarget";
 
 const desktopDir = import.meta.dir;
@@ -33,6 +33,22 @@ function runBun(args: string[]): void {
 	}
 }
 
+function resolveRuntimeSources(): BuildRuntimeSources {
+	const result = spawnSync(
+		"bun",
+		[
+			"--print",
+			'JSON.stringify((await import("@thinkrail/server/build-support")).resolveBuildRuntimeSources())',
+		],
+		{ cwd: desktopDir, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+	);
+	if (result.error) throw result.error;
+	if (result.status !== 0) {
+		throw new Error(`build-support manifest exited ${result.status ?? result.signal}`);
+	}
+	return JSON.parse(result.stdout) as BuildRuntimeSources;
+}
+
 function listFiles(root: string): string[] {
 	const files: string[] = [];
 	for (const name of readdirSync(root)) {
@@ -46,12 +62,11 @@ function listFiles(root: string): string[] {
 runBun(["run", "build:web"]);
 rmSync(stageDir, { recursive: true, force: true });
 mkdirSync(runtimeDir, { recursive: true });
-const sources = resolveBuildRuntimeSources();
+const sources = resolveRuntimeSources();
 const skillRoutes = new Set<string>();
-for (const extension of sources.extensions) {
-	if (!extension.skills) continue;
-	for (const source of listFiles(extension.skills).sort()) {
-		const route = relative(extension.skills, source).split(sep).join("/");
+for (const skillRoot of sources.skillRoots) {
+	for (const source of listFiles(skillRoot).sort()) {
+		const route = relative(skillRoot, source).split(sep).join("/");
 		if (skillRoutes.has(route)) throw new Error(`duplicate staged skill route: ${route}`);
 		skillRoutes.add(route);
 		const destination = join(runtimeDir, "skills", route);
@@ -80,15 +95,21 @@ export async function startDesktopHost(options) {
       macos: options.runtimeDir + "/macos-trash",
       windows: options.runtimeDir + "/windows-trash.exe",
     },
-    ${bundledRuntimeKeys.webAccessFactory}: factory0,
+    ${bundledRuntimeKeys.webAccessFactory}: factory${sources.webAccessIndex},
   });
   return bootHost({
     port: 0,
     host: "127.0.0.1",
     portMode: "exact",
+    resolveShellEnv: true,
     staticDir: options.staticDir,
     appVersion: options.appVersion,
-    analytics: { channel: options.channel, build: "desktop" },
+    analytics: {
+      posthogApiKey: options.posthogProjectKey,
+      channel: options.channel,
+      build: "desktop",
+      ...(options.openExternal ? { openExternal: options.openExternal } : {}),
+    },
   });
 }
 `,
@@ -97,6 +118,8 @@ export async function startDesktopHost(options) {
 		"build",
 		generatedEntry,
 		"--target=bun",
+		"--define",
+		"PI_BUNDLED_NODE=true",
 		`--outfile=${join(runtimeDir, "server-runtime.ts")}`,
 	]);
 } finally {

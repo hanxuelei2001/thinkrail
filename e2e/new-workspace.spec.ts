@@ -102,15 +102,15 @@ test("the dialog lists local branches (no stray origin) and creates a worktree",
 	await expect(mainOption).toBeVisible();
 	await page.keyboard.press("Escape");
 
+	const pill = dialog.getByTestId("model-selector");
+	await expect(pill).toContainText("Default");
 	const effort = dialog.getByTestId("thinking-selector");
-	await expect(effort).toBeVisible();
-	const modelResolved = !(await dialog.getByTestId("model-selector").textContent())?.includes(
-		"Default model",
-	);
-	if (modelResolved) await expect(effort).toBeEnabled();
-	else await expect(effort).toBeDisabled();
+	if ((await effort.count()) > 0) {
+		await expect(effort).toContainText(/off|minimal|low|medium|high|xhigh|max/);
+	}
 
-	await dialog.getByTestId("model-selector").click();
+	await pill.click();
+	await expect(page.getByTestId("model-option-default")).toBeVisible();
 	const refresh = page.getByTestId("model-refresh");
 	await expect(refresh).toBeVisible();
 	await refresh.evaluate((el) => {
@@ -198,6 +198,30 @@ test("a project's committed skills are gated behind trust, then autocomplete", a
 	await expect(prompt).toHaveValue("/skill:e2e-portable ");
 	await expect(dialog).toBeVisible();
 	await expect(worktreeRows(page)).toHaveCount(0);
+});
+
+test("a project whose only gated resources are subagent definitions still asks for trust and names what it loads", async ({
+	page,
+}) => {
+	const definitions = join(E2E_FIXTURE_REPO, ".pi", "agents");
+	mkdirSync(definitions, { recursive: true });
+	writeFileSync(
+		join(definitions, "e2e-definer.md"),
+		"---\nname: e2e-definer\ndescription: Repo-defined agent\n---\n\nDefine things.\n",
+	);
+	try {
+		await openFixtureProject(page);
+		await page.getByTestId("add-workspace").first().click();
+		const dialog = page.getByTestId("new-workspace-dialog");
+		const notice = dialog.getByTestId("ws-trust-notice");
+		await expect(notice).toContainText("1 skill and its own Pi resources");
+		await expect(notice).toContainText("subagent definitions");
+
+		await dialog.getByTestId("ws-trust-project").click();
+		await expect(notice).toBeHidden();
+	} finally {
+		rmSync(join(E2E_FIXTURE_REPO, ".pi"), { recursive: true, force: true });
+	}
 });
 
 test("the start prompt shares template completion and slot behavior without live-only commands", async ({

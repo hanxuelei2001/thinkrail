@@ -1,11 +1,15 @@
-import type {
-	AskUserQuestionResult,
-	GitFileChange,
-	ReviewComment,
-	TodoGroupItem,
-	TodoItem,
-	TodoPlan,
+import {
+	type AskUserQuestionResult,
+	type GitFileChange,
+	isSessionWorking,
+	type ReviewComment,
+	type SessionState,
+	type TextContent,
+	type TodoGroupItem,
+	type TodoItem,
+	type TodoPlan,
 } from "@thinkrail/contracts";
+import type { ToolStatus } from "@thinkrail/extension-api/web";
 import { type AskState, deriveAskStates } from "./askState";
 import type { ChatTurn, ToolResultState } from "./types";
 
@@ -73,6 +77,18 @@ export function changeSetCounts(set: ItemChangeSet): {
 		: changeSetStat(set.files);
 }
 
+/** Whole-plan change footprint: the count of distinct files any item's change set touched. */
+export function planChangeTotals(plan: TodoPlan): { files: number } {
+	const paths = new Set<string>();
+	for (const item of flatItems(plan)) {
+		const set = itemChangeSet(item);
+		if (!set) continue;
+		if (set.kind === "paths") for (const path of set.paths) paths.add(path);
+		else for (const file of set.files) paths.add(file.path);
+	}
+	return { files: paths.size };
+}
+
 export function groupProgress(group: TodoGroupItem): { done: number; total: number } {
 	return {
 		done: group.todos.filter((t) => t.status === "done").length,
@@ -116,6 +132,13 @@ export function reviewSettled(item: TodoItem): boolean {
 	return r !== undefined && r.state === "reviewed" && (r.unreviewedShas?.length ?? 0) === 0;
 }
 
+/** Ship-ready = every step done AND no reviewable step still unsettled. Derived from the plan alone so a
+ * host-version action gate can never make it read ready over an unreviewed step. See panels/SPEC.md. */
+export function isPlanReady(plan: TodoPlan): boolean {
+	const { done, total } = planSummary(plan);
+	return total > 0 && done === total && reviewableItems(plan).every(reviewSettled);
+}
+
 export function reviewChangesRequested(item: TodoItem): boolean {
 	return item.review?.state === "changes_requested";
 }
@@ -154,16 +177,17 @@ export function planCompletionSummary(plan: TodoPlan): string | undefined {
 	return plan.summary;
 }
 
-export function stripStatus(
-	glance: PlanGlance,
-	summary: { done: number; total: number; current: TodoItem | undefined },
-): { show: boolean; showLabel: boolean; title?: string } {
-	const openLeft = summary.total - summary.done > 0;
-	return {
-		show: glance !== "waiting" || openLeft,
-		showLabel: glance !== "working" || !summary.current,
-		...(summary.current ? { title: summary.current.title } : {}),
-	};
+/**
+ * The plan-level note to keep visible ON THE PLAN PAGE while the plan is being redone: the stored
+ * summary from a previous completion, surfaced (the caller marks it stale) once an item has re-opened.
+ * Undefined for a plan that was never completed (no stored summary), an empty plan, or an all-done plan
+ * (that case is `planCompletionSummary`). Exports stay gated on `planCompletionSummary`, never this.
+ */
+export function planStaleSummary(plan: TodoPlan): string | undefined {
+	if (!plan.summary) return undefined;
+	const all = flatItems(plan);
+	if (all.length === 0) return undefined;
+	return all.some((t) => t.status !== "done") ? plan.summary : undefined;
 }
 
 export interface PlanSections {
@@ -207,15 +231,111 @@ export function planGlance(isStreaming: boolean, askStates: Record<string, AskSt
 	return isStreaming ? "working" : "waiting";
 }
 
-export function sessionGlance(rt: {
+export function hostSessionGlance(
+	state: SessionState | null | undefined,
+	fallback: PlanGlance,
+): PlanGlance {
+	if (!state) return fallback;
+	if (state.needsInput) return "waiting_question";
+	return isSessionWorking(state) ? "working" : "waiting";
+}
+
+interface GlanceInputs {
 	isStreaming: boolean;
 	turns: ChatTurn[];
 	askAnswers: Record<string, AskUserQuestionResult>;
 	toolResults: Record<string, ToolResultState>;
-}): PlanGlance {
-	return planGlance(rt.isStreaming, deriveAskStates(rt.turns, rt.askAnswers, rt.toolResults));
+	hostState?: SessionState | null;
+}
+
+const glanceByTurns = new WeakMap<
+	ChatTurn[],
+	Omit<GlanceInputs, "turns" | "hostState"> & { glance: PlanGlance }
+>();
+
+function transcriptGlance({
+	isStreaming,
+	turns,
+	askAnswers,
+	toolResults,
+}: GlanceInputs): PlanGlance {
+	const cached = glanceByTurns.get(turns);
+	if (
+		cached?.isStreaming === isStreaming &&
+		cached.askAnswers === askAnswers &&
+		cached.toolResults === toolResults
+	) {
+		return cached.glance;
+	}
+	const glance = planGlance(isStreaming, deriveAskStates(turns, askAnswers, toolResults));
+	glanceByTurns.set(turns, { isStreaming, askAnswers, toolResults, glance });
+	return glance;
+}
+
+export function sessionGlance(inputs: GlanceInputs): PlanGlance {
+	return inputs.hostState
+		? hostSessionGlance(inputs.hostState, "waiting")
+		: transcriptGlance(inputs);
 }
 
 export function shouldNudgeOnAdd(glance: PlanGlance): boolean {
 	return glance !== "waiting_question";
+}
+
+/**
+ * The latest visible text the agent produced (newest assistant turn with non-empty text; thinking and
+ * tool-only turns are skipped). Streaming-safe: a live turn's partial text is returned as it grows. Used
+ * by the plan's Session block to show what the agent is doing when it isn't asking or on a plan item.
+ */
+export function lastAgentText(rt: { turns: ChatTurn[] }): string | undefined {
+	for (let i = rt.turns.length - 1; i >= 0; i -= 1) {
+		const turn = rt.turns[i];
+		if (turn?.kind !== "assistant") continue;
+		const text = turn.message.content
+			.filter((b): b is TextContent => b.type === "text")
+			.map((b) => b.text)
+			.join("")
+			.trim();
+		if (text) return text;
+	}
+	return undefined;
+}
+
+export interface PendingAsk {
+	toolCallId: string;
+	args: Record<string, unknown>;
+	result: unknown;
+	status: ToolStatus;
+	streaming: boolean;
+}
+
+/**
+ * The session's currently-awaiting `ask_user_question` — the one the user still has to answer (no answer,
+ * not superseded, not terminal) — reconstructed as the tool render props the shared `AskUserQuestionCard`
+ * needs, so the plan page can host the SAME card. Undefined when nothing is awaiting. Latest wins.
+ */
+export function pendingAsk(rt: {
+	turns: ChatTurn[];
+	askAnswers: Record<string, AskUserQuestionResult>;
+	toolResults: Record<string, ToolResultState>;
+}): PendingAsk | undefined {
+	const states = deriveAskStates(rt.turns, rt.askAnswers, rt.toolResults);
+	let found: PendingAsk | undefined;
+	for (const turn of rt.turns) {
+		if (turn.kind !== "assistant") continue;
+		for (const block of turn.message.content) {
+			if (block.type !== "toolCall" || block.name !== "ask_user_question") continue;
+			const state = states[block.id];
+			if (!state || state.answer || state.superseded || state.terminal) continue;
+			const tool = rt.toolResults[block.id];
+			found = {
+				toolCallId: block.id,
+				args: (block.arguments ?? {}) as Record<string, unknown>,
+				result: tool?.raw,
+				status: tool?.status ?? "running",
+				streaming: turn.streaming,
+			};
+		}
+	}
+	return found;
 }

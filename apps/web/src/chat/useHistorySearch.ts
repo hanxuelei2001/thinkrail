@@ -221,10 +221,12 @@ export function useHistorySearch(
 					useAppStore.getState().setWorkspaces(target.projectId, list);
 				} catch {}
 			}
-			useAppStore.getState().requestChatLocation(target);
 			close();
+			const store = useAppStore.getState();
+			store.setChatObscured(sessionId, false);
+			store.requestChatLocation(target);
 		},
-		[close],
+		[close, sessionId],
 	);
 
 	const state = useMemo<HistorySearchState>(

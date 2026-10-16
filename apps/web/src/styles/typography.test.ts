@@ -43,10 +43,10 @@ describe("typography source", () => {
 		}
 	});
 
-	it("holds 19 canonical definitions and 30 aliases (49 styles)", () => {
+	it("holds 20 canonical definitions and 30 aliases (50 styles)", () => {
 		const styles = allStyles(typography);
-		expect(styles).toHaveLength(49);
-		expect(styles.filter((s) => !s.ref)).toHaveLength(19);
+		expect(styles).toHaveLength(50);
+		expect(styles.filter((s) => !s.ref)).toHaveLength(20);
 		expect(styles.filter((s) => s.ref)).toHaveLength(30);
 		expect(styles.filter((s) => s.prose)).toHaveLength(28);
 	});
@@ -66,11 +66,12 @@ describe("typography source", () => {
 		});
 		expect(typography.lineHeights).toEqual({
 			compact: 1.25,
-			metadata: 1.3333333,
-			ui: 1.4285714,
-			code: 1.5,
-			relaxed: 1.5384615,
-			default: 1.6,
+			metadata: 1.25,
+			ui: 1.3,
+			code: 1.4,
+			relaxed: 1.4,
+			default: 1.3,
+			reading: 1.45,
 		});
 		expect(typography.fontWeights).toEqual({
 			light: 370,
@@ -145,6 +146,7 @@ describe("typography source", () => {
 			metadata: 370,
 			eyebrow: 500,
 			labelPill: 500,
+			caption: 500,
 			action: 500,
 			emphasis: 500,
 		});
@@ -427,7 +429,8 @@ describe("generated CSS", () => {
 		expect(GENERATED).toContain("--tr-font-family-code:");
 		expect(GENERATED).toContain("--tr-font-size-s11: 11px;");
 		expect(GENERATED).toContain("--tr-font-size-s13: 13px;");
-		expect(GENERATED).toContain("--tr-line-height-default: 1.6;");
+		expect(GENERATED).toContain("--tr-line-height-default: 1.3;");
+		expect(GENERATED).toContain("--tr-code-row-height: 14px;");
 		const monaco = read(join(SRC, "panels/monacoSetup.ts"));
 		const xterm = read(join(SRC, "panels/TerminalInstance.tsx"));
 		expect(monaco).toContain('cssVar("--tr-font-size-s11")');

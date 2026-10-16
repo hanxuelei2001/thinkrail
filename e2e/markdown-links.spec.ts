@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { createWorkspaceViaDialog, openFixtureProject } from "./fixtures/app";
+import { createWorkspaceViaDialog, openFixtureProject, revealWorkbenchTool } from "./fixtures/app";
 
 test("a parent-relative file link cannot escape into browser navigation", async ({ page }) => {
 	await openFixtureProject(page);
 	await createWorkspaceViaDialog(page);
-	await page.getByTestId("tab-files").click();
+	await revealWorkbenchTool(page, "files");
 
 	await page.getByTestId("file-node").filter({ hasText: "styles" }).click();
 	await page.getByTestId("file-node").filter({ hasText: "COLOR.md" }).dblclick();
@@ -38,19 +38,28 @@ test("relative links, images, and heading anchors work in the rendered markdown 
 }) => {
 	await openFixtureProject(page);
 	await createWorkspaceViaDialog(page);
-	await page.getByTestId("tab-files").click();
+	await revealWorkbenchTool(page, "files");
 
 	await page.getByTestId("file-node").filter({ hasText: "LINKS.md" }).dblclick();
 	const preview = page.getByTestId("markdown-preview");
 	await expect(preview).toBeVisible();
 
-	await expect(preview.locator("#section-two")).toHaveCount(1);
+	await expect(preview.locator("#user-content-section-two")).toHaveCount(1);
 
-	const img = preview.locator("img");
+	const img = preview.locator("img").first();
 	await expect(img).toHaveAttribute("src", /\/files\/[^/]+\/logo\.png$/);
 	await expect
 		.poll(async () => img.evaluate((el: HTMLImageElement) => el.naturalWidth))
 		.toBeGreaterThan(0);
+
+	const rawImage = preview.locator('p[align="center"] img[alt="raw-logo"]');
+	await expect(rawImage).toHaveAttribute("width", "24");
+	await expect(rawImage).toHaveAttribute("src", /\/files\/[^/]+\/logo\.png$/);
+	await expect(preview.locator("details summary")).toHaveText("Folded");
+	await expect(preview.locator("details em")).toHaveText("body");
+	await expect(preview.locator("script")).toHaveCount(0);
+	await expect(preview).not.toContainText("<img");
+	await expect(page.locator("body")).not.toHaveText("pwned");
 
 	await preview.getByRole("link", { name: "Section two" }).click();
 	await expect(page.getByTestId("editor-tab")).toHaveCount(2);

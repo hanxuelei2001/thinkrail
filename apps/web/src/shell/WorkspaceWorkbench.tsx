@@ -4,36 +4,50 @@ import {
 	RiChatNewLine as MessageSquarePlus,
 	RiTerminalBoxLine as SquareTerminal,
 } from "@remixicon/react";
-import { lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { IconTooltip } from "@thinkrail/ui/tooltip";
+import {
+	Fragment,
+	lazy,
+	type ReactNode,
+	Suspense,
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+} from "react";
 import { prepareChatTitle } from "../chat/chatTitle";
+import { useAutoPlanSummary } from "../chat/useChatTodos";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { QuietScrollArea } from "../components/QuietScrollArea";
 import { LoadingRegion } from "../components/Skeleton";
-import { DropdownMenuItem } from "../components/ui/dropdown-menu";
-import { IconTooltip } from "../components/ui/tooltip";
 import { type LayoutAttention, layoutResourceIdentity } from "../lib";
 import { ChangesPanel } from "../panels/ChangesPanel";
 import { DiffPane } from "../panels/DiffPane";
 import { FilePane } from "../panels/FilePane";
 import { FileTree } from "../panels/FileTree";
+import { startChatInTab } from "../panels/openChat";
 import { openFileInTab } from "../panels/openTabs";
 import { ProjectTree } from "../panels/ProjectTree";
+import "../panels/resources/register";
 import { ReviewPanel, selectActiveReviewedPath } from "../panels/ReviewPanel";
 import { reviewFlags } from "../panels/reviewModel";
 import { SpecsPanel } from "../panels/SpecsPanel";
 import { TerminalWorkbenchBody, useTerminalClose } from "../panels/TerminalWorkbench";
 import { useWorkspaceReview } from "../panels/useWorkspaceReview";
 import { useWorkspaceSpecs } from "../panels/useWorkspaceSpecs";
+import { useLoadWorkspaceTurns } from "../panels/useWorkspaceTurns";
 import {
+	createChangesTab,
 	type EditorTab,
+	editorSessionId,
 	isConnectedGeneration,
 	isDefaultWorkspace,
 	isExternalWorkspace,
 	type LayoutIntent,
-	layoutOpenOptionsForNavigation,
 	selectCanRenameChat,
 	selectContextProject,
 	selectDiffTabTargetRef,
+	selectRailPlanSessionId,
 	selectReviewDraftCount,
 	selectWorkspaceById,
 	selectWorkspaceNavTick,
@@ -41,7 +55,7 @@ import {
 	toast,
 	useAppStore,
 } from "../store";
-import { createSessionWithSkillBaseline, errorText, getTransport } from "../transport";
+import { errorText, getTransport } from "../transport";
 import {
 	currentChatDestination,
 	hydrateChatResource,
@@ -49,6 +63,7 @@ import {
 	useDeletedChatPlacementReconciliation,
 	useWorkspaceChatCatalogReconciliation,
 } from "./chatReconciliation";
+import { subscribeCloseRequest } from "./closeRequestChannel";
 import {
 	collectAllGroups,
 	findPlacedResource,
@@ -61,19 +76,87 @@ import {
 	type WorkspaceLayoutDocument,
 } from "./layout";
 import { toLayoutTab, useLayoutIntentProcessing } from "./layoutIntents";
-import { commitWorkspaceLayout, useWorkspaceLayoutState } from "./layoutState";
+import {
+	applyLayoutAttention,
+	commitWorkspaceLayout,
+	emptyWorkspaceProjection,
+	useWorkspaceLayoutState,
+	workspaceProjectionReference,
+} from "./layoutState";
 import { syncLegacySelectionFromAttention, useLegacySelectionAdapter } from "./legacySelection";
 import { useTerminalPlacementReconciliation } from "./terminalReconciliation";
 import { WorkspaceChatHistory } from "./WorkspaceChatHistory";
 
+function PlanSummaryAutoDraft({
+	workspaceId,
+	sessionId,
+}: {
+	workspaceId: string;
+	sessionId: string;
+}) {
+	useAutoPlanSummary(workspaceId, sessionId);
+	return null;
+}
+
 const ChatView = lazy(() => import("../chat/ChatView"));
 const PlanPane = lazy(() => import("../panels/PlanPane"));
+const ChangesReviewPane = lazy(() =>
+	import("../panels/ChangesReviewPane").then((module) => ({ default: module.ChangesReviewPane })),
+);
+const PlanRailPane = lazy(() => import("../panels/PlanRailPane"));
 
 const NO_EDITOR_TABS: EditorTab[] = [];
 
 function MissingResource({ label }: { label: string }) {
 	return (
 		<LoadingRegion rows={12} label={`Restoring ${label}`} className="h-full overflow-hidden p-16" />
+	);
+}
+
+type EditorResourceTab = Extract<LayoutCenterTab, { kind: "file" | "diff" | "changes" }>;
+type EditorResource = Extract<EditorTab, { kind: "file" | "diff" | "changes" }>;
+
+function isEditorResource(tab: EditorTab): tab is EditorResource {
+	return tab.kind === "file" || tab.kind === "diff" || tab.kind === "changes";
+}
+
+function findEditorResource(
+	tabs: readonly EditorTab[],
+	id: string,
+	identity: string,
+): EditorResource | undefined {
+	const exact = tabs.find((candidate) => candidate.id === id);
+	if (exact && isEditorResource(exact) && layoutResourceIdentity(exact) === identity) return exact;
+	return tabs.find(
+		(candidate): candidate is EditorResource =>
+			isEditorResource(candidate) && layoutResourceIdentity(candidate) === identity,
+	);
+}
+
+function EditorResourceBody({ workspaceId, tab }: { workspaceId: string; tab: EditorResourceTab }) {
+	const identity = layoutResourceIdentity(tab);
+	const editor = useAppStore((state) =>
+		findEditorResource(state.tabsByWorkspace[workspaceId] ?? NO_EDITOR_TABS, tab.id, identity),
+	);
+	if (!editor) {
+		return (
+			<MissingResource
+				label={tab.kind === "file" ? "file" : tab.kind === "changes" ? "changes" : "diff"}
+			/>
+		);
+	}
+	return (
+		<ErrorBoundary label="editor" resetKeys={[workspaceId, tab.id]}>
+			<Suspense fallback={<MissingResource label="editor" />}>
+				{editor.kind === "file" ? (
+					<FilePane tab={editor} />
+				) : editor.kind === "diff" ? (
+					<DiffPane tab={editor} />
+				) : (
+					<ChangesReviewPane tab={editor} />
+				)}
+			</Suspense>
+		</ErrorBoundary>
 	);
 }
 
@@ -136,7 +219,7 @@ function ChatResourceBody({
 			<button
 				type="button"
 				onClick={retry}
-				className="rounded-[var(--radius-sm)] border border-border-default px-8 py-4 tr-text-ui hover:bg-control-bg-hovered"
+				className="rounded-sm border border-border-default px-8 py-4 tr-text-ui hover:bg-control-bg-hovered"
 			>
 				Retry
 			</button>
@@ -206,19 +289,28 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 	const canRenameChat = useAppStore(selectCanRenameChat);
 	const document = useAppStore((state) => state.layoutDocumentsByWorkspace[workspaceId]);
 	const attention = useAppStore((state) => state.layoutAttentionByWorkspace[workspaceId]);
-	const projectionEpoch = useAppStore(
-		(state) => state.layoutProjectionEpochByWorkspace[workspaceId] ?? 0,
-	);
+	const frame = useAppStore((state) => state.workbenchFrame);
+	const projectionEpoch = useAppStore((state) => state.layoutProjectionEpoch);
 	const layoutPreferences = useAppStore((state) => state.localLayoutPreferences);
 	const workspace = useAppStore((state) => selectWorkspaceById(state, workspaceId));
 	const contextProject = useAppStore(selectContextProject);
 	const editorTabs = useAppStore((state) => state.tabsByWorkspace[workspaceId] ?? NO_EDITOR_TABS);
+	const planSessionIds = useMemo(() => {
+		const seen = new Set<string>();
+		for (const tab of editorTabs) {
+			const sid = editorSessionId(tab);
+			if (sid) seen.add(sid);
+		}
+		return [...seen];
+	}, [editorTabs]);
 	const chatStarting = useAppStore((state) => (state.chatStartsByWorkspace[workspaceId] ?? 0) > 0);
 	const deletedSessions = useAppStore((state) => state.deletedSessionsByWorkspace[workspaceId]);
 	const terminalClose = useTerminalClose();
 	const specs = useWorkspaceSpecs(workspaceId);
 	const review = useWorkspaceReview(workspaceId);
+	useLoadWorkspaceTurns(workspaceId);
 	const reviewComments = useAppStore((state) => state.reviewsByWorkspace[workspaceId]?.comments);
+	const railPlanSessionId = useAppStore((state) => selectRailPlanSessionId(state, workspaceId));
 	const reviewDraftCount = useAppStore((state) => selectReviewDraftCount(state, workspaceId));
 	const reviewFlagByPath = useMemo(() => reviewFlags(reviewComments), [reviewComments]);
 	const [focusRequest, setFocusRequest] = useState<LayoutTabFocusRequest | null>(null);
@@ -292,15 +384,18 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 		(next: LayoutAttention) => {
 			const state = useAppStore.getState();
 			if (state.removedWorkspaceIds[workspaceId]) return;
-			state.setLayoutAttention(workspaceId, next);
+			applyLayoutAttention(workspaceId, next);
 			syncLegacySelectionFromAttention(workspaceId);
 		},
 		[workspaceId],
 	);
 
 	const commit = useCallback(
-		(next: WorkspaceLayoutDocument) => {
-			void commitWorkspaceLayout(workspaceId, next, document).catch(() => {});
+		(next: WorkspaceLayoutDocument, nextAttention?: LayoutAttention) => {
+			void commitWorkspaceLayout(workspaceId, next, {
+				...(document ? { baseDocument: document } : {}),
+				...(nextAttention ? { attention: nextAttention } : {}),
+			}).catch(() => {});
 		},
 		[document, workspaceId],
 	);
@@ -321,15 +416,24 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 		const cachedResources = new Set(
 			cache.flatMap((item) => {
 				const resource = toLayoutTab(item);
-				return resource && (resource.kind === "file" || resource.kind === "diff")
+				return resource &&
+					(resource.kind === "file" || resource.kind === "diff" || resource.kind === "changes")
 					? [layoutResourceIdentity(resource)]
 					: [];
 			}),
 		);
 		for (const tab of collectAllGroups(document).flatMap((group) => group.tabs)) {
-			if (tab.kind !== "file" && tab.kind !== "diff") continue;
+			if (tab.kind !== "file" && tab.kind !== "diff" && tab.kind !== "changes") continue;
 			const identity = layoutResourceIdentity(tab);
 			if (cachedResources.has(identity)) continue;
+			if (tab.kind === "changes") {
+				useAppStore
+					.getState()
+					.openTab(createChangesTab(workspaceId, tab.id, tab.name, tab.scope), "keep", false, {
+						activate: false,
+					});
+				continue;
+			}
 			const cacheArrived = () =>
 				(useAppStore.getState().tabsByWorkspace[workspaceId] ?? []).some((item) => {
 					const resource = toLayoutTab(item);
@@ -343,7 +447,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 			if (tab.kind === "file") {
 				void getTransport()
 					.request("fs.readFile", { workspaceId, path: tab.path })
-					.then(({ content }) => {
+					.then(({ content, meta }) => {
 						const latest = useAppStore.getState();
 						if (!current || !isConnectedGeneration(latest, connectionGeneration)) return;
 						const placed = currentPlacement();
@@ -356,6 +460,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 								path: placed.path,
 								name: placed.name,
 								content,
+								meta,
 								loadedTick,
 							},
 							"keep",
@@ -371,7 +476,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 				});
 				void getTransport()
 					.request("git.diffFile", { workspaceId, path: tab.path, scope: tab.scope })
-					.then(({ original, modified }) => {
+					.then(({ original, modified, meta, originalOid }) => {
 						const latest = useAppStore.getState();
 						if (!current || !isConnectedGeneration(latest, connectionGeneration)) return;
 						const placed = currentPlacement();
@@ -386,6 +491,8 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 								name: placed.name,
 								original,
 								modified,
+								meta,
+								originalOid,
 								loadedTick,
 								loadedTarget,
 							},
@@ -402,25 +509,20 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 		};
 	}, [connectionGeneration, document, status, workspaceId]);
 
-	const editorById = useMemo(() => new Map(editorTabs.map((tab) => [tab.id, tab])), [editorTabs]);
-	const editorByResource = useMemo(() => {
-		const resources = new Map<
-			string,
-			Extract<EditorTab, { kind: "file" }> | Extract<EditorTab, { kind: "diff" }>
-		>();
-		for (const tab of editorTabs) {
-			if (tab.kind !== "file" && tab.kind !== "diff") continue;
-			const identity = layoutResourceIdentity(tab);
-			if (!resources.has(identity)) resources.set(identity, tab);
-		}
-		return resources;
-	}, [editorTabs]);
 	const terminalByKey = useMemo(
 		() => new Map(terminals.map((tab) => [tab.tabKey, tab])),
 		[terminals],
 	);
+	const pendingProjection = useMemo(
+		() =>
+			(document && attention) || !frame
+				? null
+				: emptyWorkspaceProjection(frame, workspaceProjectionReference(workspaceId)),
+		[attention, document, frame, workspaceId],
+	);
+	const rendered = document && attention ? { document, attention } : pendingProjection;
 
-	const renderTabBody = useCallback(
+	const renderResourceBody = useCallback(
 		(tab: LayoutCenterTab | Extract<LayoutTab, { kind: "terminal" }>) => {
 			if (tab.kind === "chat") {
 				return <ChatResourceBody workspaceId={workspaceId} tab={tab} onOpenFile={openToolFile} />;
@@ -455,78 +557,65 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 					</ErrorBoundary>
 				);
 			}
-			const identity = layoutResourceIdentity(tab);
-			const exact = editorById.get(tab.id);
-			const editor =
-				exact &&
-				(exact.kind === "file" || exact.kind === "diff") &&
-				layoutResourceIdentity(exact) === identity
-					? exact
-					: editorByResource.get(identity);
-			if (!editor) return <MissingResource label={tab.kind === "file" ? "file" : "diff"} />;
-			return (
-				<ErrorBoundary label="editor" resetKeys={[workspaceId, tab.id]}>
-					<Suspense fallback={<MissingResource label="editor" />}>
-						{editor.kind === "file" ? (
-							<FilePane tab={editor} />
-						) : editor.kind === "diff" ? (
-							<DiffPane tab={editor} />
-						) : null}
-					</Suspense>
-				</ErrorBoundary>
-			);
+			return <EditorResourceBody workspaceId={workspaceId} tab={tab} />;
 		},
-		[
-			deletedSessions,
-			document,
-			editorById,
-			editorByResource,
-			openToolFile,
-			terminalByKey,
-			workspaceId,
-		],
+		[deletedSessions, document, openToolFile, terminalByKey, workspaceId],
+	);
+	const renderTabBody = useCallback(
+		(tab: LayoutCenterTab | Extract<LayoutTab, { kind: "terminal" }>) => (
+			<Fragment key={workspaceId}>{renderResourceBody(tab)}</Fragment>
+		),
+		[renderResourceBody, workspaceId],
 	);
 
-	const renderToolBody = useCallback(
-		(tool: LayoutToolId) => {
-			let body: ReactNode;
-			switch (tool) {
-				case "projects":
-					body = (
-						<QuietScrollArea data-testid="left-nav" className="h-full" viewportClassName="p-12">
-							<ProjectTree />
-						</QuietScrollArea>
-					);
-					break;
-				case "specs":
-					body = (
-						<QuietScrollArea className="h-full" viewportClassName="p-12">
-							<SpecsPanel workspaceId={workspaceId} failed={specs.failed} onRetry={specs.reload} />
-						</QuietScrollArea>
-					);
-					break;
-				case "files":
-					body = (
-						<QuietScrollArea className="h-full" viewportClassName="p-12">
-							<FileTree key={workspaceId} workspaceId={workspaceId} />
-						</QuietScrollArea>
-					);
-					break;
-				case "changes":
-					body = <ChangesPanel workspaceId={workspaceId} />;
-					break;
-				case "review":
-					body = <ReviewPanel workspaceId={workspaceId} failed={review.failed} />;
-					break;
-			}
-			return (
+	const toolBodies = useMemo<Record<LayoutToolId, ReactNode>>(() => {
+		const bodies: Record<LayoutToolId, ReactNode> = {
+			projects: (
+				<QuietScrollArea
+					data-testid="left-nav"
+					className="h-full"
+					viewportClassName="p-panel-inset"
+				>
+					<ProjectTree />
+				</QuietScrollArea>
+			),
+			specs: (
+				<QuietScrollArea className="h-full" viewportClassName="p-panel-inset">
+					<SpecsPanel workspaceId={workspaceId} failed={specs.failed} onRetry={specs.reload} />
+				</QuietScrollArea>
+			),
+			files: (
+				<QuietScrollArea className="h-full" viewportClassName="p-panel-inset">
+					<FileTree key={workspaceId} workspaceId={workspaceId} />
+				</QuietScrollArea>
+			),
+			changes: <ChangesPanel key={workspaceId} workspaceId={workspaceId} />,
+			review: <ReviewPanel key={workspaceId} workspaceId={workspaceId} failed={review.failed} />,
+			plan: railPlanSessionId ? (
+				<ErrorBoundary label="plan rail" resetKeys={[workspaceId, railPlanSessionId]}>
+					<Suspense fallback={<MissingResource label="plan" />}>
+						<PlanRailPane workspaceId={workspaceId} sessionId={railPlanSessionId} />
+					</Suspense>
+				</ErrorBoundary>
+			) : (
+				<div
+					data-testid="plan-rail-empty"
+					className="flex h-full items-center justify-center p-16 text-text-subtle tr-text-ui"
+				>
+					Open a chat to see its plan here.
+				</div>
+			),
+		};
+		for (const tool of Object.keys(bodies) as LayoutToolId[]) {
+			bodies[tool] = (
 				<ErrorBoundary label={`${tool} tool`} resetKeys={[workspaceId, tool]}>
-					{body}
+					{bodies[tool]}
 				</ErrorBoundary>
 			);
-		},
-		[review.failed, specs.failed, specs.reload, workspaceId],
-	);
+		}
+		return bodies;
+	}, [railPlanSessionId, review.failed, specs.failed, specs.reload, workspaceId]);
+	const renderToolBody = useCallback((tool: LayoutToolId) => toolBodies[tool], [toolBodies]);
 
 	const isDefault = workspace != null && isDefaultWorkspace(workspace);
 	const isExternal = workspace != null && isExternalWorkspace(workspace);
@@ -536,35 +625,123 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 			const currentAttention = useAppStore.getState().layoutAttentionByWorkspace[workspaceId];
 			if (!currentAttention) return;
 			changeAttention({ ...currentAttention, lastFocusedCenterGroupId: groupId });
-			const navigation = useAppStore.getState().beginCenterNavigation(workspaceId, groupId);
-			useAppStore.getState().beginChatStart(workspaceId);
-			void createSessionWithSkillBaseline({ workspaceId })
-				.then(({ result: { sessionId, model, thinkingLevel }, syncedTick }) => {
-					const store = useAppStore.getState();
-					store.openChatSession(
-						workspaceId,
-						sessionId,
-						model,
-						thinkingLevel,
-						syncedTick,
-						layoutOpenOptionsForNavigation(store, workspaceId, navigation),
-					);
-				})
-				.catch(() => {
-					const state = useAppStore.getState();
-					if (
-						layoutOpenOptionsForNavigation(state, workspaceId, navigation).activate !== false &&
-						!state.removedWorkspaceIds[workspaceId]
-					) {
-						toast.error("The agent session could not be created.", "Couldn't start the chat");
-					}
-				})
-				.finally(() => useAppStore.getState().endChatStart(workspaceId));
+			void startChatInTab(workspaceId, groupId);
 		},
 		[changeAttention, workspaceId],
 	);
 
-	if (!document || !attention) {
+	const renderTabAdornment = useCallback(
+		(tab: LayoutTab): ReactNode => {
+			if (tab.kind === "tool" && tab.tool === "review" && reviewDraftCount > 0) {
+				return (
+					<span
+						data-testid="review-pending-badge"
+						className="inline-flex min-w-16 items-center justify-center rounded-full bg-primary px-2 tr-text-label-pill text-text-on-primary"
+					>
+						{reviewDraftCount}
+					</span>
+				);
+			}
+			if (tab.kind !== "file" && tab.kind !== "diff") return null;
+			const flag = reviewFlagByPath.get(tab.path);
+			return flag ? (
+				<span
+					data-testid="review-tab-flag"
+					data-flag={flag}
+					className={
+						flag === "draft"
+							? "shrink-0 tr-text-eyebrow text-primary"
+							: "shrink-0 tr-text-eyebrow text-text-subtle"
+					}
+				>
+					Review
+				</span>
+			) : null;
+		},
+		[reviewDraftCount, reviewFlagByPath],
+	);
+
+	const renderEmptyCenter = useCallback(
+		(groupId: string): ReactNode => (
+			<div
+				data-testid="workspace-ready"
+				className="flex h-full flex-col items-center justify-center gap-4 px-16 text-center"
+			>
+				<span className="tr-text-eyebrow text-text-muted">
+					{isDefault ? "Default workspace" : isExternal ? "Existing worktree" : "Workspace ready"}
+				</span>
+				{workspace ? (
+					<>
+						<h2 className="max-w-full truncate tr-title-entity text-text-default">
+							{isDefault ? (contextProject?.name ?? workspace.name) : workspace.name}
+						</h2>
+						<p className="flex max-w-full items-center gap-4 tr-text-metadata text-text-muted">
+							<GitBranch className="size-14 shrink-0" />
+							{isDefault || isExternal ? (
+								<span className="truncate">on {workspace.branch}</span>
+							) : (
+								<>
+									<span className="truncate">{workspace.branch}</span>
+									<span className="shrink-0 text-text-muted">· from {workspace.baseBranch}</span>
+								</>
+							)}
+						</p>
+					</>
+				) : null}
+				<p className="mt-4 tr-text-ui text-text-muted">
+					{isDefault
+						? "Chats, changes, and terminals run directly in your project folder."
+						: "Files, chats, changes, and terminals are scoped to this workspace."}
+				</p>
+				<button
+					type="button"
+					data-testid="start-chat"
+					data-starting={chatStarting || undefined}
+					disabled={chatStarting}
+					onClick={() => startChat(groupId)}
+					className="mt-4 flex items-center gap-4 rounded-sm border border-border-default bg-container-elevated-bg px-12 py-4 tr-text-ui text-text-default hover:bg-control-bg-hovered disabled:text-text-muted disabled:hover:bg-container-elevated-bg"
+				>
+					{chatStarting ? (
+						<>
+							<Loader2 className="size-14 animate-spin motion-reduce:animate-none" /> Starting chat…
+						</>
+					) : (
+						<>
+							<MessageSquarePlus className="size-14" /> New chat
+						</>
+					)}
+				</button>
+			</div>
+		),
+		[chatStarting, contextProject, isDefault, isExternal, startChat, workspace],
+	);
+
+	const renderCenterActions = useCallback(
+		(groupId: string): ReactNode => (
+			<>
+				<WorkspaceChatHistory
+					key={workspaceId}
+					workspaceId={workspaceId}
+					targetGroupId={groupId}
+					{...(canRenameChat ? { onRenameChat: requestRenameChat } : {})}
+				/>
+				<IconTooltip label="New terminal in this group">
+					<button
+						type="button"
+						data-testid="new-terminal"
+						aria-label="New terminal in this group"
+						onClick={() => useAppStore.getState().addTerminal(workspaceId, undefined, groupId)}
+						className="flex w-panel-header-row shrink-0 items-center justify-center border-border-default border-l text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
+					>
+						<SquareTerminal className="size-14" />
+					</button>
+				</IconTooltip>
+			</>
+		),
+		[canRenameChat, requestRenameChat, workspaceId],
+	);
+
+	if (!rendered) {
 		return (
 			<div className="flex h-full items-center justify-center bg-container-content-bg tr-text-ui text-text-muted">
 				Restoring workspace layout…
@@ -574,132 +751,27 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 
 	return (
 		<div data-testid="workspace-workbench" data-layout-status="settled" className="contents">
+			{planSessionIds.map((sessionId) => (
+				<PlanSummaryAutoDraft
+					key={`plan-summary-draft:${workspaceId}:${sessionId}`}
+					workspaceId={workspaceId}
+					sessionId={sessionId}
+				/>
+			))}
 			<Workbench
-				document={document}
-				attention={attention}
+				workspaceId={workspaceId}
+				document={rendered.document}
+				attention={rendered.attention}
 				maxSideGroups={layoutPreferences.maxSideGroups}
 				maxBottomGroups={layoutPreferences.maxBottomGroups}
 				projectionEpoch={projectionEpoch}
 				{...(focusRequest ? { focusRequest } : {})}
+				subscribeCloseRequest={subscribeCloseRequest}
 				renderTabBody={renderTabBody}
-				renderTabAdornment={(tab) => {
-					if (tab.kind === "tool" && tab.tool === "review" && reviewDraftCount > 0) {
-						return (
-							<span
-								data-testid="review-pending-badge"
-								className="inline-flex min-w-16 items-center justify-center rounded-full bg-primary px-2 tr-text-label-pill text-text-on-primary"
-							>
-								{reviewDraftCount}
-							</span>
-						);
-					}
-					if (tab.kind !== "file" && tab.kind !== "diff") return null;
-					const flag = reviewFlagByPath.get(tab.path);
-					return flag ? (
-						<span
-							data-testid="review-tab-flag"
-							data-flag={flag}
-							className={
-								flag === "draft"
-									? "shrink-0 tr-text-eyebrow text-primary"
-									: "shrink-0 tr-text-eyebrow text-text-subtle"
-							}
-						>
-							Review
-						</span>
-					) : null;
-				}}
+				renderTabAdornment={renderTabAdornment}
 				renderToolBody={renderToolBody}
-				renderEmptyCenter={(groupId) => (
-					<div
-						data-testid="workspace-ready"
-						className="flex h-full flex-col items-center justify-center gap-4 px-16 text-center"
-					>
-						<span className="tr-text-eyebrow text-text-muted">
-							{isDefault
-								? "Default workspace"
-								: isExternal
-									? "Existing worktree"
-									: "Workspace ready"}
-						</span>
-						{workspace ? (
-							<>
-								<h2 className="max-w-full truncate tr-title-entity text-text-default">
-									{isDefault ? (contextProject?.name ?? workspace.name) : workspace.name}
-								</h2>
-								<p className="flex max-w-full items-center gap-4 tr-text-metadata text-text-muted">
-									<GitBranch className="size-14 shrink-0" />
-									{isDefault || isExternal ? (
-										<span className="truncate">on {workspace.branch}</span>
-									) : (
-										<>
-											<span className="truncate">{workspace.branch}</span>
-											<span className="shrink-0 text-text-muted">
-												· from {workspace.baseBranch}
-											</span>
-										</>
-									)}
-								</p>
-							</>
-						) : null}
-						<p className="mt-4 tr-text-ui text-text-muted">
-							{isDefault
-								? "Chats, changes, and terminals run directly in your project folder."
-								: "Files, chats, changes, and terminals are scoped to this workspace."}
-						</p>
-						<button
-							type="button"
-							data-testid="start-chat"
-							data-starting={chatStarting || undefined}
-							disabled={chatStarting}
-							onClick={() => startChat(groupId)}
-							className="mt-4 flex items-center gap-4 rounded-[var(--radius-sm)] border border-border-default bg-container-elevated-bg px-12 py-4 tr-text-ui text-text-default hover:bg-control-bg-hovered disabled:text-text-muted disabled:hover:bg-container-elevated-bg"
-						>
-							{chatStarting ? (
-								<>
-									<Loader2 className="size-14 animate-spin motion-reduce:animate-none" /> Starting
-									chat…
-								</>
-							) : (
-								<>
-									<MessageSquarePlus className="size-14" /> New chat
-								</>
-							)}
-						</button>
-					</div>
-				)}
-				renderCenterActions={(groupId) => (
-					<>
-						<WorkspaceChatHistory
-							workspaceId={workspaceId}
-							targetGroupId={groupId}
-							{...(canRenameChat ? { onRenameChat: requestRenameChat } : {})}
-						/>
-						<IconTooltip label="New terminal in this group">
-							<button
-								type="button"
-								data-testid="new-terminal"
-								aria-label="New terminal in this group"
-								onClick={() => useAppStore.getState().addTerminal(workspaceId, undefined, groupId)}
-								className="flex w-32 shrink-0 items-center justify-center border-border-default border-l text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
-							>
-								<SquareTerminal className="size-14" />
-							</button>
-						</IconTooltip>
-					</>
-				)}
-				renderSideMenuActions={(side, groupId) =>
-					side === "right" ? (
-						<DropdownMenuItem
-							data-testid="side-new-terminal"
-							onSelect={() =>
-								useAppStore.getState().addTerminal(workspaceId, undefined, groupId, side)
-							}
-						>
-							New terminal
-						</DropdownMenuItem>
-					) : null
-				}
+				renderEmptyCenter={renderEmptyCenter}
+				renderCenterActions={renderCenterActions}
 				onCommit={commit}
 				onAttentionChange={changeAttention}
 				onUserNavigation={() => useAppStore.getState().noteNavigation(workspaceId)}
@@ -713,9 +785,20 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 							const latest = state.layoutDocumentsByWorkspace[workspaceId];
 							const prepared = prepare(latest);
 							if (!latest || prepared.document !== latest) {
-								void commitWorkspaceLayout(workspaceId, prepared.document, latest).catch(() => {});
+								void commitWorkspaceLayout(
+									workspaceId,
+									prepared.document,
+									latest ? { baseDocument: latest } : {},
+								).catch(() => {});
 							}
-							prepared.onAccepted(useAppStore.getState().layoutDocumentsByWorkspace[workspaceId]);
+							const finalState = useAppStore.getState();
+							const finalDocument = finalState.layoutDocumentsByWorkspace[workspaceId];
+							const finalAttention = finalState.layoutAttentionByWorkspace[workspaceId];
+							prepared.onAccepted(
+								finalDocument && finalAttention
+									? { document: finalDocument, attention: finalAttention }
+									: undefined,
+							);
 						};
 						const terminal = terminalByKey.get(tab.tabKey);
 						if (terminal) terminalClose.requestClose(terminal, close);
@@ -724,7 +807,11 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 					}
 					const prepared = prepare();
 					const closedIdentity = layoutResourceIdentity(tab);
-					void commitWorkspaceLayout(workspaceId, prepared.document, document)
+					void commitWorkspaceLayout(
+						workspaceId,
+						prepared.document,
+						document ? { baseDocument: document } : {},
+					)
 						.then(() => {
 							const state = useAppStore.getState();
 							const current = state.layoutDocumentsByWorkspace[workspaceId];
@@ -736,10 +823,20 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 							) {
 								return;
 							}
-							prepared.onAccepted(current);
+							const currentAttention = state.layoutAttentionByWorkspace[workspaceId];
+							prepared.onAccepted(
+								current && currentAttention
+									? { document: current, attention: currentAttention }
+									: undefined,
+							);
 							if (tab.kind === "chat") {
 								state.closeChatToHistory(tab.sessionId, false, workspaceId, false);
-							} else if (tab.kind === "file" || tab.kind === "diff" || tab.kind === "document") {
+							} else if (
+								tab.kind === "file" ||
+								tab.kind === "diff" ||
+								tab.kind === "changes" ||
+								tab.kind === "document"
+							) {
 								for (const cache of state.tabsByWorkspace[workspaceId] ?? []) {
 									const resource = toLayoutTab(cache);
 									if (resource && layoutResourceIdentity(resource) === closedIdentity) {
@@ -751,8 +848,18 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 						.catch(() => {});
 				}}
 				onNewChat={startChat}
-				onNewTerminal={(groupId, area) =>
-					useAppStore.getState().addTerminal(workspaceId, undefined, groupId, area)
+				onNewTerminal={(groupId, area, options) =>
+					useAppStore
+						.getState()
+						.addTerminal(
+							workspaceId,
+							undefined,
+							groupId,
+							area,
+							true,
+							undefined,
+							options?.newPaneBelow === true,
+						)
 				}
 				onGestureCanceled={() => toast.info("The layout changed. Your drag was canceled.")}
 			/>

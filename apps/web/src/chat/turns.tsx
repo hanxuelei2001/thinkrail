@@ -3,41 +3,52 @@ import {
 	RiArrowDownSLine as ChevronDown,
 	RiArrowRightSLine as ChevronRight,
 	RiArrowUpSLine as ChevronUp,
+	RiErrorWarningLine as CircleAlert,
 	RiTimeLine as Clock,
+	RiEyeLine as Eye,
 	RiFileTextLine as FileText,
 	RiContractUpDownLine as FoldVertical,
 	RiLoopRightLine as RotateCw,
-	RiAlertLine as TriangleAlert,
+	RiStackLine as Stack,
 	RiToolsLine as Wrench,
 } from "@remixicon/react";
-import type { ImageContent, UserMessage } from "@thinkrail/contracts";
-import { type MouseEvent as ReactMouseEvent, type ReactNode, useEffect, useState } from "react";
-import { CustomIcon } from "@/components/CustomIcon";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import type {
+	GitDiffScope,
+	ImageContent,
+	ReviewFixDetails,
+	UserMessage,
+} from "@thinkrail/contracts";
+import type { ToolRenderProps } from "@thinkrail/extension-api/web";
+import { Button } from "@thinkrail/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@thinkrail/ui/dialog";
+import { cn } from "@thinkrail/ui/utils";
 import {
-	cn,
-	parseSkillInvocation,
-	projectRelativePath,
-	type SkillInvocation,
-	userText,
-} from "@/lib";
+	memo,
+	type MouseEvent as ReactMouseEvent,
+	type ReactNode,
+	useEffect,
+	useState,
+} from "react";
+import { CustomIcon } from "@/components/CustomIcon";
+import { parseSkillInvocation, projectRelativePath, type SkillInvocation, userText } from "@/lib";
 import { ActivityGroup } from "./ActivityGroup";
 import { AssistantMarkdown } from "./assistantLinks";
+import { BackgroundCommandCompletion } from "./BackgroundCommandCompletion";
 import { CopyButton } from "./CopyButton";
 import { FileChip } from "./FileChip";
 import { useFold, useSelection } from "./foldState";
 import { Markdown } from "./Markdown";
-import { parseReviewPackage, type ReviewPackageItem, reviewPackageLabel } from "./reviewPackage";
+import { ReviewPackageComments } from "./ReviewPackageComments";
+import { parseReviewPackage, reviewFixCommentsToItems, reviewPackageLabel } from "./reviewPackage";
 import { type ChatRow, LARGE_USER_MESSAGE, type TurnDividerData } from "./rows";
 import { formatElapsed, formatTokens } from "./SessionStatsBar";
 import { ToolCard } from "./ToolCard";
 import { ToolRendererBody } from "./ToolRendererBody";
-import { getToolChrome, getToolSummary, type ToolRenderProps } from "./toolRegistry";
+import { getToolChrome, getToolSummary } from "./toolRegistry";
 import { SubagentCompletionCard } from "./tools/subagent/SubagentCompletionCard";
 import type { CompactionState } from "./types";
 
-export function ChatTurnView({
+function ChatTurnViewImpl({
 	row,
 	workspaceRoot,
 	onOpenFile,
@@ -45,8 +56,10 @@ export function ChatTurnView({
 	isFinalAnswer,
 	onOpenSpec,
 	onOpenChange,
+	onReviewTurn,
 	onReveal,
 	onTryAgain,
+	stillRunning,
 }: {
 	row: ChatRow;
 	workspaceRoot?: string | undefined;
@@ -55,8 +68,11 @@ export function ChatTurnView({
 	isFinalAnswer: boolean;
 	onOpenSpec?: ((path: string) => void) | undefined;
 	onOpenChange?: ((path: string) => void) | undefined;
+	onReviewTurn?: ((scope: GitDiffScope) => void) | undefined;
 	onReveal?: ((tab: "specs" | "changes") => void) | undefined;
 	onTryAgain?: (() => void) | undefined;
+	/** Live-resource deep link for this chat's latest turn divider only. */
+	stillRunning?: StillRunning | undefined;
 }) {
 	switch (row.kind) {
 		case "user":
@@ -122,8 +138,12 @@ export function ChatTurnView({
 					/>
 				</div>
 			);
+		case "backgroundCommandCompletion":
+			return <BackgroundCommandCompletion details={row.details} />;
 		case "subagentCompletion":
 			return <SubagentCompletionCard id={row.id} details={row.details} text={row.text} />;
+		case "reviewFix":
+			return <ReviewFixCard id={row.id} details={row.details} />;
 		case "tool":
 			return <ToolRow row={row} workspaceRoot={workspaceRoot} onOpenFile={onOpenFile} />;
 		case "activity":
@@ -144,13 +164,21 @@ export function ChatTurnView({
 					workspaceRoot={workspaceRoot}
 					onOpenSpec={onOpenSpec ?? (() => {})}
 					onOpenChange={onOpenChange ?? (() => {})}
+					onReviewTurn={onReviewTurn}
 					onReveal={onReveal ?? (() => {})}
+					stillRunning={stillRunning}
 				/>
 			);
 		default:
 			return null;
 	}
 }
+
+/**
+ * Memoized so unchanged rows skip re-render while the agent streams. Relies on stable row identity for
+ * unchanged rows (`stabilizeRows`) and stable callback/prop identity from the transcript.
+ */
+export const ChatTurnView = memo(ChatTurnViewImpl);
 
 function userAttachments(content: UserMessage["content"], names?: string[]) {
 	if (typeof content === "string") return [];
@@ -166,8 +194,16 @@ function userAttachments(content: UserMessage["content"], names?: string[]) {
 }
 
 const USER_BUBBLE_BASE =
-	"whitespace-pre-wrap break-words rounded-[var(--radius-lg)] border border-bubble-user-border bg-clip-padding bg-bubble-user-bg px-12 py-8 tr-text-reading text-text-muted";
+	"whitespace-pre-wrap break-words rounded-lg border border-bubble-user-border bg-clip-padding bg-bubble-user-bg px-12 py-8 tr-text-reading text-text-muted";
 const USER_BUBBLE = cn("max-w-[85%]", USER_BUBBLE_BASE);
+
+// In unbounded chat-width mode the transcript row is a fixed measure that can be far wider than the
+// pane; a right-aligned user bubble would otherwise sit off-screen and clip on the left. Cap the
+// user side to the pane's content width (the container-query width minus both `--chat-gutter`s,
+// the same terms the transcript-width calc uses) only in that mode — so a user bubble matches
+// its bounded-mode width and stays fully visible. Bounded mode never matches the selector.
+const USER_SIDE_UNBOUNDED_CLAMP =
+	"[[data-line-width-bounded=false]_&]:max-w-[calc(100cqw-2*var(--chat-gutter))]";
 
 function AttachmentChip({ label, img }: { label: string; img: ImageContent }) {
 	const [open, setOpen] = useState(false);
@@ -192,7 +228,7 @@ function AttachmentChip({ label, img }: { label: string; img: ImageContent }) {
 						<img
 							src={`data:${img.mimeType};base64,${img.data}`}
 							alt=""
-							className="max-h-[80vh] max-w-full rounded-[var(--radius-sm)]"
+							className="max-h-[80vh] max-w-full rounded-sm"
 						/>
 					</div>
 				</DialogContent>
@@ -215,7 +251,11 @@ function MessageWithCopy({
 		<div
 			data-testid="chat-message"
 			data-role={messageRole}
-			className={cn("group relative flex flex-col", side === "right" ? "items-end" : "items-start")}
+			className={cn(
+				"group relative flex flex-col",
+				side === "right" ? "items-end" : "items-start",
+				side === "right" && USER_SIDE_UNBOUNDED_CLAMP,
+			)}
 		>
 			{children}
 			<CopyButton
@@ -242,7 +282,11 @@ function UserTurn({
 	const skill = parseSkillInvocation(text);
 	if (skill) {
 		return (
-			<div data-testid="chat-message" data-role="user" className="flex justify-end">
+			<div
+				data-testid="chat-message"
+				data-role="user"
+				className={cn("flex justify-end", USER_SIDE_UNBOUNDED_CLAMP)}
+			>
 				<div className="flex w-full flex-col items-end gap-4">
 					<SkillInvocationCard foldId={`${id}:skill`} invocation={skill} />
 					{skill.userMessage ? (
@@ -258,7 +302,11 @@ function UserTurn({
 	const review = parseReviewPackage(text);
 	if (review) {
 		return (
-			<div data-testid="chat-message" data-role="user" className="flex justify-end">
+			<div
+				data-testid="chat-message"
+				data-role="user"
+				className={cn("flex justify-end", USER_SIDE_UNBOUNDED_CLAMP)}
+			>
 				<div className={USER_BUBBLE}>
 					{attachments.length > 0 ? (
 						<div className="flex flex-wrap gap-4 pb-4" data-testid="chat-message-images">
@@ -271,11 +319,7 @@ function UserTurn({
 						<span data-testid="review-package-summary" className="block text-text-default">
 							{reviewPackageLabel(review)}
 						</span>
-						<ul className="mt-4 flex flex-col">
-							{keyPackageItems(review.items).map(({ key, item }) => (
-								<PackageCommentRow key={key} foldId={`${id}:${key}`} item={item} />
-							))}
-						</ul>
+						<ReviewPackageComments foldPrefix={id} items={review.items} />
 					</div>
 				</div>
 			</div>
@@ -359,7 +403,7 @@ function SkillInvocationCard({
 			data-testid="skill-invocation-card"
 			data-chat-fold-root
 			data-expanded={expanded}
-			className="max-w-[85%] overflow-hidden rounded-[var(--radius-lg)] border border-bubble-user-border bg-clip-padding bg-bubble-user-bg"
+			className="max-w-[85%] overflow-hidden rounded-lg border border-bubble-user-border bg-clip-padding bg-bubble-user-bg"
 		>
 			<button
 				ref={toggleRef}
@@ -399,52 +443,31 @@ function SkillInvocationCard({
 	);
 }
 
-function keyPackageItems(items: ReviewPackageItem[]): { key: string; item: ReviewPackageItem }[] {
-	const seen = new Map<string, number>();
-	return items.map((item) => {
-		const base = `${item.lineRef}·${item.body}`;
-		const n = (seen.get(base) ?? 0) + 1;
-		seen.set(base, n);
-		return { key: `${base}·${n}`, item };
-	});
-}
-
-function PackageCommentRow({ foldId, item }: { foldId: string; item: ReviewPackageItem }) {
-	const [expanded, toggle, toggleRef] = useFold(foldId);
+function ReviewFixCard({ id, details }: { id: string; details: ReviewFixDetails }) {
+	const items = reviewFixCommentsToItems(details.comments);
+	const noun = details.comments.length === 1 ? "finding" : "findings";
+	const summary =
+		details.comments.length > 0
+			? `Requested a fix on \u201c${details.itemTitle}\u201d \u00b7 ${details.comments.length} ${noun}`
+			: `Requested a fix on \u201c${details.itemTitle}\u201d`;
 	return (
-		<li data-testid="review-package-item" data-chat-fold-root data-expanded={expanded}>
-			<button
-				ref={toggleRef}
-				type="button"
-				data-testid="review-package-item-toggle"
-				aria-expanded={expanded}
-				onClick={toggle}
-				className="flex w-full cursor-pointer select-none items-start gap-4 rounded-[var(--radius-sm)] px-4 py-4 text-left outline-none transition-colors hover:bg-control-bg-hovered focus-visible:ring-2 focus-visible:ring-primary"
-			>
-				<ChevronRight
-					className={cn(
-						"mt-2 size-16 shrink-0 text-text-subtle transition-transform",
-						expanded && "rotate-90",
-					)}
-				/>
-				{item.lineRef && (
-					<span className="shrink-0 tr-code-text text-text-subtle">{item.lineRef}</span>
-				)}
-				<span
-					className={cn(
-						"min-w-0 flex-1 text-text-default",
-						expanded ? "whitespace-pre-wrap" : "truncate",
-					)}
+		<div
+			data-testid="review-fix-card"
+			className="max-w-[85%] overflow-hidden rounded-lg border border-bubble-user-border bg-clip-padding bg-bubble-user-bg px-12 py-8"
+		>
+			<span data-testid="review-fix-summary" className="block tr-text-reading text-text-default">
+				{summary}
+			</span>
+			{details.note ? (
+				<p
+					data-testid="review-fix-note"
+					className="mt-4 whitespace-pre-wrap tr-text-reading text-text-muted"
 				>
-					{item.body}
-				</span>
-			</button>
-			{expanded && item.fragment && (
-				<pre className="mb-4 ml-16 max-h-128 overflow-auto whitespace-pre-wrap rounded-[var(--radius-sm)] border border-border-muted bg-sunken px-8 py-4 tr-code-text text-text-muted">
-					{item.fragment}
-				</pre>
-			)}
-		</li>
+					{details.note}
+				</p>
+			) : null}
+			{items.length > 0 ? <ReviewPackageComments foldPrefix={id} items={items} /> : null}
+		</div>
 	);
 }
 
@@ -549,21 +572,19 @@ function ErrorTurn({ text, onTryAgain }: { text: string; onTryAgain?: (() => voi
 		<div
 			data-testid="chat-message"
 			data-role="error"
-			className="flex items-start gap-8 rounded-[var(--radius-sm)] border border-feedback-error-muted bg-clip-padding bg-feedback-error-subtle px-12 py-8 text-feedback-error tr-text-ui"
+			className="flex flex-col gap-8 rounded-sm border border-feedback-error-muted bg-container-elevated-bg px-12 py-8 text-text-default tr-text-ui"
 		>
-			<TriangleAlert className="mt-2 size-12 shrink-0" />
-			<span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{text}</span>
+			<div className="flex items-start gap-8">
+				<CircleAlert className="mt-2 size-12 shrink-0 text-feedback-error" aria-hidden />
+				<span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{text}</span>
+			</div>
 			{onTryAgain ? (
-				<Button
-					variant="outline"
-					size="sm"
-					data-testid="agent-try-again"
-					className="shrink-0"
-					onClick={onTryAgain}
-				>
-					<RotateCw className="size-12" />
-					Try again
-				</Button>
+				<div className="flex justify-end">
+					<Button variant="outline" size="sm" data-testid="agent-try-again" onClick={onTryAgain}>
+						<RotateCw className="size-12" />
+						Try again
+					</Button>
+				</div>
 			) : null}
 		</div>
 	);
@@ -581,9 +602,9 @@ function CompactionNotice({
 			<div
 				data-testid="compaction-notice"
 				data-status="failed"
-				className="flex items-start gap-8 rounded-[var(--radius-md)] border border-feedback-error-muted bg-clip-padding bg-feedback-error-subtle px-12 py-8 text-feedback-error tr-text-ui"
+				className="flex items-start gap-8 rounded-sm border border-feedback-error-muted bg-container-elevated-bg px-12 py-8 text-text-default tr-text-ui"
 			>
-				<TriangleAlert className="mt-2 size-12 shrink-0" />
+				<CircleAlert className="mt-2 size-12 shrink-0 text-feedback-error" aria-hidden />
 				<span className="min-w-0 whitespace-pre-wrap break-words">
 					{detail || "Compaction failed."}
 				</span>
@@ -640,7 +661,7 @@ function RetryIndicator({
 		<div
 			data-testid="retry-indicator"
 			data-source={source}
-			className="flex flex-col gap-4 rounded-[var(--radius-sm)] border border-border-default bg-container-elevated-bg px-8 py-4 text-text-muted tr-text-metadata"
+			className="flex flex-col gap-4 rounded-sm border border-border-default bg-container-elevated-bg px-8 py-4 text-text-muted tr-text-metadata"
 		>
 			<span className="flex items-center gap-4">
 				<RotateCw className="size-12 shrink-0" />
@@ -669,6 +690,7 @@ interface ArtifactGroup {
 	expanded: boolean;
 	onOpen: (path: string) => void;
 	reveal: () => void;
+	stats?: ReadonlyMap<string, { added: number; removed: number }>;
 }
 
 function ArtifactChip({
@@ -699,7 +721,7 @@ function ArtifactChip({
 				onSelect(event);
 			}}
 			className={cn(
-				"flex items-center gap-4 rounded-[var(--radius-sm)] px-4 text-primary hover:bg-control-bg-hovered",
+				"flex items-center gap-4 rounded-sm px-4 text-primary hover:bg-control-bg-hovered",
 				many && expanded && "bg-control-bg-selected",
 			)}
 		>
@@ -725,28 +747,42 @@ function ArtifactList({
 	listId: string;
 	workspaceRoot?: string | undefined;
 }) {
-	const { id, icon: Icon, paths, onOpen } = group;
+	const { id, icon: Icon, paths, onOpen, stats } = group;
 	const testid = `turn-divider-${id}`;
 	return (
 		<ul id={listId} data-testid={`${testid}-list`} className="flex flex-col">
-			{paths.map((path) => (
-				<li key={path}>
-					<button
-						type="button"
-						data-testid={`${testid}-list-item`}
-						onClick={() => onOpen(path)}
-						title={path}
-						className="flex w-full items-center gap-4 rounded-[var(--radius-sm)] px-4 py-2 text-left hover:bg-control-bg-hovered"
-					>
-						<Icon className="size-12 shrink-0 text-text-muted" />
-						<span className="min-w-0 flex-1 truncate text-text-muted">
-							{projectRelativePath(path, workspaceRoot)}
-						</span>
-					</button>
-				</li>
-			))}
+			{paths.map((path) => {
+				const stat = stats?.get(path);
+				return (
+					<li key={path}>
+						<button
+							type="button"
+							data-testid={`${testid}-list-item`}
+							onClick={() => onOpen(path)}
+							title={path}
+							className="flex w-full items-center gap-4 rounded-sm px-4 py-2 text-left hover:bg-control-bg-hovered"
+						>
+							<Icon className="size-12 shrink-0 text-text-muted" />
+							<span className="min-w-0 flex-1 truncate text-text-muted">
+								{projectRelativePath(path, workspaceRoot)}
+							</span>
+							{stat ? (
+								<span className="shrink-0 tabular-nums">
+									<span className="text-feedback-success">+{stat.added}</span>{" "}
+									<span className="text-feedback-error">−{stat.removed}</span>
+								</span>
+							) : null}
+						</button>
+					</li>
+				);
+			})}
 		</ul>
 	);
+}
+
+export interface StillRunning {
+	count: number;
+	onOpen: () => void;
 }
 
 export function TurnDivider({
@@ -755,17 +791,41 @@ export function TurnDivider({
 	workspaceRoot,
 	onOpenSpec,
 	onOpenChange,
+	onReviewTurn,
 	onReveal,
+	stillRunning,
 }: {
 	id: string;
 	data: TurnDividerData;
 	workspaceRoot?: string | undefined;
 	onOpenSpec: (path: string) => void;
 	onOpenChange: (path: string) => void;
+	onReviewTurn?: ((scope: GitDiffScope) => void) | undefined;
 	onReveal: (tab: "specs" | "changes") => void;
+	stillRunning?: StillRunning | undefined;
 }) {
-	const { elapsedMs, toolCount, specs, changedFiles } = data;
+	const { elapsedMs, toolCount, specs, changedFiles, receipt } = data;
 	const [selected, select] = useSelection(`${id}:artifacts`);
+	const stats = receipt
+		? new Map(
+				receipt.changes.map((change) => [
+					change.path,
+					{ added: change.added ?? 0, removed: change.removed ?? 0 },
+				]),
+			)
+		: undefined;
+	const counted = new Set(changedFiles);
+	const totals = receipt
+		? receipt.changes
+				.filter((change) => counted.has(change.path))
+				.reduce(
+					(sum, change) => ({
+						added: sum.added + (change.added ?? 0),
+						removed: sum.removed + (change.removed ?? 0),
+					}),
+					{ added: 0, removed: 0 },
+				)
+		: null;
 	const allGroups: ArtifactGroup[] = [
 		{
 			id: "specs",
@@ -780,22 +840,32 @@ export function TurnDivider({
 			id: "files",
 			icon: FileDiffGlyph,
 			paths: changedFiles,
-			label: (n) => `${n} ${n === 1 ? "file changed" : "files changed"}`,
+			label: (n) =>
+				`${n} ${n === 1 ? "file changed" : "files changed"}${
+					totals ? ` · +${totals.added} −${totals.removed}` : ""
+				}`,
 			expanded: selected === "files",
 			onOpen: onOpenChange,
 			reveal: () => onReveal("changes"),
+			...(stats ? { stats } : {}),
 		},
 	];
 	const groups = allGroups.filter((group) => group.paths.length > 0);
+	const running = stillRunning && stillRunning.count > 0 ? stillRunning : null;
 
-	if (toolCount === 0 && groups.length === 0 && (elapsedMs == null || elapsedMs < 1000)) {
-		return <div data-testid="turn-divider" className="my-8 h-px bg-border-muted" />;
+	if (
+		toolCount === 0 &&
+		groups.length === 0 &&
+		!running &&
+		(elapsedMs == null || elapsedMs < 1000)
+	) {
+		return <div data-testid="turn-divider" className="my-4 h-px bg-border-muted" />;
 	}
 	return (
 		<div
 			data-testid="turn-divider"
 			data-chat-fold-root
-			className="my-8 flex flex-col gap-4 text-text-muted tr-text-metadata"
+			className="my-4 flex flex-col gap-4 text-text-muted tr-text-metadata"
 		>
 			<div className="flex items-center gap-8">
 				<span className="h-px flex-1 bg-border-muted" />
@@ -813,11 +883,33 @@ export function TurnDivider({
 						onSelect={(event) => select(group.id, event)}
 					/>
 				))}
+				{receipt && onReviewTurn ? (
+					<button
+						type="button"
+						data-testid="turn-divider-review"
+						onClick={() => onReviewTurn(receipt.scope)}
+						className="flex items-center gap-4 rounded-sm px-4 text-primary hover:bg-control-bg-hovered"
+					>
+						<Eye className="size-12 shrink-0" />
+						Review turn
+					</button>
+				) : null}
 				{elapsedMs != null && elapsedMs >= 1000 ? (
 					<span className="flex items-center gap-4">
 						<Clock className="size-12 shrink-0" />
 						{formatElapsed(elapsedMs)}
 					</span>
+				) : null}
+				{running ? (
+					<button
+						type="button"
+						data-testid="turn-divider-running"
+						onClick={running.onOpen}
+						className="flex items-center gap-4 rounded-full border border-primary-muted bg-primary-subtle px-8 text-primary hover:bg-primary-soft"
+					>
+						<Stack className="size-12 shrink-0 motion-safe:animate-working" />
+						{running.count} still running
+					</button>
 				) : null}
 				<span className="h-px flex-1 bg-border-muted" />
 			</div>

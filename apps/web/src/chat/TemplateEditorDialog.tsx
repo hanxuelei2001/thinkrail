@@ -1,16 +1,16 @@
 import type { TemplateInfo, TemplateScope } from "@thinkrail/contracts";
-import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@thinkrail/ui/button";
 import {
 	Dialog,
 	DialogContent,
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
-} from "@/components/ui/dialog";
-import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib";
+} from "@thinkrail/ui/dialog";
+import { Textarea } from "@thinkrail/ui/textarea";
+import { cn } from "@thinkrail/ui/utils";
+import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { assembleTemplate, stripFrontmatter } from "@/prompt";
 import { useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
@@ -18,7 +18,7 @@ import { errorText, getTransport } from "@/transport";
 const SYNTAX_HINT = `$1, $ARGUMENTS, \${1:-default} — pi prompt-template syntax`;
 
 const INPUT_CLASS =
-	"w-full rounded-[var(--radius-sm)] border border-control-border-default bg-control-bg px-12 py-8 tr-text-ui text-text-default outline-none transition-colors placeholder:text-text-muted focus-visible:border-control-border-active disabled:bg-control-disabled-bg disabled:text-control-disabled-text";
+	"w-full rounded-sm border border-control-border-default bg-control-bg px-12 py-8 tr-text-ui text-text-default outline-none transition-colors placeholder:text-text-muted focus-visible:border-control-border-active disabled:bg-control-disabled-bg disabled:text-control-disabled-text";
 
 function isValidTemplateName(name: string): boolean {
 	if (name.length === 0) return false;
@@ -269,7 +269,7 @@ function ScopeOption({
 			disabled={disabled}
 			onClick={onSelect}
 			className={cn(
-				"flex-1 rounded-[var(--radius-sm)] border px-12 py-8 text-left tr-text-ui outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:bg-control-disabled-bg disabled:text-control-disabled-text",
+				"flex-1 rounded-sm border px-12 py-8 text-left tr-text-ui outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:bg-control-disabled-bg disabled:text-control-disabled-text",
 				active
 					? "border-primary-muted bg-clip-padding bg-primary-subtle text-text-default"
 					: "border-border-default text-text-muted hover:bg-control-bg-hovered hover:text-text-default",

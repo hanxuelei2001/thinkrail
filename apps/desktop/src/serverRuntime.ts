@@ -3,11 +3,14 @@ export interface DesktopHostOptions {
 	staticDir: string;
 	appVersion: string;
 	channel: string;
+	posthogProjectKey: string;
+	openExternal?: (url: string) => void;
 }
 
 export interface DesktopHost {
 	server: {
 		readonly port: number;
+		startAttributionClaim(): void;
 		stop(): void;
 		shutdown(): Promise<void>;
 	};

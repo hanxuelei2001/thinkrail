@@ -1,10 +1,13 @@
 import type {
 	AssistantMessage,
+	BackgroundCommandCompletionDetails,
 	DelegationRunDetails,
 	ExtUiRequest,
 	ImageContent,
+	ReviewFixDetails,
 	UserMessage,
 } from "@thinkrail/contracts";
+import type { ToolStatus } from "@thinkrail/extension-api/web";
 
 export interface ChatAttachment {
 	name: string;
@@ -24,7 +27,9 @@ export type ChatTurn =
 	| { kind: "system"; id: string; text: string; endedAt?: number }
 	| ({ kind: "compaction"; id: string } & CompactionState)
 	| { kind: "error"; id: string; text: string; recovery?: FailureRecovery }
+	| { kind: "backgroundCommandCompletion"; id: string; details: BackgroundCommandCompletionDetails }
 	| { kind: "subagentCompletion"; id: string; details: DelegationRunDetails; text: string }
+	| { kind: "reviewFix"; id: string; details: ReviewFixDetails; text: string }
 	| {
 			kind: "retry";
 			id: string;
@@ -42,8 +47,6 @@ export interface CompactionState {
 	tokensAfter?: number;
 	resuming?: boolean;
 }
-
-export type ToolStatus = "running" | "done" | "error";
 
 export interface ToolResultState {
 	status: ToolStatus;

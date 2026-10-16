@@ -37,10 +37,25 @@ against the compiled binary. Desktop PR coverage builds the Linux target, runs n
 artifact probes under Xvfb with test-only software-rendering flags, and runs desktop-backed browser tests.
 Real-provider tests remain explicitly authorized and separate.
 
+The three browser suites dominate wall time, so each runs as a matrix of Playwright shards on separate
+runners ([[module-browser-e2e]] owns the slicing). The ruleset's required check names "E2E (no-agent)",
+"Binary smoke & e2e" and "Desktop smoke & e2e" belong to aggregate gate jobs that succeed only when every
+shard of their matrix succeeded; renaming a gate without updating the ruleset blocks the merge queue.
+Shard counts trade runner minutes for wall time and are tuned against observed per-job durations.
+Native artifact smokes run only in shard 1: repeating an identical probe per shard adds no coverage and
+multiplies exposure to runner-environment faults.
+
+Linux desktop jobs start Xvfb as their own step and proceed only once an X client connects to the exported
+`DISPLAY`; a server that never answers is restarted a bounded number of times, then fails the job. Only the
+virtual display is retried, never the smoke or the browser tests: once the display is proven, every
+application failure fails CI.
+
 A platform's native behavior is proven only on that platform. Windows remains a PR gate because its
 executable, environment, path, and trash behavior differs materially from POSIX hosts. Its subprocess
-unit gate also exercises native descendant-console behavior, which the Linux unit run cannot prove.
-Native macOS and Linux ARM64 acceptance belongs to the release matrix.
+unit gate also exercises native descendant-console behavior, which the Linux unit run cannot prove, and
+its desktop window-chrome unit gate binds the `user32.dll` frame symbols the frameless title bar relies on
+([[module-desktop]]); neither needs the Electrobun devkit. Native macOS and Linux ARM64 acceptance belongs
+to the release matrix.
 
 ## Native build contract
 
@@ -93,8 +108,12 @@ AppIndicator, and librsvg dependencies. CEF and additional installer formats are
 ## Release identity and trust
 
 The release controller supplies an explicit public `source_sha`. The public recipe stamps only
-`packages/shared/src/version.ts` with `{ version, channel, commit }`; CLI, desktop configuration,
-analytics, and `server.welcome.appVersion` consume that same identity. The private workflow's own commit
+`packages/shared/src/version.ts` with `{ version, channel, commit, posthogProjectKey }`; CLI, desktop
+configuration, analytics, and `server.welcome.appVersion` consume that same identity. The action's
+required `posthog-project-key` input is the only source of the app's analytics key — the repository
+carries none — and stamping fails closed when it is empty or the channel is not `nightly|stable`. It
+is a public ingestion key, not a service credential, so hosted native jobs may receive it; the private
+workflow passes it from its secret store and the stamp step never echoes it. The private workflow's own commit
 is never product identity.
 
 Signing credentials and access to `codesign.labs.jb.gg` stay in the protected private pipeline. Hosted
@@ -139,10 +158,11 @@ are uploaded and made publicly retrievable before their channel manifests. This 
 signing, notarization, verification, or publication gate; the existing platform requirements remain in force.
 
 Native update acceptance is **manual-first**. It uses finalized release bytes in disposable installations,
-records both versions and per-target results, and covers explicit restart, deferral with Later, channel isolation,
-interrupted download/retry, post-update version/host health and restoration of local state. Running agents
-and terminal commands are not expected to survive host restart. Windows qualification uses a disposable
-VM/runner because installation integrates beyond HOME. Relevant checks repeat when
+records both versions and per-target results, and covers check-stops-at-available, explicit download, distinct
+transfer/preparation, deferral by closing Settings, **Install & Restart**, channel isolation, interrupted
+transfer/retry, post-update version/host health, and restoration of local state. Running agents and terminal
+commands are not expected to survive host restart. Windows qualification uses a disposable VM/runner because
+installation integrates beyond HOME. Relevant checks repeat when
 Electrobun, packaging, signing or restart handling changes. This limits investment in a broad new updater
 suite for an infrequently changing integration; it does not remove existing signing, artifact-smoke, fast
 or complete no-agent browser gates. New automated coverage stays narrow around application-owned lifecycle
@@ -150,10 +170,15 @@ regressions and the existing public artifact-output contract tests; no dedicated
 
 ## CLI installation and other automation
 
-Root `install.sh` and `install.ps1` remain CLI-only consumers: resolve the requested release, download
-the native CLI plus `SHA256SUMS`, verify it, and install atomically. Their filename and checksum rules do
-not change with desktop packaging. CLI self-update invokes these installers rather than duplicating their
-logic.
+Root `install.sh` and `install.ps1` remain CLI-only consumers: validate channel/version identity, resolve the
+requested release, validate its tag against the selected channel's exact grammar before constructing any
+artifact URL, download the native CLI plus `SHA256SUMS`, verify it, and stage replacement in the
+destination directory before an atomic rename. Prefix checks are representation-based rather than ASCII-only:
+Unicode and benign `@`/`+` components remain valid, while each platform rejects characters that would corrupt
+metadata or startup-shell syntax. Git Bash writes native-readable Windows metadata; malformed shell PATH blocks
+are preserved rather than rewritten. CLI self-update binds metadata to the running executable and invokes these
+installers rather than duplicating download/checksum logic. Controlled script tests own these
+regressions; finalized Windows PowerShell/Git-Bash and custom-volume behavior remains release qualification.
 
 Website deployment contains no signing credentials. CODEOWNERS and the main-branch rules protect the
 public recipes; local builds and public PR jobs never publish user-facing release artifacts.

@@ -1,4 +1,5 @@
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
+import type { AcquisitionRecord, AttributionTouch } from "../persistence";
 
 export type BuildKind = "source" | "binary" | "desktop";
 
@@ -18,7 +19,16 @@ export interface ProviderAnalyticsProperties {
 
 export type SendMode = "prompt" | "steer" | "follow_up";
 
+export type PlanOpenSurface = "page" | "rail";
+export type PlanAddSurface = "chat" | "page" | "rail";
+export type PlanActionSource = "plan_page" | "other";
+
+export type ReviewCommentActor = "user" | "agent";
+export type ReviewCommentKindProp = "inline" | "diff" | "file" | "review";
+export type ReviewResolveOutcome = "resolved" | "dismissed";
+
 export type BasicAnalyticsEvent =
+	| { name: "app_installed" }
 	| { name: "app_started" }
 	| { name: "chat_started"; params: ProviderAnalyticsProperties & { model: string } }
 	| { name: "message_sent"; params: ProviderAnalyticsProperties & { mode: SendMode } }
@@ -30,11 +40,13 @@ export type AnalyticsFailureReason =
 	| "network"
 	| "permission"
 	| "not_git"
+	| "already_open"
 	| "unsupported"
 	| "unknown"
 	| "none";
 export type SetupAction =
 	| "provider_connect"
+	| "directory_pick"
 	| "project_open"
 	| "project_init"
 	| "worktree_create"
@@ -56,7 +68,28 @@ export interface AnalyticsRunProperties {
 	model: string;
 }
 
+export type AcquisitionCampaignProperties = {
+	first_touch_source?: string;
+	first_touch_medium?: string;
+	first_touch_campaign?: string;
+	first_touch_content?: string;
+	first_touch_referrer_class: AttributionTouch["referrer_class"];
+	first_touch_touched_at: number;
+	first_touch_policy_version: 1;
+	last_touch_source?: string;
+	last_touch_medium?: string;
+	last_touch_campaign?: string;
+	last_touch_content?: string;
+	last_touch_referrer_class: AttributionTouch["referrer_class"];
+	last_touch_touched_at: number;
+	last_touch_policy_version: 1;
+};
+
 export type AdditionalAnalyticsEvent =
+	| {
+			name: "acquisition_linked";
+			params: AcquisitionCampaignProperties & { journey_id: string; bridge_id: string };
+	  }
 	| {
 			name: "setup_state_observed";
 			params: {
@@ -90,9 +123,23 @@ export type AdditionalAnalyticsEvent =
 				verification_recorded: "yes" | "no";
 			};
 	  }
+	| { name: "plan_opened"; params: { surface: PlanOpenSurface } }
+	| { name: "plan_item_added"; params: { surface: PlanAddSurface } }
+	| {
+			name: "review_comment_added";
+			params: { author: ReviewCommentActor; kind: ReviewCommentKindProp };
+	  }
+	| { name: "review_comment_sent"; params: { outdated: "yes" | "no" } }
+	| {
+			name: "review_comment_resolved";
+			params: { actor: ReviewCommentActor; outcome: ReviewResolveOutcome };
+	  }
 	| {
 			name: "review_decided";
-			params: { actor: "user" | "agent"; verdict: "approved" | "changes_requested" };
+			params: {
+				actor: "user" | "agent";
+				verdict: "approved" | "changes_requested";
+			};
 	  }
 	| {
 			name: "pr_action_finished";
@@ -100,11 +147,33 @@ export type AdditionalAnalyticsEvent =
 				action: "created" | "updated" | "pushed" | "compare" | "unknown";
 				outcome: "succeeded" | "failed";
 				reason: AnalyticsFailureReason;
+				source: PlanActionSource;
 			};
 	  };
 
 export type AnalyticsEvent = BasicAnalyticsEvent | AdditionalAnalyticsEvent;
 export type AdditionalAnalyticsCapture = (event: AdditionalAnalyticsEvent) => void;
+
+function touchProperties(prefix: "first_touch" | "last_touch", touch: AttributionTouch) {
+	return {
+		...(touch.source === undefined ? {} : { [`${prefix}_source`]: touch.source }),
+		...(touch.medium === undefined ? {} : { [`${prefix}_medium`]: touch.medium }),
+		...(touch.campaign === undefined ? {} : { [`${prefix}_campaign`]: touch.campaign }),
+		...(touch.content === undefined ? {} : { [`${prefix}_content`]: touch.content }),
+		[`${prefix}_referrer_class`]: touch.referrer_class,
+		[`${prefix}_touched_at`]: touch.touched_at,
+		[`${prefix}_policy_version`]: touch.policy_version,
+	};
+}
+
+export function acquisitionCampaignProperties(
+	record: AcquisitionRecord,
+): AcquisitionCampaignProperties {
+	return {
+		...touchProperties("first_touch", record.first_touch),
+		...touchProperties("last_touch", record.last_touch),
+	} as AcquisitionCampaignProperties;
+}
 
 export function bucketDuration(durationMs: number): AnalyticsDurationBucket {
 	if (!Number.isFinite(durationMs) || durationMs < 0) return "unknown";
@@ -124,6 +193,7 @@ export function bucketCount(count: number): AnalyticsCountBucket {
 }
 
 export const CUSTOM_BUCKET = "custom";
+export const NONE_BUCKET = "none";
 
 let catalog: Map<string, ReadonlySet<string>> | null = null;
 

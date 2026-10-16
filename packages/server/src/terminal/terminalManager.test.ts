@@ -33,6 +33,8 @@ const TERMINAL_CONDITION_TIMEOUT_MS = 15_000;
 const TERMINAL_TEST_TIMEOUT_MS = TERMINAL_CONDITION_TIMEOUT_MS * 3 + 5_000;
 let dataDir: string;
 const savedDataDir = process.env.THINKRAIL_DATA_DIR;
+const savedHistFile = process.env.HISTFILE;
+const savedHistSize = process.env.HISTSIZE;
 
 let pushed: PublishedFrame[] = [];
 const terminalFrameSignals = new Set<() => void>();
@@ -120,6 +122,9 @@ async function exitTerminalWithMarker(
 beforeEach(() => {
 	dataDir = mkdtempSync(join(tmpdir(), "trpi-terminal-test-"));
 	process.env.THINKRAIL_DATA_DIR = dataDir;
+	// Prevent test PTYs from polluting the user's shell history.
+	process.env.HISTFILE = join(dataDir, ".test_history");
+	process.env.HISTSIZE = "0";
 	const worktreePath = join(dataDir, "worktree");
 	mkdirSync(worktreePath);
 	saveWorkspaces([{ id: WS, worktreePath } as Workspace]);
@@ -140,6 +145,10 @@ afterEach(() => {
 	removeTree(dataDir);
 	if (savedDataDir === undefined) delete process.env.THINKRAIL_DATA_DIR;
 	else process.env.THINKRAIL_DATA_DIR = savedDataDir;
+	if (savedHistFile === undefined) delete process.env.HISTFILE;
+	else process.env.HISTFILE = savedHistFile;
+	if (savedHistSize === undefined) delete process.env.HISTSIZE;
+	else process.env.HISTSIZE = savedHistSize;
 });
 
 test("a shell spawn failure is actionable and preserves replay for retry", () => {
@@ -274,6 +283,30 @@ test("reservations and attachments reject malformed or excessive catalog entries
 	);
 });
 
+test("terminal input and grid reject malformed values before reaching the PTY", () => {
+	for (const data of [42, [104, 105], { text: "hi" }]) {
+		expect(() => writeTerminal("missing", data as unknown as string, "client-1")).toThrow(
+			"Invalid terminal input",
+		);
+	}
+	for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "80", 32_768]) {
+		const size = bad as unknown as number;
+		expect(() => resizeTerminal("missing", size, 24, "client-1")).toThrow("Invalid terminal size");
+		expect(() => resizeTerminal("missing", 80, size, "client-1")).toThrow("Invalid terminal size");
+		expect(() => attachTerminal(WS, "tab-a", "client-1", { cols: size })).toThrow(
+			"Invalid terminal size",
+		);
+		expect(() => attachTerminal(WS, "tab-a", "client-1", { rows: size })).toThrow(
+			"Invalid terminal size",
+		);
+	}
+	expect(listTerminals(WS)).toEqual([]);
+	expect(() => writeTerminal("missing", "", "client-1")).not.toThrow();
+	expect(() => writeTerminal("missing", "echo hi\r", "client-1")).not.toThrow();
+	expect(() => resizeTerminal("missing", 1, 1, "client-1")).not.toThrow();
+	expect(() => resizeTerminal("missing", 32_767, 32_767, "client-1")).not.toThrow();
+});
+
 test("revival bounds the catalog and sanitizes durable identities", () => {
 	saveTerminalSessions({
 		[WS]: [
@@ -321,9 +354,10 @@ test("closing an unknown tab is not an error and not busy", () => {
 test("a shell with something running refuses to close until forced", async () => {
 	const attached = attachTerminal(WS, "tab-a", "client-1");
 	expect(attached.created).toBe(true);
-	await Bun.sleep(600);
-	writeTerminal(attached.id, `${BUSY_LOOP_COMMAND}\r`, "client-1");
-	await Bun.sleep(800);
+	await waitForTerminalOutput(attached.id);
+	writeTerminal(attached.id, `echo TR_BUSY && ${BUSY_LOOP_COMMAND}\r`, "client-1");
+	await waitForTerminalOutput(attached.id, "TR_BUSY");
+	await Bun.sleep(300);
 
 	const refused = closeTerminalTab(WS, "tab-a");
 	expect(refused).toEqual({ closed: false, busy: true });
@@ -384,27 +418,18 @@ test("persisting writes nothing for a workspace whose tabs were all closed", () 
 
 test("only the attached client may drive a terminal", async () => {
 	const attached = attachTerminal(WS, "tab-a", "client-1");
-	await Bun.sleep(500);
+	await waitForTerminalOutput(attached.id);
 
 	attachTerminal(WS, "tab-a", "client-2");
-	writeTerminal(attached.id, "echo TR_FROM_DISPLACED\r", "client-1");
+	expect(writeTerminal(attached.id, "printf 'TR_%s\\n' FROM_DISPLACED\r", "client-1")).toBeNull();
 	resizeTerminal(attached.id, 5, 2, "client-1");
-	await Bun.sleep(500);
-
-	const seen = pushed
-		.filter((frame) => frame.channel === "terminal.data")
-		.map((frame) => (frame.data as { data: string }).data)
-		.join("");
-	expect(seen).not.toContain("TR_FROM_DISPLACED");
+	writeTerminal(attached.id, "printf 'TR_%s\\n' SYNC\r", "client-2");
+	await waitForTerminalOutput(attached.id, "TR_SYNC");
+	expect(terminalOutput(attached.id)).not.toContain("FROM_DISPLACED");
 
 	attachTerminal(WS, "tab-a", "client-1");
-	writeTerminal(attached.id, "echo TR_RECLAIMED\r", "client-1");
-	await Bun.sleep(800);
-	const afterReclaim = pushed
-		.filter((frame) => frame.channel === "terminal.data")
-		.map((frame) => (frame.data as { data: string }).data)
-		.join("");
-	expect(afterReclaim).toContain("TR_RECLAIMED");
+	expect(writeTerminal(attached.id, "printf 'TR_%s\\n' RECLAIMED\r", "client-1")).toBe(WS);
+	await waitForTerminalOutput(attached.id, "TR_RECLAIMED");
 });
 
 test("opening and closing a tab broadcasts the new list", () => {
@@ -421,7 +446,7 @@ test("opening and closing a tab broadcasts the new list", () => {
 
 test("a displaced client that tries to type is told it is displaced", async () => {
 	const attached = attachTerminal(WS, "tab-a", "client-1");
-	await Bun.sleep(400);
+	await waitForTerminalOutput(attached.id);
 	attachTerminal(WS, "tab-a", "client-2");
 	pushed = [];
 
@@ -435,7 +460,7 @@ test("a displaced client that tries to type is told it is displaced", async () =
 
 test("the attached client is not told it is displaced", async () => {
 	const attached = attachTerminal(WS, "tab-a", "client-1");
-	await Bun.sleep(400);
+	await waitForTerminalOutput(attached.id);
 	pushed = [];
 
 	writeTerminal(attached.id, "echo TR_FINE\r", "client-1");

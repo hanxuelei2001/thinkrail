@@ -18,10 +18,11 @@ const failure = ${JSON.stringify(failure)};
 const calls = [];
 const listeners = [];
 mock.module(${JSON.stringify(runtimePath)}, () => ({
-  startDesktopHost: async () => {
+  startDesktopHost: async (options) => {
+    if (typeof options.openExternal !== "function") throw new Error("missing packaged opener");
     calls.push("host");
     if (failure === "boot") throw new Error("boot failed");
-    return { port: 12345, server: { shutdown: async () => {
+    return { port: 12345, server: { startAttributionClaim: () => calls.push("claim-ready"), shutdown: async () => {
       calls.push("shutdown-start");
       await Bun.sleep(10);
       calls.push("shutdown-end");
@@ -38,7 +39,7 @@ mock.module("electrobun/main", () => ({
       listeners.push(callback);
     } },
   },
-  ApplicationMenu: { setApplicationMenu() {} },
+  ApplicationMenu: { setApplicationMenu() {}, on() {} },
   BrowserView: {},
   BrowserWindow: class {},
   PATHS: { RESOURCES_FOLDER: ${JSON.stringify(root)}, VIEWS_FOLDER: ${JSON.stringify(root)} },

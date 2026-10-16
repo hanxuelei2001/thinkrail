@@ -2,16 +2,25 @@ import {
 	RiPuzzleLine as Puzzle,
 	RiRefreshLine as RefreshCw,
 	RiShieldCheckLine as ShieldCheck,
+	RiAlertLine as TriangleAlert,
 } from "@remixicon/react";
-import type { Project, SkillCatalogEntry, SkillDecision, Workspace } from "@thinkrail/contracts";
+import type { Project, SkillCatalogEntry, Workspace } from "@thinkrail/contracts";
+import { Button } from "@thinkrail/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@thinkrail/ui/dialog";
+import { Switch } from "@thinkrail/ui/switch";
+import { IconTooltip } from "@thinkrail/ui/tooltip";
+import { cn } from "@thinkrail/ui/utils";
 import { useCallback, useEffect, useState } from "react";
 import { LoadingRegion } from "@/components/Skeleton";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { IconTooltip } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
 import { toast, useAppStore } from "@/store";
 import { errorText, getTransport, reloadSessionResourcesWithSkillBaseline } from "@/transport";
+import {
+	deriveProjectTrustNotice,
+	trustEnablesText,
+	trustGrantParams,
+	untrustedNoticeText,
+} from "./projectTrust";
+import { useProjectTrustSummary } from "./useProjectTrustSummary";
 
 const TIER_META: Record<string, { label: string; hint: string; rank: number }> = {
 	bundled: { label: "ThinkRail", hint: "Bundled with the app.", rank: 0 },
@@ -77,6 +86,7 @@ export function SkillsDialog({
 	const [entries, setEntries] = useState<SkillCatalogEntry[] | null>(null);
 	const [busy, setBusy] = useState(false);
 	const workspaceId = workspace?.workspaceId;
+	const trustSummary = useProjectTrustSummary(projectId, open);
 
 	const refresh = useCallback(async () => {
 		try {
@@ -147,7 +157,17 @@ export function SkillsDialog({
 
 	const disabledGroups = new Set(project?.disabledGroups ?? []);
 	const pluginsDisabled = disabledGroups.has("@plugins");
-	const untrustedCount = entries?.filter((e) => e.decision === "untrusted").length ?? 0;
+	const catalogAliases = (entries ?? [])
+		.filter((entry) => entry.decision === "untrusted")
+		.map((entry) => entry.name);
+	const trustNotice = deriveProjectTrustNotice(
+		project,
+		trustSummary && {
+			...trustSummary,
+			aliasSkills: [...new Set([...trustSummary.aliasSkills, ...catalogAliases])],
+		},
+	);
+	const trustEnables = trustNotice.kind === "untrusted" ? trustEnablesText(trustNotice) : null;
 	const groups = groupCatalog(entries ?? []);
 	const hasPlugins = groups.some((g) => g.isPlugin);
 	const isLeadingKey = (key: string) => key === "bundled" || key === "pi";
@@ -175,11 +195,13 @@ export function SkillsDialog({
 					<span className="shrink-0 rounded-full bg-control-bg-selected px-8 text-text-muted tr-text-metadata">
 						{group.items.length}
 					</span>
-					<Toggle
-						on={groupOn}
-						busy={busy || lockedByMaster}
-						testid="group-toggle"
-						onClick={() => setGroupEnabled(group.key, !groupOn)}
+					<SkillSwitch
+						checked={groupOn}
+						busy={busy}
+						blockedReason={lockedByMaster ? "Off — turn on All plugins first" : undefined}
+						label={`Enable ${group.label} skill group`}
+						testId="group-toggle"
+						onCheckedChange={(enabled) => setGroupEnabled(group.key, enabled)}
 					/>
 				</div>
 				<div className="ml-8 divide-y divide-border-default border-border-default border-l">
@@ -188,7 +210,13 @@ export function SkillsDialog({
 							key={`${group.key}:${entry.name}`}
 							entry={entry}
 							busy={busy}
-							groupOff={!groupOn}
+							blockedReason={
+								groupOn
+									? undefined
+									: lockedByMaster
+										? "Off — turn on All plugins first"
+										: `Off — turn on ${group.label} first`
+							}
 							onToggle={(enabled) => setSkillEnabled(entry.name, enabled)}
 							onAcknowledge={() =>
 								void mutate(
@@ -238,35 +266,48 @@ export function SkillsDialog({
 				{workspace?.stale ? (
 					<div
 						data-testid="skills-stale"
-						className="rounded-[var(--radius-sm)] border border-border-default bg-container-elevated-bg px-12 py-8 text-text-muted tr-text-metadata"
+						className="rounded-sm border border-border-default bg-container-elevated-bg px-12 py-8 text-text-muted tr-text-metadata"
 					>
 						This worktree's skills changed on disk —{" "}
 						<span className="text-text-default">Reload</span> to apply them to this chat.
 					</div>
 				) : null}
 
-				{untrustedCount > 0 ? (
+				{trustNotice.kind === "untrusted" ? (
 					<div
 						data-testid="skills-trust-all"
-						className="flex items-center gap-8 rounded-[var(--radius-sm)] border border-border-default border-l-[3px] border-l-feedback-warning bg-feedback-warning-subtle px-12 py-8"
+						className="flex flex-col gap-8 rounded-sm border border-feedback-warning-muted bg-container-elevated-bg px-12 py-8"
 					>
-						<span className="min-w-0 flex-1 tr-text-ui text-text-default">
-							{untrustedCount} project skill{untrustedCount === 1 ? "" : "s"} off until you trust
-							this repo.
-						</span>
-						<Button
-							size="sm"
-							disabled={busy}
-							onClick={() =>
-								void mutate(
-									() =>
-										getTransport().request("project.setTrust", { id: projectId, trusted: true }),
-									"Couldn't trust project",
-								)
-							}
-						>
-							Trust project
-						</Button>
+						<div className="flex items-start gap-8">
+							<TriangleAlert className="mt-2 size-14 shrink-0 text-feedback-warning" aria-hidden />
+							<span className="flex min-w-0 flex-1 flex-col gap-2">
+								<span className="tr-text-ui text-text-default">
+									{untrustedNoticeText(trustNotice)}
+								</span>
+								{trustEnables ? (
+									<span className="text-text-muted tr-text-metadata">{trustEnables}</span>
+								) : null}
+							</span>
+						</div>
+						<div className="flex justify-end">
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={busy}
+								onClick={() =>
+									void mutate(
+										() =>
+											getTransport().request(
+												"project.setTrust",
+												trustGrantParams(projectId, trustNotice),
+											),
+										"Couldn't trust project",
+									)
+								}
+							>
+								Trust project
+							</Button>
+						</div>
 					</div>
 				) : null}
 
@@ -286,11 +327,12 @@ export function SkillsDialog({
 									<span className="min-w-0 flex-1 tr-text-eyebrow text-text-default">
 										All plugins
 									</span>
-									<Toggle
-										on={!pluginsDisabled}
+									<SkillSwitch
+										checked={!pluginsDisabled}
 										busy={busy}
-										testid="all-plugins-toggle"
-										onClick={() => setGroupEnabled("@plugins", pluginsDisabled)}
+										label="Enable all plugins"
+										testId="all-plugins-toggle"
+										onCheckedChange={(enabled) => setGroupEnabled("@plugins", enabled)}
 									/>
 								</div>
 							) : null}
@@ -303,53 +345,50 @@ export function SkillsDialog({
 	);
 }
 
-function Toggle({
-	on,
+function SkillSwitch({
+	checked,
 	busy,
-	testid,
-	onClick,
+	blockedReason,
+	label,
+	testId,
+	onCheckedChange,
 }: {
-	on: boolean;
+	checked: boolean;
 	busy: boolean;
-	testid: string;
-	onClick: () => void;
+	blockedReason?: string | undefined;
+	label: string;
+	testId: string;
+	onCheckedChange: (checked: boolean) => void;
 }) {
+	const disabled = busy || blockedReason !== undefined;
+	const tooltip = busy
+		? "Saving skill settings…"
+		: (blockedReason ?? `${checked ? "On" : "Off"} — turn ${checked ? "off" : "on"}`);
 	return (
-		<button
-			type="button"
-			data-testid={testid}
-			data-on={on}
-			disabled={busy}
-			onClick={onClick}
-			className={cn(
-				"shrink-0 rounded-[var(--radius-sm)] border px-8 py-2 tr-text-metadata transition-colors disabled:bg-control-disabled-bg disabled:text-control-disabled-text",
-				on
-					? "border-primary-muted bg-clip-padding bg-primary-subtle text-primary"
-					: "border-border-default text-text-muted hover:bg-control-bg-hovered",
-			)}
-		>
-			{on ? "on" : "off"}
-		</button>
+		<IconTooltip label={tooltip} wrapTrigger={disabled}>
+			<Switch
+				checked={checked}
+				disabled={disabled}
+				label={label}
+				aria-description={tooltip}
+				data-on={checked}
+				testId={testId}
+				onCheckedChange={onCheckedChange}
+			/>
+		</IconTooltip>
 	);
 }
-
-const DECISION_TEXT: Record<SkillDecision, string> = {
-	load: "on",
-	disabled: "off",
-	untrusted: "trust to enable",
-	"pending-ack": "new",
-};
 
 function SkillRow({
 	entry,
 	busy,
-	groupOff,
+	blockedReason,
 	onToggle,
 	onAcknowledge,
 }: {
 	entry: SkillCatalogEntry;
 	busy: boolean;
-	groupOff: boolean;
+	blockedReason?: string | undefined;
 	onToggle: (enabled: boolean) => void;
 	onAcknowledge: () => void;
 }) {
@@ -372,31 +411,17 @@ function SkillRow({
 					<ShieldCheck className="size-14" />
 					Enable
 				</Button>
-			) : entry.decision === "untrusted" ? (
-				<span className="shrink-0 text-text-muted tr-text-metadata">{DECISION_TEXT.untrusted}</span>
-			) : groupOff ? (
-				<span
-					className="shrink-0 text-text-muted tr-text-metadata"
-					title="Enable the group to change this skill"
-				>
-					group off
-				</span>
 			) : (
-				<button
-					type="button"
-					data-testid="skill-toggle"
-					data-on={loaded}
-					disabled={busy}
-					onClick={() => onToggle(!loaded)}
-					className={cn(
-						"shrink-0 rounded-[var(--radius-sm)] border px-8 py-2 tr-text-metadata transition-colors disabled:bg-control-disabled-bg disabled:text-control-disabled-text",
-						loaded
-							? "border-primary-muted bg-clip-padding bg-primary-subtle text-primary"
-							: "border-border-default text-text-muted hover:bg-control-bg-hovered",
-					)}
-				>
-					{DECISION_TEXT[entry.decision]}
-				</button>
+				<SkillSwitch
+					checked={entry.decision === "untrusted" || blockedReason ? false : loaded}
+					busy={busy}
+					blockedReason={
+						entry.decision === "untrusted" ? "Off — trust this project first" : blockedReason
+					}
+					label={`Enable skill ${entry.name}`}
+					testId="skill-toggle"
+					onCheckedChange={onToggle}
+				/>
 			)}
 		</div>
 	);

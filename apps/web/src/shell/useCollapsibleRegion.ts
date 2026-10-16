@@ -1,5 +1,5 @@
+import type { ImperativePanelHandle } from "@thinkrail/ui/resizable";
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ImperativePanelHandle } from "../components/ui/resizable";
 import { STORAGE_PREFIX } from "../constants/branding";
 
 const FOCUSABLE_SELECTOR = [
@@ -14,7 +14,7 @@ const FOCUSABLE_SELECTOR = [
 
 const RESIZE_HANDLE_SELECTOR = "[data-panel-resize-handle-enabled]";
 
-type PendingFocus = "inside" | "outside" | "rail";
+type PendingFocus = "inside" | "rail";
 
 function expandSizeStorageKey(storageId: string): string {
 	return `${STORAGE_PREFIX}panel-expand-size-${storageId}`;
@@ -67,32 +67,40 @@ function preferredFocusable(container: HTMLElement): HTMLElement | null {
 	);
 }
 
+export interface CollapsibleRegion<T extends HTMLElement = HTMLElement> {
+	collapsed: boolean;
+	regionRef: RefObject<HTMLElement | null>;
+	contentRef: RefObject<T | null>;
+	onCollapse: () => void;
+	onDragging: (dragging: boolean) => void;
+	onExpand: () => void;
+	panelRef: RefObject<ImperativePanelHandle | null>;
+	railRef: RefObject<HTMLButtonElement | null>;
+	toggle: () => void;
+}
+
 export function useCollapsibleRegion<T extends HTMLElement = HTMLElement>(
-	outsideFallbackRef: RefObject<HTMLElement | null>,
 	storageId: string,
-) {
+): CollapsibleRegion<T> {
 	const panelRef = useRef<ImperativePanelHandle>(null);
+	const regionRef = useRef<HTMLElement>(null);
 	const contentRef = useRef<T>(null);
 	const railRef = useRef<HTMLButtonElement>(null);
 	const lastInsideRef = useRef<HTMLElement | null>(null);
-	const lastOutsideRef = useRef<HTMLElement | null>(null);
 	const pendingFocusRef = useRef<PendingFocus | null>(null);
 	const draggingRef = useRef(false);
 	const dragStartSizeRef = useRef<number | null>(null);
 	const requestedCollapseRef = useRef(false);
-	const storageKeyRef = useRef(expandSizeStorageKey(storageId));
-	const expandSizeRef = useRef<number | null>(readExpandSize(storageKeyRef.current));
+	const storageKey = expandSizeStorageKey(storageId);
+	const [initialExpandSize] = useState(() => readExpandSize(storageKey));
+	const expandSizeRef = useRef<number | null>(initialExpandSize);
 	const [collapsed, setCollapsed] = useState(false);
 
 	useEffect(() => {
 		const rememberFocus = (event: FocusEvent) => {
 			const target = event.target;
-			if (!(target instanceof HTMLElement)) return;
-			if (contentRef.current?.contains(target)) {
+			if (target instanceof HTMLElement && contentRef.current?.contains(target))
 				lastInsideRef.current = target;
-				return;
-			}
-			if (!railRef.current?.contains(target)) lastOutsideRef.current = target;
 		};
 		window.addEventListener("focusin", rememberFocus);
 		return () => window.removeEventListener("focusin", rememberFocus);
@@ -106,14 +114,6 @@ export function useCollapsibleRegion<T extends HTMLElement = HTMLElement>(
 		focusElement(content);
 	}, []);
 
-	const focusOutside = useCallback(() => {
-		if (focusElement(lastOutsideRef.current)) return;
-		const fallback = outsideFallbackRef.current;
-		if (!fallback) return;
-		if (focusElement(preferredFocusable(fallback))) return;
-		focusElement(fallback);
-	}, [outsideFallbackRef]);
-
 	useLayoutEffect(() => {
 		const pending = pendingFocusRef.current;
 		if (!pending) return;
@@ -122,24 +122,19 @@ export function useCollapsibleRegion<T extends HTMLElement = HTMLElement>(
 			focusInside();
 			return;
 		}
-		if (collapsed && pending === "outside") {
-			pendingFocusRef.current = null;
-			focusOutside();
-			return;
-		}
 		if (collapsed && pending === "rail") {
 			pendingFocusRef.current = null;
 			focusElement(railRef.current);
 		}
-	}, [collapsed, focusInside, focusOutside]);
+	}, [collapsed, focusInside]);
 
 	const onCollapse = useCallback(() => {
 		if (dragStartSizeRef.current !== null) {
 			expandSizeRef.current = dragStartSizeRef.current;
-			writeExpandSize(storageKeyRef.current, expandSizeRef.current);
+			writeExpandSize(storageKey, expandSizeRef.current);
 		} else if (requestedCollapseRef.current) {
 			expandSizeRef.current = null;
-			writeExpandSize(storageKeyRef.current, null);
+			writeExpandSize(storageKey, null);
 		}
 		if (!draggingRef.current) dragStartSizeRef.current = null;
 		requestedCollapseRef.current = false;
@@ -147,13 +142,13 @@ export function useCollapsibleRegion<T extends HTMLElement = HTMLElement>(
 			const active = document.activeElement;
 			if (
 				active instanceof HTMLElement &&
-				(contentRef.current?.contains(active) || active.matches(RESIZE_HANDLE_SELECTOR))
+				(regionRef.current?.contains(active) || active.matches(RESIZE_HANDLE_SELECTOR))
 			) {
 				pendingFocusRef.current = "rail";
 			}
 		}
 		setCollapsed(true);
-	}, []);
+	}, [storageKey]);
 
 	const onExpand = useCallback(() => {
 		if (!draggingRef.current) dragStartSizeRef.current = null;
@@ -171,7 +166,7 @@ export function useCollapsibleRegion<T extends HTMLElement = HTMLElement>(
 		if (panel?.isExpanded()) dragStartSizeRef.current = panel.getSize();
 	}, []);
 
-	const openAndFocus = useCallback(() => {
+	const toggle = useCallback(() => {
 		const panel = panelRef.current;
 		if (!panel) return;
 		if (panel.isCollapsed()) {
@@ -181,35 +176,19 @@ export function useCollapsibleRegion<T extends HTMLElement = HTMLElement>(
 			else panel.expand(expandSize);
 			return;
 		}
-		focusInside();
-	}, [focusInside]);
-
-	const focusOrCollapse = useCallback(() => {
-		const panel = panelRef.current;
-		if (!panel) return;
-		if (panel.isCollapsed()) {
-			openAndFocus();
-			return;
-		}
-		const active = document.activeElement;
-		if (active instanceof HTMLElement && contentRef.current?.contains(active)) {
-			pendingFocusRef.current = "outside";
-			requestedCollapseRef.current = true;
-			panel.collapse();
-			return;
-		}
-		focusInside();
-	}, [focusInside, openAndFocus]);
+		requestedCollapseRef.current = true;
+		panel.collapse();
+	}, []);
 
 	return {
 		collapsed,
+		regionRef,
 		contentRef,
-		focusOrCollapse,
 		onCollapse,
 		onDragging,
 		onExpand,
-		openAndFocus,
 		panelRef,
 		railRef,
+		toggle,
 	};
 }

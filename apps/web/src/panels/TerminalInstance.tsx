@@ -11,11 +11,11 @@ import { WebFontsAddon } from "@xterm/addon-web-fonts";
 import { type ITheme, Terminal as XTerm } from "@xterm/xterm";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
+import { Button } from "@thinkrail/ui/button";
+import { onThemeSwap } from "@thinkrail/ui/theme";
 import { type QuietScrollEdges, QuietScrollFrame } from "@/components/QuietScrollArea";
-import { Button } from "@/components/ui/button";
 import { cssColorToHex } from "@/lib";
 import { SettingsSection, useAppStore } from "../store";
-import { onThemeSwap } from "../themes";
 import { errorText, getTransport } from "../transport";
 import { createPtySizeSync, runAfterTerminalRelayout } from "./ptySizeSync";
 import { stripAnsiDim, terminalContrastFloor } from "./terminalContrast";
@@ -417,7 +417,7 @@ export default function TerminalInstance({ tabKey, workspaceId, initialCommand }
 						data-testid="terminal-take-back"
 						aria-disabled={retrying}
 						onClick={retrying ? undefined : retry}
-						className="rounded-[var(--radius-sm)] bg-control-bg px-8 py-4 tr-text-ui text-text-default hover:bg-control-bg-hovered"
+						className="rounded-sm bg-control-bg px-8 py-4 tr-text-ui text-text-default hover:bg-control-bg-hovered"
 					>
 						{retrying ? "Taking it back…" : "Take it back"}
 					</button>
@@ -428,7 +428,7 @@ export default function TerminalInstance({ tabKey, workspaceId, initialCommand }
 					data-testid="terminal-start-failure"
 					className="absolute inset-0 z-30 flex items-center justify-center bg-overlay p-24 text-center"
 				>
-					<div className="flex flex-col items-center gap-8 rounded-[var(--radius-md)] border border-border-default bg-container-elevated-bg p-16 shadow-sm">
+					<div className="flex flex-col items-center gap-8 rounded-md border border-border-default bg-container-elevated-bg p-16 shadow-sm">
 						<div role="alert" className="flex flex-col items-center gap-4">
 							<p className="tr-title-compact text-text-default">Terminal couldn’t start</p>
 							<p className="tr-text-metadata text-text-muted">{failureMessage}</p>

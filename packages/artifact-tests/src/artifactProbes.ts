@@ -24,6 +24,97 @@ export interface ArtifactHostAdapter {
 	launch(env: Record<string, string>, label: string): Promise<RunningArtifactHost>;
 }
 
+const MALFORMED_MERMAID = "flowchart LR\n A -->";
+
+const MCP_STDIO_FIXTURE = `import { createInterface } from "node:readline";
+const reply = (id, result) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.id === undefined) return;
+  if (message.method === "initialize")
+    return reply(message.id, {
+      protocolVersion: message.params.protocolVersion,
+      capabilities: { tools: {} },
+      serverInfo: { name: "artifact-smoke", version: "1.0.0" },
+    });
+  if (message.method === "tools/list")
+    return reply(message.id, {
+      tools: [{ name: "echo", description: "Echo", inputSchema: { type: "object", properties: {} } }],
+    });
+  return reply(message.id, { content: [{ type: "text", text: "ok" }] });
+});
+`;
+
+function startNeedsSignInServer(): { url: string; stop: () => void } {
+	const server = Bun.serve({
+		hostname: "127.0.0.1",
+		port: 0,
+		fetch(request) {
+			const { pathname, origin } = new URL(request.url);
+			if (pathname.startsWith("/.well-known/oauth-protected-resource")) {
+				return Response.json({ resource: `${origin}/mcp`, authorization_servers: [origin] });
+			}
+			if (pathname === "/.well-known/oauth-authorization-server") {
+				return Response.json({
+					issuer: origin,
+					authorization_endpoint: `${origin}/authorize`,
+					token_endpoint: `${origin}/token`,
+					registration_endpoint: `${origin}/register`,
+					response_types_supported: ["code"],
+					code_challenge_methods_supported: ["S256"],
+				});
+			}
+			return new Response("unauthorized", {
+				status: 401,
+				headers: {
+					"WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+				},
+			});
+		},
+	});
+	return { url: `http://127.0.0.1:${server.port}/mcp`, stop: () => server.stop(true) };
+}
+
+function writeMcpFixtures(root: string, agentDir: string, httpUrl: string): void {
+	const fixture = join(root, "mcp-stdio-fixture.mjs");
+	writeFileSync(fixture, MCP_STDIO_FIXTURE);
+	mkdirSync(agentDir, { recursive: true });
+	writeFileSync(
+		join(agentDir, "mcp.json"),
+		JSON.stringify({
+			mcpServers: {
+				"smoke-stdio": { command: process.execPath, args: [fixture], exposure: "direct" },
+				"smoke-oauth": { url: httpUrl, exposure: "direct" },
+			},
+		}),
+	);
+}
+
+async function assertMcpServersReported(
+	socket: WebSocket,
+	workspaceId: string,
+	sessionId: string,
+): Promise<void> {
+	const until = Date.now() + 30_000;
+	for (;;) {
+		const listed = (await within(rpc(socket, "mcp.list", { workspaceId }), 10_000, "mcp.list")) as {
+			statuses?: {
+				sessionId: string;
+				servers: { name: string; state: string; toolCount?: number }[];
+			}[];
+		};
+		const servers = listed.statuses?.find((snapshot) => snapshot.sessionId === sessionId)?.servers;
+		const stdio = servers?.find((server) => server.name === "smoke-stdio");
+		const http = servers?.find((server) => server.name === "smoke-oauth");
+		if (stdio?.state === "connected" && stdio.toolCount === 1 && http?.state === "needs-sign-in")
+			return;
+		if (Date.now() > until) {
+			throw new Error(`the MCP engine did not report both fixtures: ${JSON.stringify(servers)}`);
+		}
+		await Bun.sleep(250);
+	}
+}
+
 function assert(condition: unknown, message: string): asserts condition {
 	if (!condition) throw new Error(message);
 }
@@ -68,10 +159,14 @@ function assertExternalModel(models: unknown): asserts models is Record<string, 
 			(model) =>
 				typeof model === "object" &&
 				model !== null &&
-				(model as { provider?: string; id?: string }).provider === "compiled-external" &&
-				(model as { provider?: string; id?: string }).id === "compiled-external-model",
+				(model as { provider?: string; id?: string; name?: string }).provider ===
+					"compiled-external" &&
+				(model as { provider?: string; id?: string; name?: string }).id ===
+					"compiled-external-model" &&
+				(model as { provider?: string; id?: string; name?: string }).name ===
+					"Compiled external extension model (.pi)",
 		),
-		"global external extension model is missing",
+		"global external extension model (value-importing pi) is missing",
 	);
 }
 
@@ -91,6 +186,45 @@ async function assertCentralConfigured(socket: WebSocket, label: string): Promis
 		await Bun.sleep(250);
 	}
 	throw new Error(`${label} Central state is ${JSON.stringify(state)}, expected configured`);
+}
+
+async function assertStrictVisualizeValidation(
+	socket: WebSocket,
+	workspaceId: string,
+	sessionId: string,
+): Promise<void> {
+	await within(
+		rpc(socket, "session.prompt", { sessionId, text: "Draw the broken flowchart." }),
+		10_000,
+		"session.prompt",
+	);
+	for (let attempt = 0; attempt < 240; attempt += 1) {
+		const states = (await within(
+			rpc(socket, "session.stateList", {}),
+			10_000,
+			"session.stateList",
+		)) as { sessionId: string; state: { execution: string; completion: unknown } }[];
+		const state = states.find((entry) => entry.sessionId === sessionId)?.state;
+		if (state?.execution === "idle" && state.completion !== null) break;
+		await Bun.sleep(250);
+	}
+	const transcript = (await within(
+		rpc(socket, "session.getMessages", { sessionId, workspaceId }),
+		10_000,
+		"session.getMessages",
+	)) as { messages: { role: string; toolName?: string; isError?: boolean; content?: unknown }[] };
+	const result = transcript.messages.find(
+		(message) => message.role === "toolResult" && message.toolName === "visualize",
+	);
+	assert(result, "the scripted visualize tool call never executed in the artifact session");
+	assert(result.isError === true, "strict mermaid validation accepted a dangling flowchart edge");
+	const text = Array.isArray(result.content)
+		? result.content.map((block) => (block as { text?: string }).text ?? "").join("\n")
+		: "";
+	assert(
+		/invalid Mermaid syntax in `mermaid`/.test(text) && /Parse error/.test(text),
+		`visualize rejected the diagram without the strict mermaid parse error: ${text}`,
+	);
 }
 
 async function assertOAuthLoginReachesAuthUrl(socket: WebSocket): Promise<void> {
@@ -203,22 +337,37 @@ export async function runArtifactHostProbes(adapter: ArtifactHostAdapter): Promi
 	mkdirSync(dirname(centralArtifact), { recursive: true });
 	writeFileSync(
 		centralArtifact,
-		`const model = {
+		`import { createFauxCore, fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
+const api = "compiled-external-faux";
+const model = {
   id: "compiled-external-model",
-  name: "Compiled external extension model",
+  name: \`Compiled external extension model (\${CONFIG_DIR_NAME})\`,
   reasoning: false,
   input: ["text"],
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
   contextWindow: 100000,
   maxTokens: 4096,
-  api: "openai-completions",
+  api,
 };
+const faux = createFauxCore({ api, provider: "compiled-external", models: [model] });
+const respond = (context) => {
+  faux.appendResponses([respond]);
+  const last = context.messages[context.messages.length - 1];
+  if (last && last.role === "toolResult") return fauxAssistantMessage("Visualization attempted.");
+  return fauxAssistantMessage(
+    [fauxToolCall("visualize", { type: "diagram", mermaid: ${JSON.stringify(MALFORMED_MERMAID)} })],
+    { stopReason: "toolUse" },
+  );
+};
+faux.setResponses([respond]);
 export default function syntheticExternalExtension(pi) {
   pi.registerProvider("compiled-external", {
-    api: "openai-completions",
+    api,
     baseUrl: "https://compiled-extension.invalid",
     apiKey: "synthetic-smoke-key",
     models: [model],
+    streamSimple: faux.streamSimple,
   });
 }
 `,
@@ -272,6 +421,7 @@ export default function syntheticExternalExtension(pi) {
 	let defaultHost: RunningArtifactHost | undefined;
 	let customHost: RunningArtifactHost | undefined;
 	let socket: WebSocket | undefined;
+	const needsSignIn = startNeedsSignInServer();
 	try {
 		const defaultEnv = hostEnvironment(
 			{
@@ -362,12 +512,14 @@ export default function syntheticExternalExtension(pi) {
 			),
 			"bundled workflow skill is missing",
 		);
+		writeMcpFixtures(root, agentDir, needsSignIn.url);
 		const created = (await within(
 			rpc(socket, "session.create", { workspaceId: workspace.id, model: externalModel }),
 			30_000,
 			"session.create with bundled factories",
 		)) as { sessionId?: string };
 		assert(created.sessionId, "session.create returned no session id");
+		await assertMcpServersReported(socket, workspace.id, created.sessionId);
 		const commands = await within(
 			rpc(socket, "session.getCommands", { sessionId: created.sessionId }),
 			10_000,
@@ -383,6 +535,7 @@ export default function syntheticExternalExtension(pi) {
 			),
 			"session resource loader omitted bundled skills",
 		);
+		await assertStrictVisualizeValidation(socket, workspace.id, created.sessionId);
 		await within(
 			rpc(socket, "session.dispose", { sessionId: created.sessionId }),
 			10_000,
@@ -418,6 +571,7 @@ export default function syntheticExternalExtension(pi) {
 		socket?.close();
 		await defaultHost?.stop().catch(() => {});
 		await customHost?.stop().catch(() => {});
+		needsSignIn.stop();
 		removeTree(root);
 	}
 }

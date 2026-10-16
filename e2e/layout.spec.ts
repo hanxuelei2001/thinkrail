@@ -3,17 +3,39 @@ import {
 	createWorkspaceViaDialog,
 	defaultWorkspaceRow,
 	enterDefaultWorkspace,
+	expandDisclosure,
 	openFixtureProject,
 	pressPlatformShortcut,
 	pseudoBackgroundColor,
 	revealFirstProjectWorkspaces,
+	revealWorkbenchTool,
 	waitTerminalReady,
 } from "./fixtures/app";
+
+test.use({ viewport: { width: 1440, height: 900 } });
 
 async function openDefaultWorkbench(page: Page): Promise<void> {
 	await openFixtureProject(page);
 	await enterDefaultWorkspace(page);
 	await waitTerminalReady(page);
+}
+
+/** A preset card by its exact name; descriptions may mention other presets' names ("review panels"). */
+function layoutPreset(page: Page, name: string): Locator {
+	return page.getByTestId("layout-preset").filter({ has: page.getByText(name, { exact: true }) });
+}
+
+/**
+ * Group limits sit under the collapsed Advanced disclosure and save on Enter. Escape then drops the
+ * draft back to the saved limit, so the value reads `value` only once it was committed.
+ */
+async function saveGroupLimit(page: Page, name: string, value: number): Promise<void> {
+	await expandDisclosure(page.getByTestId("layout-advanced-toggle"));
+	const input = page.getByRole("spinbutton", { name });
+	await input.fill(String(value));
+	await input.press("Enter");
+	await input.press("Escape");
+	await expect(input).toHaveValue(String(value));
 }
 
 async function waitForLayoutSettled(page: Page): Promise<void> {
@@ -24,7 +46,7 @@ async function waitForLayoutSettled(page: Page): Promise<void> {
 }
 
 async function openKeptFiles(page: Page, names: string[]): Promise<void> {
-	await page.getByTestId("tab-files").click();
+	await revealWorkbenchTool(page, "files");
 	for (const name of names) {
 		await page.getByTestId("file-node").filter({ hasText: name }).dblclick();
 	}
@@ -108,10 +130,9 @@ test("workbench strips and feature toolbars keep one-row geometry with ARIA tabs
 	await page.getByTestId("start-chat").first().click();
 
 	const centerStrip = page.getByTestId("center-tab-strip").first();
-	const rightStrip = page.getByTestId("right-tab-strip");
 	const bottomStrip = page.getByTestId("bottom-tab-strip");
-	for (const strip of [centerStrip, rightStrip, bottomStrip]) {
-		await expect(strip).toHaveCSS("height", "32px");
+	for (const strip of [centerStrip, bottomStrip]) {
+		await expect(strip).toHaveCSS("height", "28px");
 		await expect(strip.getByRole("tablist")).toHaveCount(1);
 		await expect(strip.getByRole("button", { name: /^Scroll tabs (left|right)$/ })).toHaveCount(0);
 		const active = strip.locator('[role="tab"][aria-selected="true"]');
@@ -131,15 +152,18 @@ test("workbench strips and feature toolbars keep one-row geometry with ARIA tabs
 			page.getByTestId(`tab-${tool}`).getByRole("button", { name: /^Close / }),
 		).toHaveCount(0);
 	}
-	await expect(page.getByTestId("tab-files")).toContainText("Files");
-	await expect(page.getByTestId("tab-files")).not.toContainText("All files");
+	await expect(page.getByTestId("tool-rail-files")).toHaveAccessibleName("Files");
 	await expect(centerStrip.getByTestId("editor-tab-close")).toHaveCount(1);
 	await expect(bottomStrip.getByTestId("terminal-tab-close")).toHaveCount(1);
 
-	await page.getByTestId("tab-changes").click();
-	await expect(page.getByTestId("chat-toolbar")).toHaveCSS("height", "32px");
+	await revealWorkbenchTool(page, "changes");
+	for (const header of await page.getByTestId("auxiliary-pane-header").all()) {
+		await expect(header).toHaveCSS("height", "28px");
+		await expect(header.getByRole("tablist")).toHaveCount(0);
+	}
+	await expect(page.getByTestId("chat-toolbar")).toHaveCSS("height", "28px");
 	await expect(page.getByTestId("chat-toolbar")).toHaveCSS("overflow-x", "clip");
-	await expect(page.getByTestId("changes-view-toggle")).toHaveCSS("height", "32px");
+	await expect(page.getByTestId("changes-view-toggle")).toHaveCSS("height", "28px");
 });
 
 test("overflow uses directional fades without changing tab-strip geometry", async ({ page }) => {
@@ -165,8 +189,9 @@ test("overflow uses directional fades without changing tab-strip geometry", asyn
 			tablist.evaluate((element) => getComputedStyle(element, "::-webkit-scrollbar").display),
 		)
 		.toBe("none");
-	await expect(strip).toHaveCSS("height", "32px");
-	await expect.poll(() => height(strip.getByRole("tab").first())).toBeCloseTo(28, 1);
+	await expect(strip).toHaveCSS("height", "28px");
+	const listHeight = await height(tablist);
+	await expect.poll(() => height(strip.getByRole("tab").first())).toBeCloseTo(listHeight, 1);
 
 	await tablist.evaluate((element) => {
 		element.scrollLeft = 0;
@@ -193,8 +218,8 @@ test("overflow uses directional fades without changing tab-strip geometry", asyn
 			return tabBox.x >= listBox.x && tabBox.x + tabBox.width <= listBox.x + listBox.width + 1;
 		})
 		.toBe(true);
-	await expect(strip).toHaveCSS("height", "32px");
-	await expect.poll(() => height(last)).toBeCloseTo(28, 1);
+	await expect(strip).toHaveCSS("height", "28px");
+	await expect.poll(() => height(last)).toBeCloseTo(listHeight, 1);
 });
 
 test("auxiliary panel scrollbars stay quiet at rest and expose only clipped edges", async ({
@@ -202,16 +227,16 @@ test("auxiliary panel scrollbars stay quiet at rest and expose only clipped edge
 }) => {
 	await page.setViewportSize({ width: 900, height: 420 });
 	await openDefaultWorkbench(page);
-	for (const tool of ["projects", "specs", "files", "changes", "review"]) {
-		const tab = page.getByTestId(`tab-${tool}`).getByRole("tab");
-		await tab.click();
+	for (const tool of ["projects", "specs", "files", "changes", "review"] as const) {
+		const tab = page.getByTestId(`tool-rail-${tool}`);
+		await revealWorkbenchTool(page, tool);
 		const panelId = await tab.getAttribute("aria-controls");
 		expect(panelId).toBeTruthy();
 		await expect(
 			page.locator(`[id="${panelId}"]`).locator('[data-quiet-scroll-surface="sidebar"]'),
 		).toHaveCount(1);
 	}
-	await page.getByTestId("tab-files").click();
+	await revealWorkbenchTool(page, "files");
 	await expect(page.getByTestId("file-node").first()).toBeVisible();
 
 	const panel = page.getByTestId("right-panel");
@@ -240,7 +265,7 @@ test("auxiliary panel scrollbars stay quiet at rest and expose only clipped edge
 	await page.getByTestId("tab-files").hover();
 	await page.getByTestId("file-node").first().focus();
 	await expect(viewport).toHaveAttribute("data-quiet-scroll-intent", "");
-	await page.getByTestId("tab-files").getByRole("tab").focus();
+	await page.getByTestId("tool-rail-files").focus();
 	await expect.poll(() => viewport.getAttribute("data-quiet-scroll-intent")).toBeNull();
 
 	await viewport.evaluate((node) => {
@@ -337,11 +362,24 @@ test("outer side widths publish on pointer-up and restore after reload", async (
 	expect(Math.abs((await width(page.getByTestId("right-stack"))) - resized)).toBeLessThan(24);
 });
 
+test("resize hit areas leave the preceding panel's scrollbar edge alone", async ({ page }) => {
+	await openDefaultWorkbench(page);
+	const handle = page.getByTestId("resize-right");
+	const box = await handle.boundingBox();
+	if (!box) throw new Error("right resize handle has no box");
+	const y = box.y + box.height / 2;
+
+	await page.mouse.move(box.x - 3, y);
+	await expect(handle).toHaveAttribute("data-resize-handle-state", "inactive");
+	await page.mouse.move(box.x + box.width - 1, y);
+	await expect(handle).toHaveAttribute("data-resize-handle-state", "hover");
+});
+
 test("one local frame survives workspace switches while resource tabs stay workspace-specific", async ({
 	page,
 }) => {
 	await openDefaultWorkbench(page);
-	await page.getByTestId("tab-files").click();
+	await revealWorkbenchTool(page, "files");
 	await page.getByTestId("file-node").filter({ hasText: "README.md" }).dblclick();
 	const handle = page.getByTestId("resize-right");
 	const handleBox = await handle.boundingBox();
@@ -428,9 +466,9 @@ test("dragging outer separators hides both sides and preserves their restore sta
 	await expect(page.getByTestId("left-layout-rail")).toBeVisible();
 	await expect(page.getByTestId("right-layout-rail")).toBeVisible();
 
-	await page.getByRole("button", { name: "Show left side" }).click();
+	await page.getByTestId("tool-rail-projects").click();
 	await waitForLayoutSettled(page);
-	await page.getByRole("button", { name: "Show right side" }).click();
+	await page.getByTestId("tool-rail-specs").click();
 	await waitForLayoutSettled(page);
 
 	await expect(page.getByTestId("left-stack")).toBeVisible();
@@ -444,22 +482,31 @@ test("dragging outer separators hides both sides and preserves their restore sta
 	await waitTerminalReady(page);
 });
 
-test("the side group menu shows tools for its own side and opens terminals in that group", async ({
+test("the side group menu shows tools for its own side and opens a terminal pane below a tool pane", async ({
 	page,
 }) => {
 	await openDefaultWorkbench(page);
 	const specsGroup = sideGroups(page, "right").first();
+	const specsGroupId = await specsGroup.getAttribute("data-group-id");
 	await expect(specsGroup.getByTestId("terminal-tab")).toHaveCount(0);
 
 	await specsGroup.getByRole("button", { name: "Add to this group" }).click();
+	await expect(page.getByTestId("side-new-terminal")).toHaveText("New terminal pane below");
 	await page.getByTestId("side-new-terminal").click();
-	await expect(specsGroup.getByTestId("terminal-tab")).toHaveCount(1);
+	await expect(sideGroups(page, "right")).toHaveCount(3);
+	const terminalPane = sideGroups(page, "right").nth(1);
+	await expect(terminalPane.getByTestId("terminal-tab")).toHaveCount(1);
+	await expect(terminalPane).not.toHaveAttribute("data-group-id", specsGroupId ?? "");
+	await expect(specsGroup.getByTestId("terminal-tab")).toHaveCount(0);
 	await expect(page.getByTestId("center-tab-strip").getByTestId("terminal-tab")).toHaveCount(0);
+	await terminalPane.getByRole("button", { name: "Add to this group" }).click();
+	await expect(page.getByTestId("side-new-terminal")).toHaveText("New terminal");
+	await page.keyboard.press("Escape");
 
 	await page.getByTestId("tab-projects").click({ button: "right" });
-	await page.getByRole("menuitem", { name: "Close", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Remove tool from group", exact: true }).click();
 	await page.getByTestId("tab-changes").click({ button: "right" });
-	await page.getByRole("menuitem", { name: "Close", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Remove tool from group", exact: true }).click();
 
 	await specsGroup.getByRole("button", { name: "Add to this group" }).click();
 	await expect(page.getByTestId("show-tool-changes")).toBeVisible();
@@ -508,7 +555,7 @@ test("a terminal can move to its own side group; resize, fold, and visibility ga
 	await expect(page.getByRole("menuitem", { name: "New left group at top" })).toBeEnabled();
 	await page.keyboard.press("Escape");
 
-	const projectsGroup = sideGroups(page, "left").filter({ has: page.getByTestId("tab-projects") });
+	const projectsGroup = sideGroups(page, "left").and(page.locator('[data-tools~="projects"]'));
 	const before = await height(projectsGroup);
 	const verticalHandle = page.getByTestId("left-group-resize");
 	const handleBox = await verticalHandle.boundingBox();
@@ -517,12 +564,13 @@ test("a terminal can move to its own side group; resize, fold, and visibility ga
 	await expect.poll(() => height(projectsGroup)).toBeGreaterThan(before + 40);
 
 	const terminalGroup = sideGroups(page, "left").filter({ has: page.getByTestId("terminal-tab") });
+	const terminalRail = page.getByTestId("left-layout-rail").getByTestId("terminal-rail-group");
 	await terminalGroup.getByTestId("side-group-fold").click();
-	await expect(terminalGroup).toHaveAttribute("data-folded", "true");
-	expect(await height(terminalGroup)).toBeCloseTo(27, 0);
+	await expect(terminalGroup).toHaveCount(0);
+	await expect(terminalRail).toHaveAttribute("aria-pressed", "false");
+	await expect(terminalRail).toBeFocused();
 	await expect(page.getByTestId("terminal-instance")).toHaveCount(0);
 
-	await terminalGroup.getByTestId("side-group-fold").focus();
 	await page.keyboard.press("Space");
 	await expect(terminalGroup).toHaveAttribute("data-folded", "false");
 	await waitTerminalReady(page);
@@ -530,12 +578,13 @@ test("a terminal can move to its own side group; resize, fold, and visibility ga
 
 	await projectsGroup.getByTestId("side-group-fold").click();
 	await terminalGroup.getByTestId("side-group-fold").click();
-	await expect(projectsGroup).toHaveAttribute("data-folded", "true");
-	await expect(terminalGroup).toHaveAttribute("data-folded", "true");
-	expect(await height(projectsGroup)).toBeCloseTo(27, 0);
-	expect(await height(terminalGroup)).toBeCloseTo(27, 0);
-	await projectsGroup.getByTestId("side-group-fold").click();
-	await terminalGroup.getByTestId("side-group-fold").click();
+	await expect(page.getByTestId("left-stack")).toHaveCount(0);
+	await expect(page.getByTestId("left-group-resize")).toHaveCount(0);
+	await expect(page.getByTestId("tool-rail-projects")).toHaveAttribute("aria-pressed", "false");
+	await expect(terminalRail).toHaveAttribute("aria-pressed", "false");
+	await page.getByTestId("tool-rail-projects").click();
+	await terminalRail.click();
+	await expect(sideGroups(page, "left")).toHaveCount(2);
 	await waitTerminalReady(page);
 
 	await page.getByTestId("tab-files").click({ button: "right" });
@@ -553,43 +602,42 @@ test("side groups expose broad per-panel above and below split targets", async (
 	await expect(page.getByRole("menuitem", { name: "New group below", exact: true })).toBeEnabled();
 	await page.keyboard.press("Escape");
 
-	let changesGroup = sideGroups(page, "right").filter({ has: page.getByTestId("tab-changes") });
+	const changesGroup = sideGroups(page, "right").and(page.locator('[data-tools~="changes"]'));
 	const aboveTarget = changesGroup.locator('[data-drop-label="Create right group above"]');
 	const aboveHeight = await dragTabToTarget(page, files, aboveTarget);
 	expect(aboveHeight).toBeGreaterThan(40);
 
-	let groups = sideGroups(page, "right");
+	const groups = sideGroups(page, "right");
 	await expect(groups).toHaveCount(3);
-	await expect(groups.nth(0).getByTestId("tab-specs")).toBeVisible();
-	await expect(groups.nth(1).getByTestId("tab-files")).toBeVisible();
-	await expect(groups.nth(2).getByTestId("tab-changes")).toBeVisible();
+	await expect(groups.nth(0)).toHaveAttribute("data-tools", "specs");
+	await expect(groups.nth(1)).toHaveAttribute("data-tools", "files");
+	await expect(groups.nth(2)).toHaveAttribute("data-tools", /changes/);
 
-	changesGroup = groups.filter({ has: page.getByTestId("tab-changes") });
 	const belowTarget = changesGroup.locator('[data-drop-label="Create right group below"]');
 	const belowHeight = await dragTabToTarget(page, page.getByTestId("tab-files"), belowTarget);
 	expect(belowHeight).toBeGreaterThan(40);
 
-	groups = sideGroups(page, "right");
 	await expect(groups).toHaveCount(4);
-	await expect(groups.nth(0).getByTestId("tab-specs")).toBeVisible();
+	await expect(groups.nth(0)).toHaveAttribute("data-tools", "specs");
 	await expect(groups.nth(1)).toContainText("Empty group");
-	await expect(groups.nth(2).getByTestId("tab-changes")).toBeVisible();
-	await expect(groups.nth(3).getByTestId("tab-files")).toBeVisible();
+	await expect(groups.nth(2)).toHaveAttribute("data-tools", /changes/);
+	await expect(groups.nth(3)).toHaveAttribute("data-tools", "files");
 
-	changesGroup = groups.filter({ has: page.getByTestId("tab-changes") });
 	await waitForLayoutSettled(page);
-	const foldChanges = changesGroup.getByTestId("side-group-fold");
-	await foldChanges.press("Enter");
-	await expect(changesGroup).toHaveAttribute("data-folded", "true");
-	const foldedAboveTarget = changesGroup.locator('[data-drop-label="Create right group above"]');
-	await dragTabToTarget(page, page.getByTestId("tab-files"), foldedAboveTarget);
-
-	groups = sideGroups(page, "right");
+	await changesGroup.getByTestId("side-group-fold").press("Space", { delay: 100 });
+	await expect(changesGroup).toHaveCount(0);
+	const boundaryAboveFoldedChanges = page
+		.getByTestId("right-layout-rail")
+		.locator('[data-drop-label="New right pane here"]')
+		.nth(2);
+	await dragTabToTarget(page, page.getByTestId("tab-files"), boundaryAboveFoldedChanges);
+	await expect(groups).toHaveCount(4);
+	await expect(page.getByTestId("tool-rail-changes")).toHaveAttribute("aria-pressed", "false");
+	await page.getByTestId("tool-rail-changes").click({ delay: 100 });
 	await expect(groups).toHaveCount(5);
-	await expect(groups.nth(0).getByTestId("tab-specs")).toBeVisible();
-	await expect(groups.nth(2).getByTestId("tab-files")).toBeVisible();
-	await expect(groups.nth(3).getByTestId("tab-changes")).toBeVisible();
-	await expect(groups.nth(3)).toHaveAttribute("data-folded", "true");
+	await expect(groups.nth(0)).toHaveAttribute("data-tools", "specs");
+	await expect(groups.nth(2)).toHaveAttribute("data-tools", "files");
+	await expect(groups.nth(3)).toHaveAttribute("data-tools", /changes/);
 });
 
 test("Mod+B and Mod+J hide and restore local sides without affecting bottom", async ({ page }) => {
@@ -624,16 +672,16 @@ test("keyboard and menu commands reorder, search, recursively split, and explici
 	await page.getByTestId("tab-projects").click({ button: "right" });
 	await page.getByRole("menuitem", { name: "Hide left side" }).click();
 	await expect(page.getByTestId("left-layout-rail")).toBeVisible();
-	await page.getByRole("button", { name: "Show left side" }).click();
+	await page.getByTestId("tool-rail-projects").click();
 	await expect(page.getByTestId("left-nav")).toBeVisible();
 
 	await page.getByTestId("tab-files").click({ button: "right" });
-	await page.getByRole("menuitem", { name: "Close", exact: true }).click();
+	await page.getByRole("menuitem", { name: "Remove tool from group", exact: true }).click();
 	await expect(page.getByTestId("tab-files")).toHaveCount(0);
 	await page.getByTestId("tab-changes").click({ button: "right" });
 	await page.getByRole("menuitem", { name: "Show Files" }).click();
 	await expect(page.getByTestId("tab-files")).toBeVisible();
-	await page.getByTestId("tab-specs").getByRole("tab").focus();
+	await page.getByTestId("tool-rail-specs").focus();
 	await page.keyboard.press("Delete");
 	await expect(page.getByTestId("tab-specs")).toHaveCount(0);
 	await page.getByTestId("tab-changes").click({ button: "right" });
@@ -658,18 +706,18 @@ test("keyboard and menu commands reorder, search, recursively split, and explici
 	await page.getByRole("option", { name: /notes\.txt/ }).click();
 	await expect(tabs.filter({ hasText: "notes.txt" })).toHaveAttribute("data-active", "true");
 	await expect(tabs.filter({ hasText: "notes.txt" }).getByRole("tab")).toBeFocused();
-	await page.setViewportSize({ width: 1280, height: 720 });
+	await page.setViewportSize({ width: 1440, height: 900 });
 	await expect(searchTabs).toHaveCount(0);
 
 	await page.setViewportSize({ width: 620, height: 800 });
 	await searchTabs.click();
 	await expect(page.getByPlaceholder("Find an open tab…")).toBeVisible();
-	await page.setViewportSize({ width: 1280, height: 720 });
+	await page.setViewportSize({ width: 1440, height: 900 });
 	await expect(searchTabs).toHaveCount(0);
 	await page.setViewportSize({ width: 620, height: 800 });
 	await expect(searchTabs).toBeVisible();
 	await expect(page.getByPlaceholder("Find an open tab…")).toHaveCount(0);
-	await page.setViewportSize({ width: 1280, height: 720 });
+	await page.setViewportSize({ width: 1440, height: 900 });
 
 	await tabs.filter({ hasText: "notes.txt" }).click({ button: "right" });
 	await page.getByRole("menuitem", { name: "Split right" }).click();
@@ -707,7 +755,7 @@ test("keyboard and menu commands reorder, search, recursively split, and explici
 test("each center group owns an independent preview slot", async ({ page }) => {
 	await openDefaultWorkbench(page);
 	await collapseToOneCenterGroup(page);
-	await page.getByTestId("tab-files").click();
+	await revealWorkbenchTool(page, "files");
 	await page.getByTestId("file-node").filter({ hasText: "notes.txt" }).dblclick();
 	await page.getByTestId("file-node").filter({ hasText: "README.md" }).click();
 
@@ -877,7 +925,7 @@ test("applying the Review preset preserves resources and installs its vertical c
 
 	await page.getByTestId("open-settings").click();
 	await page.getByTestId("settings-nav-layout").click();
-	const reviewPreset = page.getByTestId("layout-preset").filter({ hasText: "Review" });
+	const reviewPreset = layoutPreset(page, "Review");
 	await reviewPreset.getByRole("button", { name: "Apply now…" }).click();
 	await page.getByTestId("layout-apply-confirm").click();
 
@@ -907,7 +955,7 @@ test("the local default preset drives an explicit frame reset", async ({ page })
 	await openDefaultWorkbench(page);
 	await page.getByTestId("open-settings").click();
 	await page.getByTestId("settings-nav-layout").click();
-	const reviewPreset = page.getByTestId("layout-preset").filter({ hasText: "Review" });
+	const reviewPreset = layoutPreset(page, "Review");
 	await reviewPreset.getByRole("button", { name: "Set default" }).click();
 	await expect(reviewPreset).toHaveAttribute("data-default", "true");
 	await page.getByTestId("layout-reset-default").click();
@@ -923,10 +971,7 @@ test("the local default preset drives an explicit frame reset", async ({ page })
 	await expect(page.getByTestId("center-group")).toHaveCount(2);
 	await page.getByTestId("open-settings").click();
 	await page.getByTestId("settings-nav-layout").click();
-	await expect(page.getByTestId("layout-preset").filter({ hasText: "Review" })).toHaveAttribute(
-		"data-default",
-		"true",
-	);
+	await expect(layoutPreset(page, "Review")).toHaveAttribute("data-default", "true");
 });
 
 test("custom presets synchronize while defaults and group limits remain window-local", async ({
@@ -937,8 +982,10 @@ test("custom presets synchronize while defaults and group limits remain window-l
 	await page.getByTestId("open-settings").click();
 	await page.getByTestId("settings-nav-layout").click();
 
+	await page.getByTestId("layout-add-new").click();
 	await page.getByRole("textbox", { name: "Custom preset name" }).fill("My workbench");
 	await page.getByRole("button", { name: "Save preset" }).click();
+	await expect(page.getByTestId("layout-preset-save-row")).toHaveCount(0);
 	let custom = page.getByTestId("layout-preset").filter({ hasText: "My workbench" });
 	await expect(custom).toBeVisible();
 	await custom.getByRole("button", { name: "Rename My workbench" }).click();
@@ -949,17 +996,15 @@ test("custom presets synchronize while defaults and group limits remain window-l
 	await custom.getByRole("button", { name: "Set default" }).click();
 	await expect(custom).toHaveAttribute("data-default", "true");
 
-	const sideLimit = page.getByRole("spinbutton", { name: "Maximum side groups" });
-	await sideLimit.fill("7");
-	await page.getByRole("button", { name: "Save side group limit" }).click();
-	await expect(sideLimit).toHaveValue("7");
-	await expect(page.getByRole("button", { name: "Save side group limit" })).toBeDisabled();
-
-	const bottomLimit = page.getByRole("spinbutton", { name: "Maximum bottom groups" });
-	await bottomLimit.fill("4");
-	await page.getByRole("button", { name: "Save bottom group limit" }).click();
-	await expect(bottomLimit).toHaveValue("4");
-	await expect(page.getByRole("button", { name: "Save bottom group limit" })).toBeDisabled();
+	await saveGroupLimit(page, "Maximum side groups", 7);
+	await saveGroupLimit(page, "Maximum bottom groups", 4);
+	// Remounting the limits re-reads them from the saved window preferences, not the drafts.
+	const advanced = page.getByTestId("layout-advanced-toggle");
+	await advanced.click();
+	await expect(advanced).toHaveAttribute("aria-expanded", "false");
+	await expandDisclosure(advanced);
+	await expect(page.getByRole("spinbutton", { name: "Maximum side groups" })).toHaveValue("7");
+	await expect(page.getByRole("spinbutton", { name: "Maximum bottom groups" })).toHaveValue("4");
 
 	const peer = await context.newPage();
 	await peer.goto("/");
@@ -969,6 +1014,7 @@ test("custom presets synchronize while defaults and group limits remain window-l
 	const peerCustom = peer.getByTestId("layout-preset").filter({ hasText: "My renamed workbench" });
 	await expect(peerCustom).toBeVisible();
 	await expect(peerCustom).not.toHaveAttribute("data-default", "true");
+	await expandDisclosure(peer.getByTestId("layout-advanced-toggle"));
 	await expect(peer.getByRole("spinbutton", { name: "Maximum side groups" })).toHaveValue("6");
 
 	await custom.getByRole("button", { name: "Delete My renamed workbench" }).click();
@@ -981,24 +1027,13 @@ test("custom presets synchronize while defaults and group limits remain window-l
 	);
 });
 
-test("Layout settings controls keep their container-preset max-widths", async ({ page }) => {
-	await openDefaultWorkbench(page);
-	await page.getByTestId("open-settings").click();
-	await page.getByTestId("settings-nav-layout").click();
-
-	await expect(page.getByTestId("layout-preset-save-row")).toHaveCSS("max-width", "512px");
-	await expect(page.getByTestId("layout-group-limits")).toHaveCSS("max-width", "384px");
-});
-
 test("an accepted side-group overage is grandfathered without allowing further growth", async ({
 	page,
 }) => {
 	await openDefaultWorkbench(page);
 	await page.getByTestId("open-settings").click();
 	await page.getByTestId("settings-nav-layout").click();
-	let sideLimit = page.getByRole("spinbutton", { name: "Maximum side groups" });
-	await sideLimit.fill("3");
-	await page.getByRole("button", { name: "Save side group limit" }).click();
+	await saveGroupLimit(page, "Maximum side groups", 3);
 	await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
 
 	await page.getByTestId("terminal-tab").click({ button: "right" });
@@ -1008,9 +1043,7 @@ test("an accepted side-group overage is grandfathered without allowing further g
 	await createWorkspaceViaDialog(page);
 	await page.getByTestId("open-settings").click();
 	await page.getByTestId("settings-nav-layout").click();
-	sideLimit = page.getByRole("spinbutton", { name: "Maximum side groups" });
-	await sideLimit.fill("2");
-	await page.getByRole("button", { name: "Save side group limit" }).click();
+	await saveGroupLimit(page, "Maximum side groups", 2);
 	await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
 
 	await defaultWorkspaceRow(page).getByRole("button").first().click();
@@ -1071,10 +1104,11 @@ test("frontend windows keep chat and file placement independent", async ({ page,
 	await defaultWorkspaceRow(peer).click();
 	await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
 	await expect(peer.getByTestId("terminal-tab")).toHaveCount(1);
+	const peerChat = peer.locator('[data-testid="editor-tab"][data-kind="chat"]');
+	await expect(peerChat).toHaveCount(1);
 	await peer.getByTestId("new-terminal").first().click();
 	await expect(peer.getByTestId("terminal-tab")).toHaveCount(2);
 	await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
-	const peerChat = peer.locator('[data-testid="editor-tab"][data-kind="chat"]');
 	await expect(peerChat).toHaveCount(1);
 	await expect(chat).toHaveCount(1);
 	await peerChat.hover();
@@ -1090,13 +1124,13 @@ test("frontend windows keep chat and file placement independent", async ({ page,
 	await expect(peer.getByTestId("closed-chat-item")).toHaveCount(2);
 	await peer.keyboard.press("Escape");
 
-	await page.getByTestId("tab-files").click();
+	await revealWorkbenchTool(page, "files");
 	await page.getByTestId("file-node").filter({ hasText: "README.md" }).dblclick();
 	const localFile = page.getByTestId("editor-tab").filter({ hasText: "README.md" });
 	const peerFile = peer.getByTestId("editor-tab").filter({ hasText: "README.md" });
 	await expect(localFile).toHaveCount(1);
 	await expect(peerFile).toHaveCount(0);
-	await peer.getByTestId("tab-files").click();
+	await revealWorkbenchTool(peer, "files");
 	await peer.getByTestId("file-node").filter({ hasText: "README.md" }).dblclick();
 	await expect(peerFile).toHaveCount(1);
 	await peerFile.hover();
@@ -1196,12 +1230,12 @@ test("local layout transitions with no gesture in progress never announce a canc
 	await dragHandle(page, handle, handleBox.x - 60, handleBox.y + handleBox.height / 2);
 	await expect.poll(() => width(page.getByTestId("right-stack"))).not.toBeCloseTo(before, 0);
 
-	const filesGroup = sideGroups(page, "right").filter({ has: page.getByTestId("tab-files") });
+	const filesGroup = sideGroups(page, "right").and(page.locator('[data-tools~="files"]'));
 	await filesGroup.getByTestId("side-group-fold").click();
-	await expect(filesGroup).toHaveAttribute("data-folded", "true");
-	await filesGroup.getByTestId("side-group-fold").click();
+	await expect(filesGroup).toHaveCount(0);
+	await page.getByTestId("tool-rail-files").click();
 	await expect(filesGroup).toHaveAttribute("data-folded", "false");
-	await page.getByTestId("tab-changes").click();
+	await revealWorkbenchTool(page, "changes");
 	await expect(page.getByTestId("tab-changes")).toHaveAttribute("data-active", "true");
 	await expect(page.getByTestId("toast")).toHaveCount(0);
 });
@@ -1231,7 +1265,7 @@ test("a tab drag reveals every valid destination subtly, then emphasizes the one
 	await openKeptFiles(page, ["README.md", "notes.txt"]);
 
 	const centerStrip = page.getByTestId("center-tab-strip");
-	const rightStrip = page.getByTestId("right-tab-strip");
+	const rightStrip = page.getByTestId("right-panel").getByTestId("auxiliary-pane-header");
 	const dragged = page.getByTestId("editor-tab").filter({ hasText: "README.md" });
 	const box = await dragged.boundingBox();
 	if (!box) throw new Error("drag tab has no box");
@@ -1274,7 +1308,7 @@ test("the hidden bottom drop zone wins overlapping terminal targets and reveals 
 }) => {
 	await openDefaultWorkbench(page);
 	await page.getByTestId("terminal-tab").click({ button: "right" });
-	await page.getByRole("menuitem", { name: /Move to center group/ }).click();
+	await page.getByRole("menuitem", { name: /Move to center pane/ }).click();
 	await waitForLayoutSettled(page);
 	const terminal = page.getByTestId("center-group").getByTestId("terminal-tab");
 	await expect(terminal).toBeVisible();

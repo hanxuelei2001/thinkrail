@@ -1,38 +1,27 @@
 import { describe, expect, it } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadColors, paletteVar, renderCss, themeColorKeys, validate } from "../../scripts/colors";
+import { designSourceFiles, designSourceLabel } from "../../scripts/designSources";
 import { normalizeEol } from "../../scripts/generatedFiles";
 
-const SRC = new URL("..", import.meta.url).pathname;
+const SRC = fileURLToPath(new URL("..", import.meta.url));
 const read = (path: string) => normalizeEol(readFileSync(path, "utf8"));
-const rel = (path: string) => path.slice(SRC.length);
+const rel = designSourceLabel;
 const code = (path: string) =>
 	read(path)
 		.replace(/\/\*[\s\S]*?\*\//g, "")
 		.replace(/^[ \t]*\/\/.*$/gm, "");
 
-function sourceFiles(dir = SRC, exts = /\.(tsx?|css)$/): string[] {
-	const out: string[] = [];
-	for (const entry of readdirSync(dir)) {
-		const path = join(dir, entry);
-		if (statSync(path).isDirectory()) {
-			if (entry === "generated") continue;
-			out.push(...sourceFiles(path, exts));
-			continue;
-		}
-		if (exts.test(entry) && !/\.test\.tsx?$/.test(entry)) out.push(path);
-	}
-	return out;
-}
-
 const COLORS = loadColors();
-const FILES = sourceFiles();
+const FILES = designSourceFiles();
 const TS_FILES = FILES.filter((f) => /\.tsx?$/.test(f));
 const CSS_FILES = FILES.filter((f) => f.endsWith(".css"));
 
 const GENERATED_CSS = join(SRC, "styles/generated/colors.css");
 const GENERATED_TYPE_CSS = join(SRC, "styles/generated/typography.css");
+const GENERATED_SPACING_CSS = join(SRC, "styles/generated/spacing.css");
 
 const THEME_ENTRY = /^\s*--color-([a-z0-9-]+)\s*:\s*var\((--[a-z0-9-]+)\)/gm;
 const PUBLISHED_TARGET = new Map(
@@ -43,7 +32,7 @@ const PUBLISHED_TARGET = new Map(
 const PUBLISHED = new Set(PUBLISHED_TARGET.keys());
 
 const DECLARED_VARS = new Set(
-	[...CSS_FILES, GENERATED_CSS, GENERATED_TYPE_CSS].flatMap((f) =>
+	[...CSS_FILES, GENERATED_CSS, GENERATED_TYPE_CSS, GENERATED_SPACING_CSS].flatMap((f) =>
 		[...read(f).matchAll(/^\s*(--[a-z0-9-]+)\s*:/gm)].map((m) => m[1]),
 	),
 );
@@ -71,9 +60,11 @@ const NON_COLOR = new Set([
 	"y",
 	"t-0",
 	"b-0",
+	"l-0",
 	"l-2",
 	"r-2",
 	"t-2",
+	"b-2",
 	"l-4",
 	"collapse",
 	"separate",

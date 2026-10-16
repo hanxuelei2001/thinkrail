@@ -5,19 +5,22 @@ import {
 	adoptedCommits,
 	flatItems,
 	groupProgress,
+	hostSessionGlance,
+	isPlanReady,
 	itemChangeSet,
 	itemOpenFindings,
 	itemRevisions,
+	planChangeTotals,
 	planCompletionSummary,
 	planGlance,
 	planSections,
+	planStaleSummary,
 	planSummary,
 	reviewableItems,
 	reviewChangesRequested,
 	reviewProgress,
 	sessionGlance,
 	shouldNudgeOnAdd,
-	stripStatus,
 	verificationStatus,
 } from "./planView";
 import type { ChatTurn } from "./types";
@@ -75,26 +78,6 @@ test("planSections buckets groups by the host-derived status and loose items by 
 	expect(sections.activeLoose).toEqual([]);
 });
 
-test("stripStatus reflects the agent's state, not the checkboxes", () => {
-	const current = item("a", "in_progress");
-	const active = { done: 1, total: 3, current };
-	const allDone = { done: 3, total: 3, current: undefined };
-	const openIdle = { done: 1, total: 3, current: undefined };
-
-	expect(stripStatus("working", active)).toEqual({ show: true, showLabel: false, title: "a" });
-	expect(stripStatus("working", allDone)).toEqual({ show: true, showLabel: true });
-
-	expect(stripStatus("waiting_question", allDone)).toEqual({ show: true, showLabel: true });
-	expect(stripStatus("waiting_question", active)).toEqual({
-		show: true,
-		showLabel: true,
-		title: "a",
-	});
-
-	expect(stripStatus("waiting", openIdle)).toEqual({ show: true, showLabel: true });
-	expect(stripStatus("waiting", allDone)).toEqual({ show: false, showLabel: true });
-});
-
 test("planSummary spans loose + groups and surfaces the current step", () => {
 	const summary = planSummary({
 		todos: [item("loose", "done")],
@@ -120,13 +103,50 @@ test("planGlance: an awaiting question wins even while its live tool blocks the 
 	expect(planGlance(false, { q1: asked(false, false, true) })).toBe("waiting");
 });
 
+test("hostSessionGlance uses host blockers and execution over stale transcript fallback", () => {
+	const base = {
+		execution: "running" as const,
+		runId: "run-1",
+		needsInput: null,
+		completion: null,
+		completionUnread: false,
+		queuedCount: 0,
+		backgroundWork: false,
+	};
+	expect(hostSessionGlance(base, "waiting_question")).toBe("working");
+	expect(hostSessionGlance({ ...base, execution: "idle" }, "working")).toBe("waiting");
+	expect(hostSessionGlance({ ...base, execution: "idle", backgroundWork: true }, "waiting")).toBe(
+		"working",
+	);
+	expect(
+		hostSessionGlance(
+			{
+				...base,
+				needsInput: {
+					interactionId: "dialog:d1",
+					kind: "dialog",
+					request: {
+						id: "d1",
+						sessionId: "s1",
+						kind: "confirm",
+						title: "Continue?",
+						message: "Proceed?",
+					},
+				},
+			},
+			"working",
+		),
+	).toBe("waiting_question");
+	expect(hostSessionGlance(null, "waiting_question")).toBe("waiting_question");
+});
+
 test("shouldNudgeOnAdd: never wake an agent waiting on a question; wake it otherwise", () => {
 	expect(shouldNudgeOnAdd("waiting_question")).toBe(false);
 	expect(shouldNudgeOnAdd("working")).toBe(true);
 	expect(shouldNudgeOnAdd("waiting")).toBe(true);
 });
 
-test("sessionGlance derives the glance straight from a runtime (deriveAskStates + planGlance)", () => {
+test("sessionGlance prefers host state and falls back to the runtime transcript (deriveAskStates + planGlance)", () => {
 	const askTurn: ChatTurn = {
 		kind: "assistant",
 		id: "a1",
@@ -153,6 +173,47 @@ test("sessionGlance derives the glance straight from a runtime (deriveAskStates 
 			toolResults: { q1: { status: "error", raw: {} } },
 		}),
 	).toBe("waiting");
+	expect(
+		sessionGlance({
+			isStreaming: false,
+			turns: [],
+			askAnswers: {},
+			toolResults: {},
+			hostState: {
+				execution: "idle",
+				runId: "run-1",
+				needsInput: null,
+				completion: { completionId: "completion:a1", outcome: "succeeded" },
+				completionUnread: false,
+				queuedCount: 0,
+				backgroundWork: true,
+			},
+		}),
+	).toBe("working");
+});
+
+test("sessionGlance recomputes when any input changes identity under the same turns array", () => {
+	const turns: ChatTurn[] = [
+		{
+			kind: "assistant",
+			id: "a1",
+			streaming: false,
+			message: {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "q1", name: "ask_user_question", arguments: {} }],
+			} as unknown as AssistantMessage,
+		},
+	];
+	const pending = { isStreaming: false, turns, askAnswers: {}, toolResults: {} };
+	expect(sessionGlance(pending)).toBe("waiting_question");
+	expect(sessionGlance({ ...pending, toolResults: { q1: { status: "error", raw: {} } } })).toBe(
+		"waiting",
+	);
+	expect(sessionGlance({ ...pending, askAnswers: { q1: { answers: [], cancelled: false } } })).toBe(
+		"waiting",
+	);
+	expect(sessionGlance(pending)).toBe("waiting_question");
+	expect(sessionGlance({ ...pending, turns: [] })).toBe("waiting");
 });
 
 test("itemChangeSet: the LATEST resolvable commit wins; live change paths (a fallback redo) win over commits", () => {
@@ -250,6 +311,25 @@ test("itemRevisions lists the commit history in order; review derivations follow
 	expect(reviewProgress(plan)).toEqual({ reviewed: 1, total: 2 });
 });
 
+test("isPlanReady is false while a reviewable step is unsettled, true once all are reviewed", () => {
+	const done: TodoItem = {
+		...item("step", "done"),
+		artifacts: [{ kind: "commit", sha: "abc" }],
+		review: { state: "unreviewed", revision: 1 },
+	};
+	// Every step done, but the reviewable one is unsettled — the plan must NOT read ship-ready.
+	expect(isPlanReady({ todos: [done], groups: [] })).toBe(false);
+	const reviewed: TodoItem = {
+		...done,
+		review: { state: "reviewed", revision: 1, at: "2026-01-01T00:00:00Z" },
+	};
+	expect(isPlanReady({ todos: [reviewed], groups: [] })).toBe(true);
+	// An open step keeps it unready regardless of review state.
+	expect(isPlanReady({ todos: [reviewed, item("pending")], groups: [] })).toBe(false);
+	// An empty plan is not ready.
+	expect(isPlanReady({ todos: [], groups: [] })).toBe(false);
+});
+
 test("reviewableItems spans adoptedCommits, but planSummary's build count counts planned items only", () => {
 	const planned: TodoItem = {
 		...item("planned", "done"),
@@ -306,6 +386,22 @@ test("itemOpenFindings: counts open agent comments anchored in the item's change
 	expect(reviewChangesRequested(item("plain", "done"))).toBe(false);
 });
 
+test("planChangeTotals counts distinct files across the whole plan, deduped by path", () => {
+	const withCommit = (title: string, sha: string, paths: string[]): TodoItem => ({
+		...item(title, "done"),
+		artifacts: [
+			{ kind: "commit", sha, files: paths.map((path) => ({ path, status: "modified" })) },
+		],
+	});
+	const plan = {
+		groups: [group("g", [withCommit("a", "sha1", ["src/x.ts", "src/y.ts"])], "done")],
+		todos: [withCommit("b", "sha2", ["src/y.ts", "src/z.ts"])],
+	};
+	// x, y, z — y is shared across two steps and counts once.
+	expect(planChangeTotals(plan).files).toBe(3);
+	expect(planChangeTotals({ groups: [], todos: [] }).files).toBe(0);
+});
+
 test("planCompletionSummary shows only while every item is done", () => {
 	const done = { todos: [item("a", "done")], groups: [], summary: "All landed." };
 	expect(planCompletionSummary(done)).toBe("All landed.");
@@ -313,6 +409,17 @@ test("planCompletionSummary shows only while every item is done", () => {
 	expect(planCompletionSummary({ ...done, todos: [item("a", "done"), item("b")] })).toBeUndefined();
 	expect(planCompletionSummary({ todos: [], groups: [], summary: "x" })).toBeUndefined();
 	expect(planCompletionSummary({ todos: [item("a", "done")], groups: [] })).toBeUndefined();
+});
+
+test("planStaleSummary keeps the stored note visible only once a completed plan re-opens", () => {
+	const done = { todos: [item("a", "done")], groups: [], summary: "All landed." };
+	// All-done is the fresh case (planCompletionSummary owns it), so no stale note.
+	expect(planStaleSummary(done)).toBeUndefined();
+	// A re-opened plan surfaces the stored note as stale.
+	expect(planStaleSummary({ ...done, todos: [item("a", "done"), item("b")] })).toBe("All landed.");
+	// No stored summary, or an empty plan, never shows one.
+	expect(planStaleSummary({ todos: [item("a")], groups: [] })).toBeUndefined();
+	expect(planStaleSummary({ todos: [], groups: [], summary: "x" })).toBeUndefined();
 });
 
 test("verificationStatus: an honest 'not verified' reads unverified; a named check reads claimed", () => {

@@ -1,7 +1,11 @@
-const postHogProjectKey = "phc_AFJBcKraEUrfpTrSSMjBGXMHTusYudtFfxWqdevchy8X";
 const postHogProxyHost = "https://p.thinkrail.ai";
 const postHogUiHost = "https://eu.posthog.com";
 const gtmContainerId = "GTM-WDW2DZW4";
+const journeyStorageKey = "thinkrail_journey_id";
+const journeyProperty = "journey_id";
+const bridgeProperty = "bridge_id";
+const captureQueueLimit = 100;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export type PostHogOptions = {
 	api_host: string;
@@ -25,17 +29,95 @@ export type WebsiteAnalyticsConfiguration = {
 	};
 };
 
+export type MarketingConsentAdapter = {
+	current(): boolean | undefined;
+	subscribe(listener: () => void): () => void;
+};
+
+export type WebsiteContentViewedProperties = {
+	content_key: string;
+};
+
+export type WebsiteCtaLocation =
+	| "hero"
+	| "install_section"
+	| "quick_start"
+	| "final_cta"
+	| "blog_post";
+
+export type WebsiteGithubLocation =
+	| WebsiteCtaLocation
+	| "header"
+	| "footer"
+	| "terminal"
+	| "mock_hint"
+	| "other";
+
+export type WebsiteInstallCtaClickedProperties = {
+	content_key: string;
+	cta_location: WebsiteCtaLocation;
+	install_method: "desktop" | "cli";
+};
+
+export type WebsiteInstallCommandCopiedProperties = {
+	content_key: string;
+	cta_location: "hero" | "install_section";
+	shell: "sh" | "powershell" | "cmd";
+};
+
+export type WebsiteGithubClickedProperties = {
+	content_key: string;
+	cta_location: WebsiteGithubLocation;
+	target: "repo" | "releases" | "other";
+};
+
+export type WebsiteInstallLinkShareClickedProperties = {
+	content_key: string;
+	cta_location: "hero" | "quick_start";
+};
+
+export type WebsiteDownloadStartedProperties = {
+	content_key: string;
+	cta_location: WebsiteCtaLocation;
+	platform: "macos" | "windows" | "linux";
+	architecture: "arm64" | "x64";
+	artifact: "dmg" | "zip" | "tar.gz";
+	bridge_id?: string;
+};
+
+export type WebsiteAnalyticsEventProperties = {
+	content_viewed: WebsiteContentViewedProperties;
+	install_cta_clicked: WebsiteInstallCtaClickedProperties;
+	download_started: WebsiteDownloadStartedProperties;
+	install_command_copied: WebsiteInstallCommandCopiedProperties;
+	github_clicked: WebsiteGithubClickedProperties;
+	install_link_share_clicked: WebsiteInstallLinkShareClickedProperties;
+};
+
+export type WebsiteAnalyticsEventName = keyof WebsiteAnalyticsEventProperties;
+
 export type WebsiteAnalytics = {
 	configurationForHostname(hostname: string): WebsiteAnalyticsConfiguration | undefined;
 	init(): void;
+	capture<EventName extends WebsiteAnalyticsEventName>(
+		event: EventName,
+		properties: WebsiteAnalyticsEventProperties[EventName],
+	): void;
+	currentJourneyId(): string | undefined;
+	subscribeJourney(listener: (journeyId: string | undefined) => void): () => void;
 };
 
 export type WebsiteAnalyticsOptions = {
 	productionHostname: string;
+	postHogProjectKey: string;
+	marketingConsent: MarketingConsentAdapter;
 };
 
 interface PostHogClient {
 	init(projectKey: string, options: PostHogOptions): void;
+	capture(event: WebsiteAnalyticsEventName, properties: Record<string, unknown>): void;
+	register(properties: Record<string, unknown>): void;
+	unregister(property: string): void;
 }
 
 declare global {
@@ -45,7 +127,7 @@ declare global {
 	}
 }
 
-const sharedConfiguration: WebsiteAnalyticsConfiguration = {
+const configurationForKey = (postHogProjectKey: string): WebsiteAnalyticsConfiguration => ({
 	postHog: {
 		projectKey: postHogProjectKey,
 		scriptUrl: `${postHogProxyHost}/static/array.js`,
@@ -63,9 +145,13 @@ const sharedConfiguration: WebsiteAnalyticsConfiguration = {
 		containerId: gtmContainerId,
 		scriptUrl: `https://www.googletagmanager.com/gtm.js?id=${gtmContainerId}`,
 	},
-};
+});
 
-function initPostHog(configuration: WebsiteAnalyticsConfiguration["postHog"]): void {
+function initPostHog(
+	configuration: WebsiteAnalyticsConfiguration["postHog"],
+	onLoad: () => void,
+	onError: () => void,
+): void {
 	if (document.querySelector(`script[data-posthog-project="${configuration.projectKey}"]`)) return;
 
 	const script = document.createElement("script");
@@ -73,9 +159,8 @@ function initPostHog(configuration: WebsiteAnalyticsConfiguration["postHog"]): v
 	script.async = true;
 	script.crossOrigin = "anonymous";
 	script.dataset.posthogProject = configuration.projectKey;
-	script.addEventListener("load", () => {
-		window.posthog?.init(configuration.projectKey, configuration.options);
-	});
+	script.addEventListener("load", onLoad);
+	script.addEventListener("error", onError);
 	document.head.appendChild(script);
 }
 
@@ -92,20 +177,202 @@ function initGtm(configuration: WebsiteAnalyticsConfiguration["gtm"]): void {
 	document.head.appendChild(script);
 }
 
+function storedOrNewJourneyId(): string | undefined {
+	try {
+		const storage = window.localStorage;
+		const existing = storage.getItem(journeyStorageKey);
+		if (existing !== null && uuidPattern.test(existing)) return existing;
+		const created = window.crypto.randomUUID();
+		if (!uuidPattern.test(created)) return undefined;
+		storage.setItem(journeyStorageKey, created);
+		return created;
+	} catch {
+		return undefined;
+	}
+}
+
+function removeStoredJourneyId(): void {
+	try {
+		window.localStorage.removeItem(journeyStorageKey);
+	} catch {}
+}
+
 export function createWebsiteAnalytics({
 	productionHostname,
+	postHogProjectKey,
+	marketingConsent,
 }: WebsiteAnalyticsOptions): WebsiteAnalytics {
+	const productionConfiguration = postHogProjectKey
+		? configurationForKey(postHogProjectKey)
+		: undefined;
+	let initialized = false;
+	let consentGranted: boolean | undefined;
+	let journeyId: string | undefined;
+	let postHogReady = false;
+	let postHogFailed = false;
+	const journeyListeners = new Set<(journeyId: string | undefined) => void>();
+	const captureQueue: Array<{
+		event: WebsiteAnalyticsEventName;
+		properties: Record<string, unknown>;
+	}> = [];
+
 	function configurationForHostname(hostname: string): WebsiteAnalyticsConfiguration | undefined {
-		return hostname === productionHostname ? sharedConfiguration : undefined;
+		return hostname === productionHostname ? productionConfiguration : undefined;
+	}
+
+	function enabledInCurrentWindow(): boolean {
+		return (
+			typeof window !== "undefined" &&
+			configurationForHostname(window.location.hostname) !== undefined
+		);
+	}
+
+	function registerJourney(): void {
+		if (!postHogReady || journeyId === undefined) return;
+		try {
+			window.posthog?.register({ [journeyProperty]: journeyId });
+		} catch {}
+	}
+
+	function unregisterJourney(): void {
+		if (!postHogReady) return;
+		try {
+			window.posthog?.unregister(journeyProperty);
+		} catch {}
+	}
+
+	function clearQueuedIdentity(): void {
+		for (const queued of captureQueue) {
+			delete queued.properties[journeyProperty];
+			delete queued.properties[bridgeProperty];
+		}
+	}
+
+	function notifyJourneyIfChanged(
+		previousJourneyId: string | undefined,
+		previousConsent: boolean | undefined,
+	): void {
+		if (previousJourneyId === journeyId && previousConsent === consentGranted) return;
+		for (const listener of journeyListeners) {
+			try {
+				listener(journeyId);
+			} catch {}
+		}
+	}
+
+	function setConsent(granted: boolean | undefined): void {
+		if (granted === consentGranted) return;
+		const previousJourneyId = journeyId;
+		const previousConsent = consentGranted;
+		consentGranted = granted;
+		if (granted === undefined) {
+			journeyId = undefined;
+			if (previousConsent === true) {
+				unregisterJourney();
+				clearQueuedIdentity();
+			}
+			notifyJourneyIfChanged(previousJourneyId, previousConsent);
+			return;
+		}
+		if (granted) {
+			journeyId = storedOrNewJourneyId();
+			registerJourney();
+			notifyJourneyIfChanged(previousJourneyId, previousConsent);
+			return;
+		}
+
+		journeyId = undefined;
+		removeStoredJourneyId();
+		unregisterJourney();
+		clearQueuedIdentity();
+		notifyJourneyIfChanged(previousJourneyId, previousConsent);
+	}
+
+	function refreshConsent(): void {
+		let granted: boolean | undefined;
+		try {
+			granted = marketingConsent.current();
+		} catch {}
+		setConsent(granted);
+	}
+
+	function sendQueuedCaptures(): void {
+		if (!postHogReady || window.posthog === undefined) return;
+		while (captureQueue.length > 0) {
+			const queued = captureQueue.shift();
+			if (queued === undefined) return;
+			try {
+				window.posthog.capture(queued.event, queued.properties);
+			} catch {}
+		}
+	}
+
+	function failPostHog(): void {
+		postHogFailed = true;
+		captureQueue.length = 0;
+	}
+
+	function onPostHogLoad(configuration: WebsiteAnalyticsConfiguration["postHog"]): void {
+		if (postHogFailed) return;
+		const posthog = window.posthog;
+		if (posthog === undefined) {
+			failPostHog();
+			return;
+		}
+		try {
+			posthog.init(configuration.projectKey, configuration.options);
+		} catch {
+			failPostHog();
+			return;
+		}
+		postHogReady = true;
+		sendQueuedCaptures();
+		registerJourney();
 	}
 
 	function init(): void {
-		if (typeof window === "undefined") return;
-		const configuration = configurationForHostname(window.location.hostname);
-		if (!configuration) return;
-		initPostHog(configuration.postHog);
+		const configuration = productionConfiguration;
+		if (!enabledInCurrentWindow() || initialized || configuration === undefined) return;
+		initialized = true;
+		try {
+			marketingConsent.subscribe(refreshConsent);
+			refreshConsent();
+		} catch {
+			setConsent(false);
+		}
+		initPostHog(configuration.postHog, () => onPostHogLoad(configuration.postHog), failPostHog);
 		initGtm(configuration.gtm);
 	}
 
-	return { configurationForHostname, init };
+	function capture<EventName extends WebsiteAnalyticsEventName>(
+		event: EventName,
+		properties: WebsiteAnalyticsEventProperties[EventName],
+	): void {
+		if (!enabledInCurrentWindow()) return;
+		const enrichedProperties: Record<string, unknown> = { ...properties };
+		if (consentGranted === true && journeyId !== undefined) {
+			enrichedProperties[journeyProperty] = journeyId;
+		}
+		if (postHogFailed) return;
+		if (!postHogReady || window.posthog === undefined) {
+			if (captureQueue.length === captureQueueLimit) captureQueue.shift();
+			captureQueue.push({ event, properties: enrichedProperties });
+			return;
+		}
+		try {
+			window.posthog.capture(event, enrichedProperties);
+		} catch {}
+	}
+
+	function currentJourneyId(): string | undefined {
+		if (!enabledInCurrentWindow() || consentGranted !== true) return undefined;
+		return journeyId;
+	}
+
+	function subscribeJourney(listener: (currentJourneyId: string | undefined) => void): () => void {
+		journeyListeners.add(listener);
+		return () => journeyListeners.delete(listener);
+	}
+
+	return { configurationForHostname, init, capture, currentJourneyId, subscribeJourney };
 }

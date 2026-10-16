@@ -5,7 +5,7 @@ status: active
 title: watch — worktree change notifier
 parent: module-server
 depends-on: [module-contracts]
-tags: [v1, live-refresh, public-surface-checked]
+tags: [live-refresh, public-surface-checked]
 ---
 
 ## Responsibility
@@ -92,9 +92,17 @@ truth) and visible-panel polling (laggy, wasteful over Tailscale).
   watchers** whose workspace record no longer exists (a resurrected path-based stream would keep
   publishing for a forgotten id), and **retries a failed start on the next read** (no sticky failure
   marker). A watcher that errors mid-flight (ENOSPC, root deleted) is warn-logged and dropped —
-  panels fall back to read-on-demand until a later read re-creates it. No idle-stop in V1 (bounded by
+  panels fall back to read-on-demand until a later read re-creates it. No idle-stop (bounded by
   workspaces actually visited plus the capped prewarm tier).
+- **Watch-started nudge (third seam):** the moment a watcher entry is created (real or prewarm), before any
+  event can reach the repo-metadata nudge, `setWatchStartedPublisher(workspaceId)` fires once — the host
+  uses it to take the worktree's HEAD baseline, so the first git-metadata event of a watcher is judged
+  against a known sha instead of being spent on seeding. A re-created watcher (inode change, prewarm
+  re-admission) fires it again; the consumer compares with its retained baseline, so a HEAD move made
+  while unwatched still records activity, while an unchanged HEAD is a no-op. It runs inside the registration's guarded
+  region, and a throw there — from it or from anything after `entries.set` — tears the fresh entry down
+  (`stopWatch`) rather than leaving a registered watcher whose readiness never settles.
 - **Public surface (barrel):** `ensureWatch`, `stopWatch`, `stopAllWatches`, `setWatchPublisher`,
-  `setRepoMetaPublisher`, `setSkillPathClassifier`.
+  `setRepoMetaPublisher`, `setWatchStartedPublisher`, `setSkillPathClassifier`.
 - **Allowed deps:** `persistence` (workspace lookup), `log`; `contracts` (payload type); Bun/Node.
 - **Forbidden:** `host`; sibling features; any pi package.

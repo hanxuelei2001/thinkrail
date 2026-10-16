@@ -11,6 +11,7 @@ import {
 	visibleTerminal,
 	visibleTerminalScreen,
 	waitTerminalReady,
+	worktreeRow,
 	worktreeRows,
 } from "./fixtures/app";
 
@@ -158,7 +159,6 @@ test("xterm uses the shared quiet rail and directional curtains", async ({ page 
 	const terminalInput = terminal.locator(".xterm-helper-textarea");
 	const terminalTab = page.getByTestId("terminal-tab").getByRole("tab");
 	const cues = frame.getByTestId("quiet-scroll-cues");
-	await expect(viewport).toHaveClass(/quiet-scroll-viewport/);
 
 	await runInTerminal(page, "for i in $(seq 1 80); do echo TR_SCROLL_$i; done");
 	await expect(visibleTerminalScreen(page)).toContainText("TR_SCROLL_80");
@@ -265,7 +265,7 @@ test("terminals are workspace-scoped and survive workspace switches", async ({ p
 	await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
 	await expect(visibleTerminalScreen(page)).not.toContainText("TR_WS1_BUFFER");
 
-	await worktreeRows(page).nth(0).getByRole("button").first().click();
+	await worktreeRow(page, "workspace-1").getByRole("button").first().click();
 	await expect(page.getByTestId("terminal-tab")).toHaveCount(1);
 	await expect(visibleTerminalScreen(page)).toContainText("TR_WS1_BUFFER");
 });
@@ -327,7 +327,7 @@ test("a shell survives a trip to Project Home and back", async ({ page }) => {
 	await page.getByTestId("project-item").first().click();
 	await expect(page.getByTestId("terminal-panel")).toHaveCount(0);
 
-	await worktreeRows(page).nth(0).getByRole("button").first().click();
+	await worktreeRow(page, "workspace-1").getByRole("button").first().click();
 	await waitTerminalReady(page);
 	await expect(visibleTerminalScreen(page)).toContainText("CHECK=alive");
 
@@ -412,7 +412,7 @@ test("rapid re-entry never spawns a second shell", async ({ page }) => {
 	for (let round = 0; round < 2; round++) {
 		await page.getByTestId("project-item").first().click();
 		await expect(page.getByTestId("terminal-panel")).toHaveCount(0);
-		await worktreeRows(page).nth(0).getByRole("button").first().click();
+		await worktreeRow(page, "workspace-1").getByRole("button").first().click();
 		await expect(visibleTerminal(page)).toHaveCount(1);
 	}
 	delayAttachMs = 0;
@@ -446,7 +446,7 @@ test("a terminal's output never reaches another client", async ({ page, context 
 	await createWorkspaceViaDialog(page);
 	await createWorkspaceViaDialog(page);
 	await waitTerminalReady(page);
-	await worktreeRows(page).nth(0).click();
+	await worktreeRow(page, "workspace-1").click();
 	await waitTerminalReady(page);
 
 	const page2 = await context.newPage();
@@ -459,7 +459,7 @@ test("a terminal's output never reaches another client", async ({ page, context 
 	await page2.goto("/");
 	await expect(page2.getByTestId("connection-status")).toHaveAttribute("data-status", "connected");
 	await revealFirstProjectWorkspaces(page2);
-	await worktreeRows(page2).nth(1).click();
+	await worktreeRow(page2, "workspace-2").click();
 	await waitTerminalReady(page2);
 
 	await runInTerminal(page, "echo TR_SECRET_FROM_A");
@@ -520,7 +520,7 @@ test("a shell that dies while detached is not re-attached as if alive", async ({
 	await expect(page.getByTestId("terminal-panel")).toHaveCount(0);
 	await page.waitForTimeout(3500);
 
-	await worktreeRows(page).nth(0).getByRole("button").first().click();
+	await worktreeRow(page, "workspace-1").getByRole("button").first().click();
 	const term = visibleTerminal(page);
 	await expect(term).toBeVisible();
 

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
 	chmodSync,
 	existsSync,
@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
 import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
+import { JBCENTRAL_STATUS_TTL_MS } from "@thinkrail/shared/jbcentral";
 import {
 	configurePiRuntime,
 	configurePiRuntimeFactory,
@@ -48,6 +49,11 @@ const model = {
   maxTokens: 4096,
 };
 export default function syntheticCentralExtension(pi) {
+  pi.registerProvider("anthropic", {
+    baseUrl: "https://synthetic-central.invalid/anthropic",
+    apiKey: "synthetic-proxy-key",
+    name: "synthetic-sensitive-provider-name",
+  });
   pi.registerProvider("central-test", {
     api: "openai-completions",
     baseUrl: "https://synthetic-central.invalid",
@@ -244,9 +250,24 @@ describe("watched native Central runtime", () => {
 		expect(existsSync(artifactPath)).toBe(true);
 		expect((await getJbcentralStatus()).state).toBe("configured");
 		expect((await listAvailableModels()).map((model) => model.id)).toContain("central-model");
-		expect((await getProviderStatus()).providers.map((provider) => provider.id)).not.toContain(
-			"central-test",
+		const report = await getProviderStatus();
+		const anthropic = report.providers.find((provider) => provider.id === "anthropic");
+		expect(anthropic).toBeDefined();
+		if (!anthropic) throw new Error("synthetic Central anthropic provider missing");
+		expect(anthropic).toMatchObject({ id: "anthropic", configured: true, kind: "central" });
+		expect(anthropic.name).not.toBe("synthetic-sensitive-provider-name");
+		expect(anthropic.detail).toBeUndefined();
+		expect(anthropic.canLogout).toBeUndefined();
+		expect(JSON.stringify(report)).not.toContain("synthetic-central.invalid");
+		expect(JSON.stringify(report)).not.toContain("synthetic-proxy-key");
+		expect(JSON.stringify(report)).not.toContain("synthetic-sensitive-provider-name");
+		expect(report.providers.map((provider) => provider.id)).not.toContain("central-test");
+		expect(await disconnectJbcentral()).toEqual({ outcome: "applied" });
+		const disconnectedAnthropic = (await getProviderStatus()).providers.find(
+			(provider) => provider.id === "anthropic",
 		);
+		expect(disconnectedAnthropic).toBeDefined();
+		expect(disconnectedAnthropic?.kind).not.toBe("central");
 		expect(commandLog()).toContain("add pi");
 	});
 
@@ -304,25 +325,34 @@ describe("watched native Central runtime", () => {
 	});
 
 	test("signed-out and stopped-proxy states hide quota without invoking it", async () => {
-		expect(await connectJbcentral()).toEqual({ outcome: "applied" });
-		control("signed-out", true);
-		await waitFor(async () => {
-			const status = await getJbcentralStatus();
-			return status.state === "configured" && status.signedOut;
-		});
-		const beforeSignedOut = commandLog().filter((line) => line === "quota --json").length;
-		expect(await getJbcentralQuota({ maxAgeMs: 0, force: true })).toEqual({ state: "hidden" });
-		expect(commandLog().filter((line) => line === "quota --json")).toHaveLength(beforeSignedOut);
+		const realNow = Date.now;
+		let skew = 0;
+		const clock = spyOn(Date, "now").mockImplementation(() => realNow() + skew);
+		try {
+			expect(await connectJbcentral()).toEqual({ outcome: "applied" });
+			control("signed-out", true);
+			skew += JBCENTRAL_STATUS_TTL_MS;
+			await waitFor(async () => {
+				const status = await getJbcentralStatus();
+				return status.state === "configured" && status.signedOut;
+			});
+			const beforeSignedOut = commandLog().filter((line) => line === "quota --json").length;
+			expect(await getJbcentralQuota({ maxAgeMs: 0, force: true })).toEqual({ state: "hidden" });
+			expect(commandLog().filter((line) => line === "quota --json")).toHaveLength(beforeSignedOut);
 
-		control("signed-out", false);
-		control("proxy-stopped", true);
-		await waitFor(async () => {
-			const status = await getJbcentralStatus();
-			return status.state === "configured" && status.proxyStopped;
-		});
-		const beforeStopped = commandLog().filter((line) => line === "quota --json").length;
-		expect(await getJbcentralQuota({ maxAgeMs: 0, force: true })).toEqual({ state: "hidden" });
-		expect(commandLog().filter((line) => line === "quota --json")).toHaveLength(beforeStopped);
+			control("signed-out", false);
+			control("proxy-stopped", true);
+			skew += JBCENTRAL_STATUS_TTL_MS;
+			await waitFor(async () => {
+				const status = await getJbcentralStatus();
+				return status.state === "configured" && status.proxyStopped;
+			});
+			const beforeStopped = commandLog().filter((line) => line === "quota --json").length;
+			expect(await getJbcentralQuota({ maxAgeMs: 0, force: true })).toEqual({ state: "hidden" });
+			expect(commandLog().filter((line) => line === "quota --json")).toHaveLength(beforeStopped);
+		} finally {
+			clock.mockRestore();
+		}
 	});
 
 	test("disconnect invalidates quota freshness before a later reconnect", async () => {
@@ -434,6 +464,7 @@ describe("watched native Central runtime", () => {
 		mkdirSync(join(home, ".pi", "agent", "extensions"), { recursive: true });
 		writeFileSync(artifactPath, syntheticExtension("stale"));
 		await firstStarted;
+		expect((await getJbcentralStatus()).state).toBe("configuring");
 		writeFileSync(artifactPath, syntheticExtension("newest"));
 		releaseFirst?.();
 		await waitFor(() => usePiRuntime((runtime) => runtime === newest));

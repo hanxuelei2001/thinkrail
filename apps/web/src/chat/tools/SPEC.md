@@ -5,15 +5,16 @@ status: active
 title: tools — built-in tool renderers
 parent: submodule-web-chat
 depends-on: [module-contracts]
-tags: [v1, chat]
+tags: [chat]
 ---
 
 ## Responsibility
 
-The **presentation half of every bundled tool**, joined to its server-side capability by tool name (the
-extension model lives in the parent spec). `register.ts` wires everything via `registerToolRenderer` —
-renderer + collapsed-header summary + chrome/prominence — as a side-effect import of `ChatView`, so
-registration runs once when the chat module mounts. Unregistered tools fall back to
+The **app-local presentation halves of bundled tools**, joined to server-side capabilities by tool name
+(the extension model lives in the parent spec). `register.ts` wires these renderers via
+`registerToolRenderer` (and, for `mcp__*` alone, `registerToolRendererPrefix`) — renderer +
+collapsed-header summary + chrome/prominence — as a side-effect import of `ChatView`. Extracted extension
+renderers are registered by the host's `extensions/registry.ts`. Unregistered tools fall back to
 `DefaultToolRenderer` and are treated as **routine** (they fold into activity groups).
 
 ## What's here
@@ -29,6 +30,14 @@ registration runs once when the chat module mounts. Unregistered tools fall back
   (capability: the server's `agent` module + `reviews` seam; see [[submodule-server-reviews]]): a ✓ +
   the resolved comment id/note. **Routine** — the review sidebar is where resolution state lives; the
   card is just the in-transcript trace.
+- **`RequestReviewCard`** — the verdict card for the host-owned `request_review` tool (capability: the
+  server's `agent`/`host` request-review seam, which spawns a read-only review subagent). Reads the
+  structured `PlanReviewResult` from the tool result's `details` (defensively, via
+  `isPlanReviewResult`), shows an approve/request-changes indicator + the reviewer's one-paragraph
+  summary, and renders findings as the shared fold-out `ReviewPackageComments` (comment→item mapping
+  and the row primitive both live in `reviewPackage.ts` + `ReviewPackageComments.tsx`, reused by the
+  `reviewFix`/review-package renderers). Registered `primary` + `defaultExpanded`; `data-verdict` +
+  `data-testid="request-review-card"` are the test hooks.
 - **`AskUserQuestionCard`** — the inline questionnaire for the host-owned `ask_user_question` tool
   (capability + rationale: the server's `agent/askUserQuestion` SPEC). Registered `"bare"`: it owns its
   full-width frame, never folds, and answers through the `ChatActions` context (correlated by
@@ -182,16 +191,8 @@ registration runs once when the chat module mounts. Unregistered tools fall back
     color). Shown up front for every recommended option, not gated on selection: more discoverable than
     a tooltip and, being ordinary visible text, it reads on touch and for AT without a popover.
     **Active card only** — the resolved record shows selections only, no rationale.
-- **`visualize/`** — `VisualizationCard` dispatches on `args.type` to `DiagramCard` (mermaid → themed
-  SVG via the **lazy-loaded** `mermaid`, source fallback on parse error) and `ComparisonCard` (option
-  cards with pros/cons + `recommended` highlight); shared `MermaidView` re-renders on `[data-theme]`
-  change, offers a full-screen pan/zoom Dialog, and takes an optional `fallback` node shown while the
-  SVG is pending (default: a "Rendering…" line). It is also consumed by the **parent `Markdown`
-  primitive** for fenced ```mermaid blocks — the `mermaid` *package* import stays lazy and confined to
-  `visualize/mermaid.ts`. Registered **primary + `defaultExpanded`** — a
-  visualization is output *for the user*, not plumbing: it escapes the activity fold and renders open on
-  completion (while its args stream it stays a slim running row). Capability: the bundled
-  `pi-visualize` extension.
+- **Visualize** is owned by [[module-ext-visualize]], outside this module. Its primary/default-expanded
+  registration and named `MermaidView` reach chat through the public web entrypoint.
 - **Spec-graph tools** — one defensive `SpecToolCard` registered for all seven `spec_*` names. Each keeps
   the capability's readable text, folds long output, replaces redundant args JSON with a meaningful
   activity summary, and turns only exact standalone worktree-path tokens obtained from known successful
@@ -199,6 +200,9 @@ registration runs once when the chat module mounts. Unregistered tools fall back
   path. `spec_delete` never links its successful deleted path. Routine.
 - **`web/`** — search/fetch/stored-content renderers for `pi-web-access`; own child spec
   ([web/SPEC.md](web/SPEC.md)). Routine.
+- **`mcp/`** — pi's built-in MCP tools: the `mcp__*` card (server / tool, key/value args, ordered text,
+  collapsed JSON tree of the host's structured-content summary, Full output, sign-in action), the
+  resource listing/read cards and `tool_search`; own child spec ([mcp/SPEC.md](mcp/SPEC.md)). Routine.
 - **The five `todo_*` tools** deliberately keep routine fallback receipts: their connected product surface
   is the chat plan, not a second renderer system in this module.
 - **`subagent/`** — delegation renderers for `pi-subagents`: `AgentCard` (the `Agent` tool — **primary**;
@@ -207,19 +211,18 @@ registration runs once when the chat module mounts. Unregistered tools fall back
 - **Shared pieces** — `CodeBlock` (shiki), `Collapsible` ("Show all N lines" fold for long output;
   callers supply a stable tool-call-derived id so state and geometry anchoring survive virtualization),
   `ToolFileLink` + exact-reference linked text backed by the parent chat module's shared
-  `workspaceFileTarget`, pure `toolHelpers` (arg readers, `resultText`, `languageFromPath`) + `lib`'s
-  `projectRelativePath`. `resultText` delegates canonical result parsing to
-  the parent chat primitive, so text extraction and the common image layer cannot disagree about what
-  constitutes a valid content block.
+  `workspaceFileTarget` + `lib`'s `projectRelativePath`. Pure `toolHelpers` (arg readers, `resultText`,
+  `languageFromPath`) and canonical `toolResultContent` parsing live in `@thinkrail/extension-api/web`,
+  so extension text extraction and chat's common image layer cannot disagree about valid content.
 
 ## Boundary
 
-- **Public surface:** the side-effect `register` import + the shared `CodeBlock`/`Collapsible`/
-  `toolHelpers` for sibling renderers + `visualize/MermaidView` for the parent `Markdown` primitive. No barrel (chat pulls shiki — per-file imports, as in the parent).
+- **Public surface:** the side-effect `register` import + shared `CodeBlock`/`Collapsible` for sibling
+  renderers. No barrel (chat pulls shiki — per-file imports, as in the parent).
 - **Allowed deps:** parent chat primitives (`toolRegistry`, `Markdown`, `ChatActions`, `askState`,
   `fileTargets`, `foldState`);
-  `contracts` (type-only + the `ASK_USER_ANSWERS_CUSTOM_TYPE` constant); `components/ui`; `lib`;
-  `@remixicon/react`; `mermaid` (**lazy, `visualize/` only**).
+  `contracts` (type-only + the `ASK_USER_ANSWERS_CUSTOM_TYPE` constant); `@thinkrail/ui/*`;
+  `@thinkrail/extension-api/web`; `lib`; `@remixicon/react`.
 - **Forbidden:** value-importing any `pi` package; `store`/`transport` (renderers stay presentational —
   extraction-ready into a future `packages/chat-ui`).
 
@@ -229,5 +232,9 @@ registration runs once when the chat module mounts. Unregistered tools fall back
   fall back to its text content (`resultText`). Missing structured references remove links, never prose.
 - File actions come only from explicit args/details and only through `ToolRenderProps.onOpenFile`; never
   infer them from arbitrary result text or import app integration into a renderer.
-- Tool names must match the capability exactly — the name is the join key.
+- Tool names must match the capability exactly — the name is the join key. The one sanctioned exception
+  is the `mcp__` prefix: pi names MCP tools `mcp__<server>__<tool>`, so the registry resolves an exact
+  name first and the longest registered prefix second, through **one** resolver shared by renderer,
+  summary, chrome and prominence. Prefix renderers never load code from a server; they render pi's result
+  ([mcp/SPEC.md](mcp/SPEC.md)). The three resource tools and `tool_search` register exactly.
 - Token-utility styling only (no raw hex / inline `style`).

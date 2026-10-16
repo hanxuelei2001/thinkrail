@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import type { Project, ProjectPathStatus } from "@thinkrail/contracts";
+import type { McpProjectOverride, Project, ProjectPathStatus } from "@thinkrail/contracts";
+import { CodedError } from "@thinkrail/shared/codedError";
 import { canonicalPath, git } from "../git";
 import { loadProjects, loadWorkspaces, saveProjects } from "../persistence";
 
@@ -62,6 +63,14 @@ function ensureSlugs(projects: Project[]): boolean {
 	return changed;
 }
 
+/** Whether pi itself already trusts a path; seeds a newly added project's pi-level trust. */
+export type PiTrustSeed = (path: string) => boolean;
+let piTrustSeed: PiTrustSeed | null = null;
+
+export function setPiTrustSeed(seed: PiTrustSeed | null): void {
+	piTrustSeed = seed;
+}
+
 export function getProjects(): Project[] {
 	const projects = loadProjects();
 	if (ensureSlugs(projects)) saveProjects(projects);
@@ -71,7 +80,7 @@ export function getProjects(): Project[] {
 export function openProject(inputPath: string): Project {
 	const path = resolveProjectPath(inputPath);
 	const root = gitToplevel(path);
-	if (!root) throw new Error(`Not a git repository: ${path}`);
+	if (!root) throw new CodedError("NOT_GIT", `Not a git repository: ${path}`);
 
 	const projects = getProjects();
 	const existing = projects.find((p) => p.path === root);
@@ -85,7 +94,10 @@ export function openProject(inputPath: string): Project {
 
 	const wanted = canonicalPath(root);
 	if (loadWorkspaces().some((ws) => canonicalPath(ws.worktreePath) === wanted))
-		throw new Error(`This folder is already open in ThinkRail as a workspace: ${root}`);
+		throw new CodedError(
+			"ALREADY_OPEN",
+			`This folder is already open in ThinkRail as a workspace: ${root}`,
+		);
 
 	const taken = new Set(projects.map((p) => p.slug));
 	const project: Project = {
@@ -94,6 +106,7 @@ export function openProject(inputPath: string): Project {
 		path: root,
 		slug: uniqueSlug(slugify(basename(root)), taken),
 		lastOpened: Date.now(),
+		piResourceTrust: piTrustSeed?.(root) ? "granted" : "untrusted",
 	};
 	projects.push(project);
 	saveProjects(projects);
@@ -127,12 +140,72 @@ export function setProjectTrust(
 	id: string,
 	trusted: boolean,
 	acknowledgedSkills?: string[],
+	options: { resources?: boolean } = {},
 ): Project {
 	const projects = getProjects();
 	const project = projects.find((p) => p.id === id);
 	if (!project) throw new Error(`Unknown project: ${id}`);
 	project.trusted = trusted;
+	if (!trusted) project.piResourceTrust = "untrusted";
+	else if (options.resources === true) project.piResourceTrust = "granted";
 	if (acknowledgedSkills !== undefined) project.acknowledgedSkills = acknowledgedSkills;
+	saveProjects(projects);
+	emit(project);
+	return project;
+}
+
+export function approveProjectMcpServer(id: string, name: string, fingerprint: string): Project {
+	const projects = getProjects();
+	const project = projects.find((p) => p.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	project.mcpApprovals = { ...project.mcpApprovals, [name]: fingerprint };
+	saveProjects(projects);
+	return project;
+}
+
+export function setProjectMcpOverride(
+	id: string,
+	name: string,
+	patch: McpProjectOverride | null,
+): Project {
+	if (patch !== null) {
+		if (patch.enabled !== undefined && typeof patch.enabled !== "boolean") {
+			throw new CodedError("MCP_CONFIG_INVALID", "MCP server enabled must be a boolean");
+		}
+		if (
+			patch.exposure !== undefined &&
+			patch.exposure !== "deferred" &&
+			patch.exposure !== "direct" &&
+			patch.exposure !== "hidden"
+		) {
+			throw new CodedError(
+				"MCP_CONFIG_INVALID",
+				"MCP server exposure must be deferred, direct or hidden",
+			);
+		}
+	}
+	const projects = getProjects();
+	const project = projects.find((p) => p.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	const overrides: Record<string, McpProjectOverride> = { ...project.mcpOverrides };
+	if (patch === null) {
+		delete overrides[name];
+	} else {
+		if (patch.enabled === undefined && patch.exposure === undefined) return project;
+		const override = {
+			...(Object.hasOwn(overrides, name) ? overrides[name] : {}),
+			...(patch.enabled !== undefined ? { enabled: patch.enabled } : {}),
+			...(patch.exposure !== undefined ? { exposure: patch.exposure } : {}),
+		};
+		Object.defineProperty(overrides, name, {
+			value: override,
+			enumerable: true,
+			configurable: true,
+			writable: true,
+		});
+	}
+	if (Object.keys(overrides).length === 0) delete project.mcpOverrides;
+	else project.mcpOverrides = overrides;
 	saveProjects(projects);
 	return project;
 }

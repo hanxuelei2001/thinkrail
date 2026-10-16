@@ -6,7 +6,7 @@ title: Shared server-side utilities
 parent: architecture
 depends-on: [module-contracts]
 references: [central-integration]
-tags: [v1, host]
+tags: [host]
 ---
 
 ## Responsibility
@@ -17,8 +17,8 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
 ## Boundary
 
 - **Owns:** host-side runtime helpers that are neither engine- nor transport-specific.
-- **Public surface:** `@thinkrail/shared/shellEnv` → `resolveShellEnv()`, `pathLooksComplete()`,
-  `localeRepair()`;
+- **Public surface:** `@thinkrail/shared/shellEnv` → `resolveShellEnv()`, `mergePath()`,
+  `loginShellImports()`, `parseLoginShellEnv()`, `LOGIN_ENV_MARKER`, `localeRepair()`;
   `@thinkrail/shared/freePort` → `findFreePort()`, `isPortFree()`;
   `@thinkrail/shared/startupMark` → the static recursive wordmark plus the pure responsive/ANSI renderer
   and interactive-output gate used by every launcher;
@@ -29,13 +29,16 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
   `@thinkrail/shared/codedError` → `CodedError` + `errorCodeOf()`;
   `@thinkrail/shared/removeTree` → `removeTree()`, the retrying recursive remove every teardown of a tree
   a child process ran from goes through;
-  `@thinkrail/shared/spawn` → `spawnSyncCaptured()` + `spawnDetached()`, the hidden-child-process seam every
-  console child the host or CLI launches goes through;
+  `@thinkrail/shared/spawn` → `spawnSyncCaptured()` + `spawnSyncCapturedBytes()` + `spawnDetached()`, the
+  hidden-child-process seam every console child the host or CLI launches goes through;
   `@thinkrail/shared/jbcentral` → the native Central CLI adapter: absolute executable/version/status
   probing; the minimum supported version and the global opaque PI-extension path; a one-directional auth
   verdict; an artifact-location watcher; `add pi` / `remove pi` / `login` / `update --install` actions; and
   the per-OS official install plan. It never edits PI model or credential configuration.
-- **/spawn** — `spawnSyncCaptured()` (sync capture → `{ launched, exitCode, stdout, stderr }`) and
+- **/spawn** — `spawnSyncCaptured()` (sync capture → `{ launched, exitCode, stdout, stderr }`),
+  `spawnSyncCapturedBytes()` (the same launch and exit semantics with **`stdout` left as bytes**, for a
+  caller reading binary child output the UTF-8 decoder would replace — stderr stays decoded text, since a
+  diagnostic is only ever read as text) and
   `spawnDetached()` (fire-and-forget `unref`) over `Bun.spawnSync` / `Bun.spawn`, always
   `windowsHide: true`. Bun 1.4.0 maps that option to libuv `UV_PROCESS_WINDOWS_HIDE`; the seam prevents
   background console spawns from omitting it. The two bespoke bounded runners (`server/subprocess`
@@ -48,10 +51,20 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
 ## Contents
 
 - **/shellEnv** — `resolveShellEnv()`: make the host's environment safe for the shells it spawns, because a
-  GUI-launched host (Finder/Dock, launchd, a systemd unit, a container) inherits a stripped-down one. Three
-  independent repairs, each applied only when needed:
-  - **`PATH`** — ensure it is the user's full login PATH so the in-process agent's bash/tools find
-    `git`/`node`/etc. Skipped when `pathLooksComplete()`.
+  GUI-launched host (Finder/Dock, launchd, a systemd unit, a container) inherits a stripped-down one. Four
+  independent repairs:
+  - **`PATH`** — always adopt the user's login PATH so the in-process agent's bash/tools and the git hooks
+    they trigger find `git`/`node`/`bun`/etc., keeping whatever the launching terminal had added on top.
+  - **login-shell environment** — import the rest of the user's login-shell environment once at startup,
+    VS Code-style, because a GUI-launched host otherwise sees none of the variables that provider API keys
+    and `models.json` / `mcp.json` `${VAR}` references (often copied from vendor docs) rely on. Skipped
+    when `TERM` is set (a host launched from a terminal already carries the shell's environment). Variables
+    already set for the process win; `PATH` keeps its own repair above; `PWD`/`OLDPWD`/`SHLVL`/`_` and
+    `PI_*` / `THINKRAIL_*` are never imported. One marker-delimited `env -0` probe of the login shell
+    (`-l -i`, then `-l`) serves both this import and the PATH repair; rc-file chatter before the marker
+    (`LOGIN_ENV_MARKER`) is ignored. Trade-off recorded: the host, every process it spawns (stdio MCP
+    servers included) and every `!command` resolution then see the secrets the shell exports — the user's
+    own, as in a terminal, not isolation.
   - **locale** — set `LANG` to a UTF-8 locale when *no* locale is configured at all (`LC_ALL`, `LC_CTYPE`
     and `LANG` all unset). Without one, bash/readline is **byte**-oriented rather than character-oriented,
     so one backspace over a multi-byte character (Cyrillic, umlauts, CJK) deletes half of it and desyncs the
@@ -80,7 +93,8 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
 - **/version** — the one permanent release-stamping seam. Source runs report `0.0.0-dev`; release CI
   overwrites this module in its throwaway checkout before building either artifact family so CLI
   `--version`, desktop package metadata, analytics, and `server.welcome.appVersion` cannot drift. It
-  contains identity data only and has no launcher dependency.
+  contains identity data plus the release-only public `posthogProjectKey` (empty in source, so
+  unstamped builds never report) and has no launcher dependency.
 - **/codedError** — `CodedError(code, message)` + `errorCodeOf(err)`: an error carrying a wire
   `WsErrorCode`, so a failure a client must react to *specifically* travels as a name rather than a string
   to pattern-match. It lives here because both ends of the seam need it and neither may import the other:
@@ -199,11 +213,17 @@ bundled into `apps/web`. Exposed through explicit subpath exports, not a barrel.
 ## Get right (shellEnv)
 
 - Runs **once at startup, before creating any `AgentSession`**.
-- No-op on win32, or when PATH already contains a user dir (`/.nvm/`, `/homebrew/`, `/usr/local/bin`,
-  `/.bun/`) — `pathLooksComplete()`.
-- Else spawn a login shell `[$SHELL||/bin/zsh, -l, -i, -c, env -0]` (retry without `-i` on non-zero exit),
-  5s timeout, parse the `\0`-separated entries, overwrite `process.env.PATH`. Never throws — on any
-  failure it leaves PATH untouched.
+- No-op on win32 (GUI processes already inherit the registry PATH). Elsewhere it **always** probes: spawn
+  a login shell `[$SHELL||/bin/zsh, -l, -i, -c, <print LOGIN_ENV_MARKER>; env -0]` (retry without `-i` on
+  non-zero exit) with PATH reset to the OS base dirs (so rc files compute their canonical PATH instead of
+  layering onto whatever the launcher passed), 5s timeout, parse the `\0`-separated entries after the
+  marker, then `mergePath(current, login)` — the login PATH, preceded by the current entries it lacks (an
+  activated venv, `nix develop`, direnv) so a terminal launch keeps its explicit additions ahead. Never
+  throws — on any failure it leaves PATH untouched.
+- There is no "PATH already looks complete" short-circuit. One existed, keyed on user-dir markers, and
+  `/usr/local/bin` was among them; it heads macOS `/etc/paths` and every Linux default PATH, so the probe
+  never ran for Dock-launched hosts and every session lost Homebrew/bun (`command not found`, failing git
+  hooks, stuck subagents). The one-time ~100–300 ms probe per app start is cheaper than guessing.
 
 ## Get right (jbcentral)
 

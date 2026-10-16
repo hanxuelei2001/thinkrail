@@ -7,6 +7,7 @@ import {
 	type PiEvent,
 	type Project,
 	type SessionEventPayload,
+	type SessionStateRecord,
 	type SessionSummary,
 	type SpecGraphNode,
 	type WireModel,
@@ -16,7 +17,13 @@ import {
 } from "@thinkrail/contracts";
 import type { ChatTurn, FailureRecovery } from "../chat/types";
 import { userText } from "../lib";
-import type { WorkspaceLayoutDocument } from "../shell/layout";
+import {
+	BUILTIN_LAYOUT_PRESETS,
+	emptyWorkspaceView,
+	instantiateWorkbenchFrame,
+	projectWorkspaceLayout,
+	type WorkspaceLayoutDocument,
+} from "../shell/layout";
 import {
 	captureCenterNavigation,
 	chatTabId,
@@ -29,11 +36,12 @@ import {
 	useAppStore,
 } from "./appStore";
 import {
-	projectActivityRollup,
+	selectChatAttended,
 	selectCompactionTurnIds,
 	selectCurrentRouteChatTarget,
 	selectDiffScope,
 	selectLastOpenChatSession,
+	selectReadyCompletionAck,
 	selectSkillsStale,
 	selectWorkspaceNavTick,
 	selectWorkspaceSessionIds,
@@ -112,11 +120,15 @@ const emptyBottomRegion = (): WorkspaceLayoutDocument["bottom"] => ({
 	groups: [],
 });
 
-function hostNotice(availableVersion = "0.2.0"): HostUpdateNotice {
+function hostNotice(
+	availableVersion = "0.2.0",
+	status?: HostUpdateNotice["status"],
+): HostUpdateNotice {
 	return {
 		currentVersion: "0.1.0",
 		channel: "stable",
 		availableVersion,
+		...(status ? { status } : {}),
 	};
 }
 
@@ -130,13 +142,18 @@ beforeEach(() => {
 		routeChatTarget: null,
 		routeChatTargetGeneration: 0,
 		sessions: {},
+		sessionStateByWorkspace: {},
+		sessionStateClock: 0,
+		sessionStateSnapshotInstalled: false,
+		renderedCompletionBySession: {},
+		obscuredChatSessions: {},
 		extUiOrphans: [],
 		workbenchFrame: null,
 		workspaceViewsByWorkspace: {},
 		layoutStateReady: false,
 		layoutDocumentsByWorkspace: {},
 		layoutAttentionByWorkspace: {},
-		layoutProjectionEpochByWorkspace: {},
+		layoutProjectionEpoch: 0,
 		layoutIntents: [],
 		tabsByWorkspace: {},
 		terminalsByWorkspace: {},
@@ -146,7 +163,6 @@ beforeEach(() => {
 		navTickByWorkspace: {},
 		closedChatsByWorkspace: {},
 		deletedSessionsByWorkspace: {},
-		activityByWorkspace: {},
 		fsChangesByWorkspace: {},
 		skillChangeTickByWorkspace: {},
 		skillsSyncedTickBySession: {},
@@ -170,6 +186,27 @@ beforeEach(() => {
 		streamingResponseMovement: { settle: 75, trigger: 100 },
 		toasts: [],
 	});
+});
+
+test("layout projection epoch advances only when projection invalidation is requested", () => {
+	const preset = BUILTIN_LAYOUT_PRESETS.find((candidate) => candidate.id === "balanced");
+	if (!preset) throw new Error("missing Balanced preset");
+	const frame = instantiateWorkbenchFrame(preset);
+	const view = emptyWorkspaceView();
+	const payload = {
+		frame,
+		viewsByWorkspace: { workspace: view },
+		documentsByWorkspace: { workspace: projectWorkspaceLayout(frame, view) },
+		attentionByWorkspace: {},
+		preferences: useAppStore.getState().localLayoutPreferences,
+	};
+	const store = useAppStore.getState();
+	store.applyLocalLayoutState(payload);
+	expect(useAppStore.getState().layoutProjectionEpoch).toBe(0);
+	useAppStore.getState().applyLocalLayoutState(payload, true);
+	expect(useAppStore.getState().layoutProjectionEpoch).toBe(1);
+	useAppStore.getState().applyLocalLayoutState(payload);
+	expect(useAppStore.getState().layoutProjectionEpoch).toBe(1);
 });
 
 function rt(sessionId: string): SessionRuntime {
@@ -356,6 +393,23 @@ test("a host-fired USER message folds into the transcript; the composer's optimi
 	expect(rt("a").turns.filter((t) => t.kind === "user")).toHaveLength(2);
 });
 
+test("a matching user echo adopts the host clock while retaining optimistic identity and attachment labels", () => {
+	const store = useAppStore.getState();
+	store.openChatSession("ws1", "clock", null, "medium");
+	store.appendUserMessage("clock", "fix the tests", [
+		{ name: "screen.png", content: { type: "image", data: "test", mimeType: "image/png" } },
+	]);
+	const optimistic = rt("clock").turns[0];
+	const message = {
+		role: "user" as const,
+		content: [{ type: "text" as const, text: "fix the tests" }],
+		timestamp: 1_000,
+	};
+	store.handlePiEvent({ type: "message_start", message }, "clock");
+	expect(rt("clock").turns).toEqual([{ ...optimistic, message }]);
+	expect(rt("clock").turns[0]).toMatchObject({ attachmentNames: ["screen.png"] });
+});
+
 test("queue_update folds pi's queue into the runtime; the canonical echo lands the turn at its true position", () => {
 	const queueUpdate = (steering: string[], followUp: string[], hasImages = false) =>
 		({
@@ -386,6 +440,52 @@ test("queue_update folds pi's queue into the runtime; the canonical echo lands t
 	const turns = rt("a").turns;
 	expect(turns.map((t) => t.kind)).toEqual(["assistant", "user", "user"]);
 	expect(rt("a").queue).toEqual({ steering: [], followUp: [] });
+});
+
+test("normalized session snapshots and pushes gate acknowledgement on the exact rendered result", () => {
+	const record = (completionId: string): SessionStateRecord => ({
+		sessionId: "state-session",
+		workspaceId: "state-workspace",
+		projectId: "state-project",
+		state: {
+			execution: "idle",
+			runId: "run",
+			needsInput: null,
+			completion: { completionId, outcome: "succeeded" },
+			completionUnread: true,
+			queuedCount: 0,
+			backgroundWork: false,
+		},
+	});
+	const ready = () =>
+		selectReadyCompletionAck(useAppStore.getState(), "state-workspace", "state-session");
+	const store = useAppStore.getState();
+	store.setStatus("connected");
+	store.openChatSession("state-workspace", "state-session", null, "medium");
+	store.installSessionStateSnapshot([record("completion:one")]);
+	expect(useAppStore.getState().sessions["state-session"]?.hostState).toEqual(
+		record("completion:one").state,
+	);
+	expect(ready()).toBeNull();
+	store.noteRenderedCompletion("state-session", "completion:one");
+	expect(ready()).toBe("completion:one");
+
+	store.applySessionState(record("completion:two"));
+	expect(ready()).toBeNull();
+	store.noteRenderedCompletion("state-session", "completion:one");
+	expect(ready()).toBeNull();
+	store.noteRenderedCompletion("state-session", "completion:two");
+	expect(ready()).toBe("completion:two");
+
+	store.setStatus("disconnected");
+	store.setStatus("connected");
+	expect(ready()).toBeNull();
+
+	store.deleteChat("state-workspace", "state-session");
+	expect(
+		useAppStore.getState().sessionStateByWorkspace["state-workspace"]?.["state-session"],
+	).toBeUndefined();
+	expect(ready()).toBeNull();
 });
 
 test("hydrateSession seeds the queue from the summary snapshot", () => {
@@ -609,6 +709,55 @@ test("a subagent-completion custom message_end appends a subagentCompletion turn
 	const ignored = rt("a");
 	expect(ignored.turns).toBe(before.turns);
 	expect(ignored.eventRevision).toBe(before.eventRevision + 1);
+});
+
+test("a todo-review-fix custom message_end appends a reviewFix turn", () => {
+	const store = useAppStore.getState();
+	store.openChatSession("ws1", "a", null, "medium");
+
+	const details = {
+		itemId: "t_1",
+		itemTitle: "Wire the login redirect",
+		reviewId: "rev_1",
+		note: "Two findings below.",
+		comments: [{ id: "c_1", kind: "inline", body: "off-by-one", path: "src/a.ts", startLine: 4 }],
+	};
+	store.handlePiEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "custom",
+				customType: "todo-review-fix",
+				content: "Address each review comment above.",
+				display: true,
+				details,
+			},
+		} as unknown as PiEvent,
+		"a",
+	);
+	const turn = rt("a").turns.at(-1);
+	expect(turn?.kind).toBe("reviewFix");
+	expect(turn?.kind === "reviewFix" && turn.details.itemId).toBe("t_1");
+	expect(turn?.kind === "reviewFix" && turn.details.comments[0]?.id).toBe("c_1");
+	expect(turn?.kind === "reviewFix" && turn.text).toContain("Address each review comment");
+
+	const reviewBefore = rt("a");
+	store.handlePiEvent(
+		{
+			type: "message_end",
+			message: {
+				role: "custom",
+				customType: "todo-review-fix",
+				content: "x",
+				display: true,
+				details: { itemId: "t_1" },
+			},
+		} as unknown as PiEvent,
+		"a",
+	);
+	const reviewIgnored = rt("a");
+	expect(reviewIgnored.turns).toBe(reviewBefore.turns);
+	expect(reviewIgnored.eventRevision).toBe(reviewBefore.eventRevision + 1);
 });
 
 test("the tool lifecycle folds into toolResults (the status + raw the renderers read)", () => {
@@ -1260,6 +1409,103 @@ test("a dialog for an unknown session is dropped, never replayed as a phantom", 
 	store.openChatSession("ws1", "dialog", null, "medium");
 	expect(rt("dialog").pendingExtUi).toBeNull();
 	expect(rt("dialog").extUiQueue).toEqual([]);
+});
+
+test("an exact host-authored pending dialog replays when its session hydrates", () => {
+	const store = useAppStore.getState();
+	const request = {
+		id: "d-authoritative",
+		sessionId: "dialog-authoritative",
+		kind: "confirm" as const,
+		title: "Proceed?",
+		message: "Apply?",
+	};
+	store.installSessionStateSnapshot([
+		{
+			sessionId: request.sessionId,
+			workspaceId: "ws1",
+			projectId: "p1",
+			state: {
+				execution: "running",
+				runId: "run-dialog",
+				needsInput: {
+					interactionId: `dialog:${request.id}`,
+					kind: "dialog",
+					request,
+				},
+				completion: null,
+				completionUnread: false,
+				queuedCount: 0,
+			},
+		},
+	]);
+	store.applyExtUi(request);
+	expect(useAppStore.getState().extUiOrphans).toEqual([request]);
+
+	store.openChatSession("ws1", request.sessionId, null, "medium");
+	expect(rt(request.sessionId).pendingExtUi).toEqual(request);
+	expect(useAppStore.getState().extUiOrphans).toEqual([]);
+	store.applySessionState({
+		sessionId: request.sessionId,
+		workspaceId: "ws1",
+		projectId: "p1",
+		state: {
+			execution: "running",
+			runId: "run-dialog",
+			needsInput: null,
+			completion: null,
+			completionUnread: false,
+			queuedCount: 0,
+		},
+	});
+	expect(rt(request.sessionId).pendingExtUi).toBeNull();
+});
+
+test("a peer-cleared host dialog cannot replay from the orphan buffer", () => {
+	const store = useAppStore.getState();
+	const request = {
+		id: "d-peer-cleared",
+		sessionId: "dialog-peer-cleared",
+		kind: "confirm" as const,
+		title: "Proceed?",
+		message: "Apply?",
+	};
+	const base = {
+		sessionId: request.sessionId,
+		workspaceId: "ws1",
+		projectId: "p1",
+	};
+	store.applySessionState({
+		...base,
+		state: {
+			execution: "running",
+			runId: "run-dialog",
+			needsInput: {
+				interactionId: `dialog:${request.id}`,
+				kind: "dialog",
+				request,
+			},
+			completion: null,
+			completionUnread: false,
+			queuedCount: 0,
+		},
+	});
+	store.applyExtUi(request);
+	expect(useAppStore.getState().extUiOrphans).toEqual([request]);
+	store.applySessionState({
+		...base,
+		state: {
+			execution: "running",
+			runId: "run-dialog",
+			needsInput: null,
+			completion: null,
+			completionUnread: false,
+			queuedCount: 0,
+		},
+	});
+	expect(useAppStore.getState().extUiOrphans).toEqual([]);
+	store.openChatSession("ws1", request.sessionId, null, "medium");
+	expect(rt(request.sessionId).pendingExtUi).toBeNull();
 });
 
 test("a frame for a chat closed to history still applies, and orphans stay bounded", () => {
@@ -2220,6 +2466,21 @@ function pushedWorkspace(over: Partial<Workspace> = {}): Workspace {
 	};
 }
 
+function selectedChatLayout(sessionId: string): WorkspaceLayoutDocument {
+	return {
+		version: 2,
+		center: {
+			kind: "group",
+			id: "center",
+			tabs: [{ kind: "chat", id: `chat:${sessionId}`, name: "Chat", sessionId }],
+		},
+		left: { visible: false, width: 0.2, groups: [] },
+		right: { visible: false, width: 0.2, groups: [] },
+		bottom: emptyBottomRegion(),
+		toolRestoreTargets: {},
+	};
+}
+
 test("project and workspace navigation update both scope ids atomically", () => {
 	useAppStore.setState({ selectedProjectId: "p1", activeWorkspaceId: "w1" });
 	const transitions: [string | null, string | null][] = [];
@@ -2234,6 +2495,31 @@ test("project and workspace navigation update both scope ids atomically", () => 
 	useAppStore.getState().activateWorkspace(pushedWorkspace({ id: "w3", projectId: "p3" }));
 	expect(transitions).toEqual([["p3", "w3"]]);
 	unsubscribe();
+});
+
+test("the selected chat of an entered workspace is attended once layout attention converges", () => {
+	const workspace = pushedWorkspace();
+	const sessionId = "workspace-entry-chat";
+	useAppStore.setState({
+		layoutDocumentsByWorkspace: { [workspace.id]: selectedChatLayout(sessionId) },
+	});
+	const attended = () => selectChatAttended(useAppStore.getState(), workspace.id, sessionId);
+
+	const store = useAppStore.getState();
+	store.activateWorkspace(workspace);
+	expect(attended()).toBe(false);
+	store.setLayoutAttention(workspace.id, {
+		selectedByGroup: { center: `chat:${sessionId}` },
+		lastFocusedCenterGroupId: "center",
+		lastFocusedSideGroupId: {},
+		navigationClockByGroup: { center: 0 },
+	});
+	expect(attended()).toBe(true);
+	store.setChatObscured(sessionId, true);
+	expect(attended()).toBe(false);
+	store.setChatObscured(sessionId, false);
+	store.selectMain();
+	expect(attended()).toBe(false);
 });
 
 test("workspace selection history tracks ordinary, route, and history-search activation", () => {
@@ -2310,10 +2596,16 @@ test("welcome replaces and clears the synchronized host update notice", () => {
 	expect(useAppStore.getState().hostUpdate).toBeNull();
 });
 
-test("host update pushes simply replace the previous notice", () => {
-	useAppStore.getState().applyHostUpdate(hostNotice());
-	useAppStore.getState().applyHostUpdate(hostNotice("0.3.0"));
-	expect(useAppStore.getState().hostUpdate).toEqual(hostNotice("0.3.0"));
+test("host update pushes replace the same slot with each optional lifecycle snapshot", () => {
+	useAppStore.getState().applyHostUpdate(hostNotice("0.2.0", "available"));
+	useAppStore.getState().applyHostUpdate(hostNotice("0.2.0", "running"));
+	expect(useAppStore.getState().hostUpdate).toEqual(hostNotice("0.2.0", "running"));
+
+	useAppStore.getState().applyHostUpdate(hostNotice("0.2.0", "failed"));
+	expect(useAppStore.getState().hostUpdate).toEqual(hostNotice("0.2.0", "failed"));
+
+	useAppStore.getState().applyHostUpdate(hostNotice("0.3.0", "available"));
+	expect(useAppStore.getState().hostUpdate).toEqual(hostNotice("0.3.0", "available"));
 
 	useAppStore.getState().applyHostUpdate(hostNotice());
 	expect(useAppStore.getState().hostUpdate).toEqual(hostNotice());
@@ -2490,12 +2782,39 @@ test("addWorkspace is a no-op for a project whose list was never fetched", () =>
 test("applyWorkspaceRemoved restores the most-recent workspace across projects", () => {
 	const removed = pushedWorkspace();
 	const previous = pushedWorkspace({ id: "w2", projectId: "p2", name: "previous" });
+	const previousSessionId = "passive-fallback-chat";
 	useAppStore.setState({
 		projects: [project(), project({ id: "p2" })],
 		workspaces: { p1: [removed], p2: [previous] },
 		selectedProjectId: "p1",
 		activeWorkspaceId: "w1",
 		workspaceSelectionHistory: ["w1", "w2"],
+		sessionStateByWorkspace: {
+			w2: {
+				[previousSessionId]: {
+					workspaceId: "w2",
+					projectId: "p2",
+					sessionId: previousSessionId,
+					state: {
+						execution: "idle",
+						runId: "run",
+						needsInput: null,
+						completion: { completionId: "completion:fallback", outcome: "succeeded" },
+						completionUnread: true,
+						queuedCount: 0,
+					},
+				},
+			},
+		},
+		layoutDocumentsByWorkspace: { w2: selectedChatLayout(previousSessionId) },
+		layoutAttentionByWorkspace: {
+			w2: {
+				selectedByGroup: { center: `chat:${previousSessionId}` },
+				lastFocusedCenterGroupId: "center",
+				lastFocusedSideGroupId: {},
+				navigationClockByGroup: { center: 0 },
+			},
+		},
 		toasts: [],
 	});
 
@@ -3102,7 +3421,7 @@ test("dismissToast for an unknown id is a no-op (same array ref, no churn)", () 
 	expect(useAppStore.getState().toasts).toBe(before);
 });
 
-test("pushToast coalesces an identical live toast (same variant/title/message) into the existing id", () => {
+test("pushToast coalesces an identical live actionless toast", () => {
 	const store = useAppStore.getState();
 	const id1 = store.pushToast({ variant: "error", message: "boom", title: "Failed" });
 	const twin = store.pushToast({ variant: "error", message: "boom", title: "Failed" });
@@ -3119,7 +3438,49 @@ test("pushToast coalesces an identical live toast (same variant/title/message) i
 	expect(useAppStore.getState().toasts).toHaveLength(3);
 });
 
-test("pushToast caps the queue, dropping the oldest", () => {
+test("actionable toasts retain their inverse and never coalesce", () => {
+	const store = useAppStore.getState();
+	let calls = 0;
+	const first = store.pushToast({
+		variant: "success",
+		message: "Reverted hunk",
+		durationMs: 8000,
+		action: { label: "Undo", onClick: () => calls++ },
+	});
+	const second = store.pushToast({
+		variant: "success",
+		message: "Reverted hunk",
+		durationMs: 8000,
+		action: { label: "Undo", onClick: () => calls++ },
+	});
+	expect(second).not.toBe(first);
+	expect(useAppStore.getState().toasts).toHaveLength(2);
+	useAppStore.getState().toasts[0]?.action?.onClick();
+	expect(calls).toBe(1);
+});
+
+test("six revert receipts keep all Undo actions and cap a seventh actionless toast", () => {
+	const store = useAppStore.getState();
+	for (let index = 0; index < 6; index++) {
+		store.pushToast({
+			variant: "success",
+			message: `Reverted hunk ${index}`,
+			durationMs: 8000,
+			action: { label: "Undo", onClick: () => {} },
+		});
+	}
+	expect(useAppStore.getState().toasts).toHaveLength(6);
+	expect(
+		useAppStore.getState().toasts.every((candidate) => candidate.action?.label === "Undo"),
+	).toBe(true);
+
+	store.pushToast({ variant: "info", message: "Actionless" });
+	const toasts = useAppStore.getState().toasts;
+	expect(toasts).toHaveLength(6);
+	expect(toasts.some((candidate) => candidate.message === "Actionless")).toBe(false);
+});
+
+test("pushToast caps actionless notifications, dropping the oldest", () => {
 	const store = useAppStore.getState();
 	const first = store.pushToast({ variant: "error", message: "toast 0" });
 	for (let i = 1; i <= 5; i++) store.pushToast({ variant: "error", message: `toast ${i}` });
@@ -3237,6 +3598,21 @@ test("applyConfig projects the host-wide subagent default", () => {
 	expect(useAppStore.getState()).toHaveProperty("subagentsEnabled", true);
 });
 
+test("applyConfig projects the per-chat subagent limit and rejects a malformed one", () => {
+	useAppStore.getState().applyConfig({ ...DEFAULT_CONFIG, subagentMaxConcurrent: 9 });
+	expect(useAppStore.getState()).toHaveProperty("subagentMaxConcurrent", 9);
+	useAppStore.getState().applyConfig({ ...DEFAULT_CONFIG, subagentMaxConcurrent: 99 });
+	expect(useAppStore.getState()).toHaveProperty("subagentMaxConcurrent", 4);
+});
+
+test("applyConfig projects disabled extensions and an older host's missing list as none", () => {
+	useAppStore.getState().applyConfig({ ...DEFAULT_CONFIG, disabledExtensions: ["visualize"] });
+	expect(useAppStore.getState().disabledExtensions).toEqual(["visualize"]);
+	const { disabledExtensions: _omitted, ...olderHost } = DEFAULT_CONFIG;
+	useAppStore.getState().applyConfig(olderHost as typeof DEFAULT_CONFIG);
+	expect(useAppStore.getState().disabledExtensions).toEqual([]);
+});
+
 test("applyConfig projects JetBrains quota display and cadence", () => {
 	expect(useAppStore.getState()).toMatchObject({
 		jbcentralQuotaEnabled: true,
@@ -3266,7 +3642,134 @@ test("chat presentation preferences are client-local and cannot be overwritten b
 	expect(useAppStore.getState().streamingResponseMovement).toEqual({ settle: 60, trigger: 90 });
 });
 
-test("diff tabs: openTab dedupes by id + activates; view + contents update in place", () => {
+test("changes tabs: one per scope, preview-eligible, and review progress survives a re-open", () => {
+	const s = () => useAppStore.getState();
+	useAppStore.setState({ activeWorkspaceId: "ws1" });
+	expect(s().changesView).toBe("tree");
+	expect(s().changesLayout).toBe("stacked");
+	const tab = {
+		kind: "changes" as const,
+		id: "ws1:changes:branch",
+		workspaceId: "ws1",
+		name: "Changes",
+		scope: { kind: "branch" } as const,
+		viewed: [],
+		activePath: null,
+		collapsed: {},
+		reveal: null,
+		sections: {},
+		kept: {},
+	};
+	s().openTab(tab, "preview");
+	expect(s().previewTabByWorkspace.ws1).toBe(tab.id);
+	expect(s().activeTabByWorkspace.ws1).toBe(tab.id);
+
+	s().setChangesTabViewed("ws1", tab.id, "src/a.ts", true);
+	// the first piece of review progress keeps the tab: a later single-click preview must not evict it
+	expect(s().previewTabByWorkspace.ws1).toBeUndefined();
+	expect(s().layoutIntents.at(-1)).toMatchObject({
+		kind: "select",
+		tabId: tab.id,
+		keep: true,
+		focus: false,
+	});
+	s().setChangesTabViewed("ws1", tab.id, "src/a.ts", true);
+	s().setChangesTabViewed("ws1", tab.id, "src/b.ts", true);
+	s().setChangesTabViewed("ws1", tab.id, "src/b.ts", false);
+	s().setChangesTabActivePath("ws1", tab.id, "src/a.ts");
+	s().setChangesTabCollapsed("ws1", tab.id, { "bun.lock": false, "src/a.ts": true });
+	s().setChangesTabCollapsed("ws1", tab.id, { "src/a.ts": null });
+	s().requestChangesTabReveal("ws1", tab.id, "src/b.ts");
+	s().requestChangesTabReveal("ws1", tab.id, "src/b.ts");
+	s().setChangesTabSectionRenderer("ws1", tab.id, "README.md", "thinkrail/markdown");
+	s().setChangesTabSectionViewState("ws1", tab.id, "README.md", { scrollTop: 7 });
+	s().setChangesTabView("ws1", tab.id, "inline");
+	s().setChangesTabIgnoreWhitespace("ws1", tab.id, true);
+	s().setChangesTabHunkKept("ws1", tab.id, "src/a.ts", "h1", true, ["h1", "h2"]);
+	s().setChangesTabHunkKept("ws1", tab.id, "src/a.ts", "h2", true, ["h1", "h2"]);
+	s().setChangesTabHunkKept("ws1", tab.id, "src/a.ts", "h1", false, ["h1", "h2"]);
+	s().setChangesTabHunkKept("ws1", tab.id, "src/a.ts", "h1", false, ["h1", "h2"]);
+
+	const after = s().tabsByWorkspace.ws1?.[0];
+	if (after?.kind !== "changes") throw new Error("expected a changes tab");
+	expect(after.viewed).toEqual(["src/a.ts"]);
+	expect(after.activePath).toBe("src/a.ts");
+	expect(after.collapsed).toEqual({ "bun.lock": false });
+	expect(after.reveal).toEqual({ path: "src/b.ts", tick: 2 });
+	expect(after.sections["README.md"]).toEqual({
+		rendererId: "thinkrail/markdown",
+		viewState: { scrollTop: 7 },
+	});
+	// a renderer switch drops the view state saved for the previous renderer, like setTabRenderer
+	s().setChangesTabSectionRenderer("ws1", tab.id, "README.md", "thinkrail/code");
+	const switched = s().tabsByWorkspace.ws1?.[0];
+	expect(switched?.kind === "changes" && switched.sections["README.md"]).toEqual({
+		rendererId: "thinkrail/code",
+	});
+	expect(after.view).toBe("inline");
+	expect(after.ignoreWhitespace).toBe(true);
+	expect(after.kept).toEqual({ "src/a.ts": ["h2"] });
+
+	s().consumeChangesTabReveal("ws1", tab.id, null);
+	const cleared = s().tabsByWorkspace.ws1?.[0];
+	expect(cleared?.kind === "changes" && cleared.reveal).toBeNull();
+
+	s().openTab(cleared as typeof tab, "keep");
+	expect(s().tabsByWorkspace.ws1).toHaveLength(1);
+	expect(s().previewTabByWorkspace.ws1).toBeUndefined();
+	const kept = s().tabsByWorkspace.ws1?.[0];
+	expect(kept?.kind === "changes" && kept.viewed).toEqual(["src/a.ts"]);
+
+	// a different scope is a different tab
+	s().openTab({ ...tab, id: "ws1:changes:uncommitted", scope: { kind: "uncommitted" } }, "preview");
+	expect(s().tabsByWorkspace.ws1).toHaveLength(2);
+	// actions against a foreign workspace or an unknown id are no-ops
+	const before = s().tabsByWorkspace;
+	s().setChangesTabViewed("ws2", tab.id, "x", true);
+	s().setChangesTabActivePath("ws1", "missing", "x");
+	expect(s().tabsByWorkspace).toBe(before);
+});
+
+test("consuming a changes-tab reveal lands active path, expansion and focus in one write", () => {
+	const s = () => useAppStore.getState();
+	useAppStore.setState({ activeWorkspaceId: "ws1" });
+	const tab = {
+		kind: "changes" as const,
+		id: "ws1:changes:branch",
+		workspaceId: "ws1",
+		name: "Changes",
+		scope: { kind: "branch" } as const,
+		viewed: [],
+		activePath: null,
+		collapsed: { "src/a.ts": true },
+		reveal: null,
+		sections: {},
+		kept: {},
+	};
+	s().openTab(tab, "keep");
+	s().requestChangesTabReveal("ws1", tab.id, "src/a.ts", "c1");
+	let writes = 0;
+	const unsubscribe = useAppStore.subscribe(() => {
+		writes += 1;
+	});
+	s().consumeChangesTabReveal("ws1", tab.id, { path: "src/a.ts", commentId: "c1" });
+	unsubscribe();
+	expect(writes).toBe(1);
+	const after = s().tabsByWorkspace.ws1?.[0];
+	expect(after).toMatchObject({
+		activePath: "src/a.ts",
+		collapsed: { "src/a.ts": false },
+		reveal: null,
+	});
+	expect(s().reviewFocusRequest).toEqual({ workspaceId: "ws1", commentId: "c1" });
+
+	s().setChangesTabSectionViewState("ws1", tab.id, "src/a.ts", { scrollTop: 3 });
+	const saved = s().tabsByWorkspace;
+	s().setChangesTabSectionViewState("ws1", tab.id, "src/a.ts", { scrollTop: 3 });
+	expect(s().tabsByWorkspace).toBe(saved);
+});
+
+test("diff tabs: openTab dedupes by id + activates; renderer, view state, and contents update in place", () => {
 	const s = () => useAppStore.getState();
 	useAppStore.setState({ activeWorkspaceId: "ws1" });
 	const tab = {
@@ -3287,22 +3790,40 @@ test("diff tabs: openTab dedupes by id + activates; view + contents update in pl
 	expect(s().activeTabByWorkspace.ws1).toBe(tab.id);
 
 	s().setDiffTabView(tab.id, "inline");
+	s().setTabViewState("ws1", tab.id, { scrollTop: 1 });
+	s().setTabRenderer("ws1", tab.id, "thinkrail/code");
+	expect(s().tabsByWorkspace.ws1?.[0]).not.toHaveProperty("viewState");
+	s().setTabViewState("ws1", tab.id, { scrollTop: 42 });
 	const afterView = s().tabsByWorkspace.ws1?.[0];
 	expect(afterView?.kind === "diff" && afterView.view).toBe("inline");
-	s().setFileTabView(tab.id, "source");
-	const guarded = s().tabsByWorkspace.ws1?.[0];
-	expect(guarded?.kind === "diff" && guarded.view).toBe("inline");
+	expect(afterView?.kind === "diff" && afterView.rendererId).toBe("thinkrail/code");
+	expect(afterView?.kind === "diff" && afterView.viewState).toEqual({ scrollTop: 42 });
 
 	s().setDiffTabIgnoreWhitespace(tab.id, true);
 	const afterWs = s().tabsByWorkspace.ws1?.[0];
 	expect(afterWs?.kind === "diff" && afterWs.ignoreWhitespace).toBe(true);
 
-	s().updateDiffTabContent("ws1", tab.id, "old2", "new2", 5, "origin/release");
+	const meta = {
+		original: { hash: "old-hash", byteLength: 4, text: true },
+		modified: { hash: "new-hash", byteLength: 4, text: true },
+	};
+	s().updateDiffTabContent(
+		"ws1",
+		tab.id,
+		"old2",
+		"new2",
+		meta,
+		"original-oid",
+		5,
+		"origin/release",
+	);
 	const updated = s().tabsByWorkspace.ws1?.[0];
 	expect(updated?.kind).toBe("diff");
 	if (updated?.kind === "diff") {
 		expect(updated.original).toBe("old2");
 		expect(updated.modified).toBe("new2");
+		expect(updated.meta).toEqual(meta);
+		expect(updated.originalOid).toBe("original-oid");
 		expect(updated.loadedTick).toBe(5);
 		expect(updated.loadedTarget).toBe("origin/release");
 	}
@@ -3333,9 +3854,45 @@ test("live content updates are scoped when two workspaces reuse an opaque cache 
 			],
 		},
 	});
-	useAppStore.getState().updateFileTabContent("ws2", "legacy-placement", "fresh", 4);
+	useAppStore.getState().updateFileTabContent("ws2", "legacy-placement", "fresh", undefined, 4);
+	useAppStore.setState({ activeWorkspaceId: "ws2" });
+	useAppStore.getState().setTabRenderer("ws2", "legacy-placement", "thinkrail/code");
+	useAppStore.getState().setTabViewState("ws2", "legacy-placement", { scrollTop: 7 });
 	expect(useAppStore.getState().tabsByWorkspace.ws1?.[0]?.content).toBe("one");
-	expect(useAppStore.getState().tabsByWorkspace.ws2?.[0]?.content).toBe("fresh");
+	const updated = useAppStore.getState().tabsByWorkspace.ws2?.[0];
+	expect(updated?.kind === "file" && updated.content).toBe("fresh");
+	expect(updated?.kind === "file" && updated.rendererId).toBe("thinkrail/code");
+	expect(updated?.kind === "file" && updated.viewState).toEqual({ scrollTop: 7 });
+});
+
+test("resource renderer state persists to its owning workspace after the active workspace switches", () => {
+	const fileTab = (workspaceId: string, content: string): FileTab => ({
+		kind: "file",
+		id: "shared-placement",
+		workspaceId,
+		name: `${workspaceId}.txt`,
+		path: `${workspaceId}.txt`,
+		content,
+	});
+	useAppStore.setState({
+		activeWorkspaceId: "ws1",
+		tabsByWorkspace: {
+			ws1: [fileTab("ws1", "one")],
+			ws2: [fileTab("ws2", "two")],
+		},
+	});
+	const { setTabRenderer, setTabViewState } = useAppStore.getState();
+
+	useAppStore.setState({ activeWorkspaceId: "ws2" });
+	setTabRenderer("ws1", "shared-placement", "thinkrail/code");
+	setTabViewState("ws1", "shared-placement", { scrollTop: 37 });
+
+	expect(useAppStore.getState().tabsByWorkspace.ws1?.[0]).toMatchObject({
+		rendererId: "thinkrail/code",
+		viewState: { scrollTop: 37 },
+	});
+	expect(useAppStore.getState().tabsByWorkspace.ws2?.[0]).not.toHaveProperty("rendererId");
+	expect(useAppStore.getState().tabsByWorkspace.ws2?.[0]).not.toHaveProperty("viewState");
 });
 
 test("the diff scope is per workspace, defaults to the branch, and is dropped with the workspace", () => {
@@ -4044,246 +4601,4 @@ test("authority can be given up without replacing the list (a consumer activatin
 	s().dropModelsFreshness();
 	expect(s().modelsFresh).toBe(false);
 	expect(s().models).toBe(refreshed);
-});
-
-test("an activity push installs a status, and a null push retracts it", () => {
-	const store = useAppStore.getState();
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "p1",
-		sessionId: "s1",
-		status: "running",
-	});
-	expect(useAppStore.getState().activityByWorkspace).toEqual({
-		w1: { projectId: "p1", sessions: { s1: "running" } },
-	});
-
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "p1",
-		sessionId: "s1",
-		status: "failed",
-	});
-	expect(useAppStore.getState().activityByWorkspace).toEqual({
-		w1: { projectId: "p1", sessions: { s1: "failed" } },
-	});
-
-	store.applySessionActivity({ workspaceId: "w1", projectId: "p1", sessionId: "s1", status: null });
-	expect(useAppStore.getState().activityByWorkspace).toEqual({});
-});
-
-test("retracting one chat keeps its siblings and prunes the workspace only when it empties", () => {
-	const store = useAppStore.getState();
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "p1",
-		sessionId: "s1",
-		status: "running",
-	});
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "p1",
-		sessionId: "s2",
-		status: "waiting",
-	});
-	store.applySessionActivity({ workspaceId: "w1", projectId: "p1", sessionId: "s1", status: null });
-	expect(useAppStore.getState().activityByWorkspace).toEqual({
-		w1: { projectId: "p1", sessions: { s2: "waiting" } },
-	});
-
-	store.applySessionActivity({ workspaceId: "w1", projectId: "p1", sessionId: "s2", status: null });
-	expect(useAppStore.getState().activityByWorkspace).toEqual({});
-});
-
-test("an unchanged status is not a state write, so a quiet rail never re-renders", () => {
-	const store = useAppStore.getState();
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "p1",
-		sessionId: "s1",
-		status: "running",
-	});
-	const before = useAppStore.getState().activityByWorkspace;
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "p1",
-		sessionId: "s1",
-		status: "running",
-	});
-	expect(useAppStore.getState().activityByWorkspace).toBe(before);
-});
-
-test("activity for a removed workspace or a deleted chat is refused, live and on hydration", () => {
-	useAppStore.setState({
-		removedWorkspaceIds: { gone: true },
-		deletedSessionsByWorkspace: { w1: { dead: true } },
-	});
-	const store = useAppStore.getState();
-	store.applySessionActivity({
-		workspaceId: "gone",
-		projectId: "p1",
-		sessionId: "s1",
-		status: "running",
-	});
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "p1",
-		sessionId: "dead",
-		status: "running",
-	});
-	expect(useAppStore.getState().activityByWorkspace).toEqual({});
-
-	store.hydrateSessionActivity([
-		{ workspaceId: "gone", projectId: "p1", sessionId: "s1", status: "running" },
-		{ workspaceId: "w1", projectId: "p1", sessionId: "dead", status: "failed" },
-		{ workspaceId: "w1", projectId: "p1", sessionId: "alive", status: "waiting" },
-	]);
-	expect(useAppStore.getState().activityByWorkspace).toEqual({
-		w1: { projectId: "p1", sessions: { alive: "waiting" } },
-	});
-});
-
-test("hydration REPLACES the map, so a reconnect cannot leave a stale glyph behind", () => {
-	const store = useAppStore.getState();
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "p1",
-		sessionId: "stale",
-		status: "running",
-	});
-	store.hydrateSessionActivity([
-		{ workspaceId: "w2", projectId: "p1", sessionId: "fresh", status: "queued" },
-	]);
-	expect(useAppStore.getState().activityByWorkspace).toEqual({
-		w2: { projectId: "p1", sessions: { fresh: "queued" } },
-	});
-});
-
-test("removing a workspace drops its activity along with its other local state", () => {
-	const workspace: Workspace = {
-		id: "w1",
-		projectId: "p1",
-		name: "one",
-		branch: "one",
-		worktreePath: "/p/one",
-		baseBranch: "main",
-	};
-	useAppStore.setState({ projects: [], workspaces: { p1: [workspace] } });
-	useAppStore.getState().applySessionActivity({
-		workspaceId: "w1",
-		projectId: "p1",
-		sessionId: "s1",
-		status: "running",
-	});
-	useAppStore.getState().applyWorkspaceRemoved("p1", "w1");
-	expect(useAppStore.getState().activityByWorkspace).toEqual({});
-});
-
-test("deleting a chat drops its activity row", () => {
-	const store = useAppStore.getState();
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "p1",
-		sessionId: "s1",
-		status: "failed",
-	});
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "p1",
-		sessionId: "s2",
-		status: "running",
-	});
-	store.deleteChat("w1", "s1", false);
-	expect(useAppStore.getState().activityByWorkspace).toEqual({
-		w1: { projectId: "p1", sessions: { s2: "running" } },
-	});
-});
-
-test("hydrating an empty snapshot clears the map — how a pre-activity host retires stale glyphs", () => {
-	const store = useAppStore.getState();
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "p1",
-		sessionId: "s1",
-		status: "running",
-	});
-	store.hydrateSessionActivity([]);
-	expect(useAppStore.getState().activityByWorkspace).toEqual({});
-});
-
-test("hydrating an unchanged snapshot is not a state write, so a reconnect never churns the rail", () => {
-	const store = useAppStore.getState();
-	store.hydrateSessionActivity([
-		{ workspaceId: "w1", projectId: "p1", sessionId: "s1", status: "waiting" },
-	]);
-	const before = useAppStore.getState().activityByWorkspace;
-	store.hydrateSessionActivity([
-		{ workspaceId: "w1", projectId: "p1", sessionId: "s1", status: "waiting" },
-	]);
-	expect(useAppStore.getState().activityByWorkspace).toBe(before);
-
-	store.hydrateSessionActivity([]);
-	const empty = useAppStore.getState().activityByWorkspace;
-	store.hydrateSessionActivity([]);
-	expect(useAppStore.getState().activityByWorkspace).toBe(empty);
-});
-
-test("hydration notices a changed status, an added chat, and a dropped chat", () => {
-	const store = useAppStore.getState();
-	store.hydrateSessionActivity([
-		{ workspaceId: "w1", projectId: "p1", sessionId: "s1", status: "running" },
-	]);
-	store.hydrateSessionActivity([
-		{ workspaceId: "w1", projectId: "p1", sessionId: "s1", status: "failed" },
-	]);
-	expect(useAppStore.getState().activityByWorkspace).toEqual({
-		w1: { projectId: "p1", sessions: { s1: "failed" } },
-	});
-
-	store.hydrateSessionActivity([
-		{ workspaceId: "w1", projectId: "p1", sessionId: "s1", status: "failed" },
-		{ workspaceId: "w1", projectId: "p1", sessionId: "s2", status: "queued" },
-	]);
-	expect(useAppStore.getState().activityByWorkspace).toEqual({
-		w1: { projectId: "p1", sessions: { s1: "failed", s2: "queued" } },
-	});
-
-	store.hydrateSessionActivity([
-		{ workspaceId: "w1", projectId: "p1", sessionId: "s2", status: "queued" },
-	]);
-	expect(useAppStore.getState().activityByWorkspace).toEqual({
-		w1: { projectId: "p1", sessions: { s2: "queued" } },
-	});
-});
-
-test("a project rollup works for a workspace whose project list was never loaded", () => {
-	useAppStore.getState().applySessionActivity({
-		workspaceId: "w9",
-		projectId: "never-loaded",
-		sessionId: "s1",
-		status: "running",
-	});
-	expect(
-		projectActivityRollup(useAppStore.getState().activityByWorkspace, "never-loaded")?.status,
-	).toBe("running");
-	expect(useAppStore.getState().workspaces["never-loaded"]).toBeUndefined();
-});
-
-test("a workspace that changes project is re-attributed rather than counted twice", () => {
-	const store = useAppStore.getState();
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "pa",
-		sessionId: "s1",
-		status: "running",
-	});
-	store.applySessionActivity({
-		workspaceId: "w1",
-		projectId: "pb",
-		sessionId: "s1",
-		status: "running",
-	});
-	const map = useAppStore.getState().activityByWorkspace;
-	expect(projectActivityRollup(map, "pa")).toBeNull();
-	expect(projectActivityRollup(map, "pb")?.status).toBe("running");
 });

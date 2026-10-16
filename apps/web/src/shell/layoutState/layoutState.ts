@@ -1,7 +1,7 @@
 import type { LayoutPreset } from "@thinkrail/contracts";
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 import { getStablePreferenceAdapter, type StablePreferenceAdapter } from "../../clientPreferences";
-import { type LayoutAttention, randomId } from "../../lib";
+import { type LayoutAttention, randomId, sameLayoutAttention } from "../../lib";
 import {
 	DEFAULT_LOCAL_LAYOUT_PREFERENCES,
 	type LocalLayoutPreferences,
@@ -11,9 +11,11 @@ import {
 } from "../../store";
 import { errorText, getTransport } from "../../transport";
 import {
+	adoptToolSelections,
 	applyProjectedLayoutDocument,
 	applyWorkbenchPreset,
 	BUILTIN_LAYOUT_PRESETS,
+	changedToolSelections,
 	DEFAULT_LAYOUT_PRESET_ID,
 	emptyWorkspaceView,
 	ensureWorkbenchToolPlacementIds,
@@ -21,8 +23,10 @@ import {
 	LAYOUT_TOOLS,
 	minimumBottomGroupLimit,
 	minimumSideGroupLimit,
+	normalizeWorkspaceView,
 	projectWorkspaceLayout,
 	reconcileAttention,
+	sameWorkbenchFrameShape,
 	validateLayoutDocument,
 	type WorkbenchFrame,
 	type WorkspaceLayoutDocument,
@@ -316,6 +320,14 @@ function isWorkspaceView(value: unknown): value is WorkspaceViewState {
 				return hasOnlyKeys(scope, ["kind", "sha"]) && typeof scope.sha === "string";
 			case "pinned":
 				return hasOnlyKeys(scope, ["kind", "baseRef"]) && typeof scope.baseRef === "string";
+			case "turn":
+				return (
+					hasOnlyKeys(scope, ["kind", "id", "baseTree", "headTree", "startedAt"]) &&
+					typeof scope.id === "string" &&
+					typeof scope.baseTree === "string" &&
+					typeof scope.headTree === "string" &&
+					typeof scope.startedAt === "number"
+				);
 			default:
 				return false;
 		}
@@ -338,6 +350,8 @@ function isWorkspaceView(value: unknown): value is WorkspaceViewState {
 					typeof tab.path === "string" &&
 					validDiffScope(tab.scope)
 				);
+			case "changes":
+				return hasOnlyKeys(tab, ["kind", "id", "name", "scope"]) && validDiffScope(tab.scope);
 			case "chat":
 				return (
 					hasOnlyKeys(tab, ["kind", "id", "name", "sessionId"]) && typeof tab.sessionId === "string"
@@ -355,24 +369,25 @@ function isWorkspaceView(value: unknown): value is WorkspaceViewState {
 				return false;
 		}
 	};
-	return Object.values(value.groups).every((candidate) => {
-		if (
-			!isRecord(candidate) ||
-			!hasOnlyKeys(candidate, ["tabs", "previewTabId", "beforeToolByTabId"]) ||
-			!Array.isArray(candidate.tabs) ||
-			candidate.tabs.some((tab) => !validTab(tab)) ||
-			(candidate.previewTabId !== undefined && typeof candidate.previewTabId !== "string") ||
-			(candidate.beforeToolByTabId !== undefined && !isRecord(candidate.beforeToolByTabId))
-		) {
-			return false;
-		}
-		return (
-			candidate.beforeToolByTabId === undefined ||
-			Object.values(candidate.beforeToolByTabId).every(
-				(tool) => typeof tool === "string" && TOOL_IDS.has(tool),
-			)
-		);
-	});
+	return Object.values(value.groups).every(
+		(candidate) =>
+			isRecord(candidate) &&
+			hasOnlyKeys(candidate, ["tabs", "previewTabId", "beforeToolByTabId"]) &&
+			Array.isArray(candidate.tabs) &&
+			candidate.tabs.every((tab) => validTab(tab)) &&
+			(candidate.previewTabId === undefined || typeof candidate.previewTabId === "string"),
+	);
+}
+
+function retainedWorkspaceView(view: WorkspaceViewState): WorkspaceViewState {
+	return {
+		groups: Object.fromEntries(
+			Object.entries(view.groups).map(([groupId, group]) => [
+				groupId,
+				{ tabs: group.tabs, ...(group.previewTabId ? { previewTabId: group.previewTabId } : {}) },
+			]),
+		),
+	};
 }
 
 function frameGroupIds(frame: WorkbenchFrame): Set<string> {
@@ -443,8 +458,9 @@ function decodeLocalLayout(raw: string): LocalLayoutStatePayload | undefined {
 			if (!isWorkspaceView(view) || Object.keys(view.groups).some((id) => !validGroupIds.has(id))) {
 				return undefined;
 			}
-			viewsByWorkspace[workspaceId] = view;
-			const document = projectWorkspaceLayout(frame, view);
+			const normalized = normalizeWorkspaceView(frame, retainedWorkspaceView(view));
+			viewsByWorkspace[workspaceId] = normalized;
+			const document = projectWorkspaceLayout(frame, normalized);
 			if (validateLayoutDocument(document, 32, 32).length > 0) return undefined;
 			documentsByWorkspace[workspaceId] = document;
 			attentionByWorkspace[workspaceId] = reconcileAttention(
@@ -453,7 +469,7 @@ function decodeLocalLayout(raw: string): LocalLayoutStatePayload | undefined {
 			);
 		}
 		if (Object.keys(documentsByWorkspace).length === 0) {
-			const frameDocument = projectWorkspaceLayout(frame, emptyWorkspaceView());
+			const frameDocument = emptyWorkspaceProjection(frame).document;
 			if (validateLayoutDocument(frameDocument, 32, 32).length > 0) return undefined;
 		}
 		return {
@@ -590,6 +606,67 @@ export function initializeLocalLayoutState(): Promise<void> {
 	return initialization;
 }
 
+export function emptyWorkspaceProjection(
+	frame: WorkbenchFrame,
+	reference?: { document: WorkspaceLayoutDocument; attention: LayoutAttention },
+): {
+	view: WorkspaceViewState;
+	document: WorkspaceLayoutDocument;
+	attention: LayoutAttention;
+} {
+	const view = emptyWorkspaceView();
+	const document = projectWorkspaceLayout(frame, view);
+	const reconciled = reconcileAttention(document, undefined);
+	return {
+		view,
+		document,
+		attention: reference
+			? adoptToolSelections(reconciled, document, reference.attention, reference.document)
+			: reconciled,
+	};
+}
+
+export function workspaceProjectionReference(
+	workspaceId: string,
+): { document: WorkspaceLayoutDocument; attention: LayoutAttention } | undefined {
+	const state = useAppStore.getState();
+	for (const id of state.workspaceSelectionHistory) {
+		if (id === workspaceId || state.removedWorkspaceIds[id]) continue;
+		const document = state.layoutDocumentsByWorkspace[id];
+		const attention = state.layoutAttentionByWorkspace[id];
+		if (document && attention) return { document, attention };
+	}
+	return undefined;
+}
+
+function installWorkspaceView(workspaceId: string): WorkspaceLayoutDocument {
+	const state = useAppStore.getState();
+	if (state.removedWorkspaceIds[workspaceId]) throw new Error("Workspace has been removed");
+	const existingDocument = state.layoutDocumentsByWorkspace[workspaceId];
+	if (existingDocument) return existingDocument;
+	if (!state.workbenchFrame) throw new Error("The local workbench frame is not ready");
+	const projection = emptyWorkspaceProjection(
+		state.workbenchFrame,
+		workspaceProjectionReference(workspaceId),
+	);
+	state.applyLocalLayoutState({
+		frame: state.workbenchFrame,
+		viewsByWorkspace: { ...state.workspaceViewsByWorkspace, [workspaceId]: projection.view },
+		documentsByWorkspace: {
+			...state.layoutDocumentsByWorkspace,
+			[workspaceId]: projection.document,
+		},
+		attentionByWorkspace: {
+			...state.layoutAttentionByWorkspace,
+			[workspaceId]: projection.attention,
+		},
+		preferences: state.localLayoutPreferences,
+	});
+	const installed = useAppStore.getState().layoutDocumentsByWorkspace[workspaceId];
+	if (!installed) throw new Error("The workspace layout could not be initialized");
+	return installed;
+}
+
 export function ensureWorkspaceLayoutState(workspaceId: string): Promise<WorkspaceLayoutDocument> {
 	const existing = workspaceInitializations.get(workspaceId);
 	if (existing) return existing;
@@ -598,32 +675,7 @@ export function ensureWorkspaceLayoutState(workspaceId: string): Promise<Workspa
 			throw new Error("Workspace has been removed");
 		}
 		await initializeLocalLayoutState();
-		const state = useAppStore.getState();
-		if (state.removedWorkspaceIds[workspaceId]) throw new Error("Workspace has been removed");
-		const existingDocument = state.layoutDocumentsByWorkspace[workspaceId];
-		if (existingDocument) return existingDocument;
-		if (!state.workbenchFrame) throw new Error("The local workbench frame is not ready");
-		const view = emptyWorkspaceView();
-		const document = projectWorkspaceLayout(state.workbenchFrame, view);
-		state.applyLocalLayoutState(
-			{
-				frame: state.workbenchFrame,
-				viewsByWorkspace: { ...state.workspaceViewsByWorkspace, [workspaceId]: view },
-				documentsByWorkspace: {
-					...state.layoutDocumentsByWorkspace,
-					[workspaceId]: document,
-				},
-				attentionByWorkspace: {
-					...state.layoutAttentionByWorkspace,
-					[workspaceId]: reconcileAttention(document, undefined),
-				},
-				preferences: state.localLayoutPreferences,
-			},
-			[workspaceId],
-		);
-		const installed = useAppStore.getState().layoutDocumentsByWorkspace[workspaceId];
-		if (!installed) throw new Error("The workspace layout could not be initialized");
-		return installed;
+		return installWorkspaceView(workspaceId);
 	})().finally(() => {
 		if (workspaceInitializations.get(workspaceId) === request) {
 			workspaceInitializations.delete(workspaceId);
@@ -667,7 +719,6 @@ export function applyLayoutPresetLocally(preset: LayoutPreset): void {
 				),
 			},
 		},
-		Object.keys(documentsByWorkspace),
 		true,
 	);
 }
@@ -691,11 +742,55 @@ function rebaseProjectedDocument(
 	};
 }
 
+export function applyLayoutAttention(workspaceId: string, next: LayoutAttention): void {
+	const state = useAppStore.getState();
+	if (state.removedWorkspaceIds[workspaceId]) return;
+	const document = state.layoutDocumentsByWorkspace[workspaceId];
+	const normalized = document ? reconcileAttention(document, next, document) : next;
+	if (sameLayoutAttention(state.layoutAttentionByWorkspace[workspaceId], normalized)) return;
+	const groups = document
+		? changedToolSelections(state.layoutAttentionByWorkspace[workspaceId], normalized, document)
+		: new Set<string>();
+	if (!document || groups.size === 0 || !state.workbenchFrame) {
+		state.setLayoutAttention(workspaceId, normalized);
+		return;
+	}
+	const attentionByWorkspace = {
+		...state.layoutAttentionByWorkspace,
+		[workspaceId]: normalized,
+	};
+	for (const [id, attention] of Object.entries(state.layoutAttentionByWorkspace)) {
+		if (id === workspaceId || state.removedWorkspaceIds[id]) continue;
+		const otherDocument = state.layoutDocumentsByWorkspace[id];
+		if (!otherDocument) continue;
+		attentionByWorkspace[id] = adoptToolSelections(
+			attention,
+			otherDocument,
+			normalized,
+			document,
+			groups,
+		);
+	}
+	state.applyLocalLayoutState({
+		frame: state.workbenchFrame,
+		viewsByWorkspace: state.workspaceViewsByWorkspace,
+		documentsByWorkspace: state.layoutDocumentsByWorkspace,
+		attentionByWorkspace,
+		preferences: state.localLayoutPreferences,
+	});
+}
+
+export interface LayoutCommitOptions {
+	baseDocument?: WorkspaceLayoutDocument;
+	attention?: LayoutAttention;
+}
+
 export async function commitWorkspaceLayout(
 	workspaceId: string,
 	document: WorkspaceLayoutDocument,
-	baseDocument?: WorkspaceLayoutDocument,
+	options: LayoutCommitOptions = {},
 ): Promise<WorkspaceLayoutDocument> {
+	const { baseDocument } = options;
 	const state = useAppStore.getState();
 	if (state.removedWorkspaceIds[workspaceId]) throw new Error("Workspace has been removed");
 	if (!state.workbenchFrame) throw new Error("The local workbench frame is not ready");
@@ -723,9 +818,38 @@ export async function commitWorkspaceLayout(
 		if (!nextDocument) continue;
 		attentionByWorkspace[id] = reconcileAttention(
 			nextDocument,
-			state.layoutAttentionByWorkspace[id],
-			state.layoutDocumentsByWorkspace[id],
+			id === workspaceId
+				? (options.attention ?? state.layoutAttentionByWorkspace[id])
+				: state.layoutAttentionByWorkspace[id],
+			id === workspaceId && options.attention
+				? effectiveDocument
+				: state.layoutDocumentsByWorkspace[id],
 		);
+	}
+	const committingAttention = attentionByWorkspace[workspaceId];
+	const committingDocument = documentsByWorkspace[workspaceId];
+	if (!committingAttention || !committingDocument)
+		throw new Error("The committed workspace projection is missing");
+	const toolChanges = changedToolSelections(
+		state.layoutAttentionByWorkspace[workspaceId],
+		committingAttention,
+		committingDocument,
+	);
+	if (frameChanged || toolChanges.size > 0) {
+		if (committingAttention && committingDocument) {
+			for (const [id, attention] of Object.entries(attentionByWorkspace)) {
+				if (id === workspaceId) continue;
+				const otherDocument = documentsByWorkspace[id];
+				if (!otherDocument || state.removedWorkspaceIds[id]) continue;
+				attentionByWorkspace[id] = adoptToolSelections(
+					attention,
+					otherDocument,
+					committingAttention,
+					committingDocument,
+					frameChanged ? undefined : toolChanges,
+				);
+			}
+		}
 	}
 	state.applyLocalLayoutState(
 		{
@@ -735,8 +859,7 @@ export async function commitWorkspaceLayout(
 			attentionByWorkspace,
 			preferences: state.localLayoutPreferences,
 		},
-		changedWorkspaceIds,
-		frameChanged,
+		frameChanged && !sameWorkbenchFrameShape(frame, state.workbenchFrame),
 	);
 	return useAppStore.getState().layoutDocumentsByWorkspace[workspaceId] ?? document;
 }
@@ -750,12 +873,21 @@ export function useLocalLayoutState(): void {
 }
 
 export function useWorkspaceLayoutState(workspaceId: string): void {
-	useEffect(() => {
-		void ensureWorkspaceLayoutState(workspaceId).catch((error) => {
+	useLayoutEffect(() => {
+		const report = (error: unknown) => {
 			if (!useAppStore.getState().removedWorkspaceIds[workspaceId]) {
 				toast.error(errorText(error), "Couldn't load the local layout");
 			}
-		});
+		};
+		if (useAppStore.getState().layoutStateReady) {
+			try {
+				installWorkspaceView(workspaceId);
+			} catch (error) {
+				report(error);
+			}
+			return;
+		}
+		void ensureWorkspaceLayoutState(workspaceId).catch(report);
 	}, [workspaceId]);
 }
 

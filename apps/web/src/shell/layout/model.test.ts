@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type { LayoutAttention } from "../../lib";
 import {
+	adoptToolSelections,
 	canShowSide,
+	changedToolSelections,
 	closeLayoutTab,
 	closePlacedResource,
 	collectAllGroups,
 	collectCenterGroups,
 	createAuxiliaryGroup,
 	createSideGroup,
+	describeLayoutGroup,
 	findTabLocation,
 	hideBottom,
 	hideSide,
@@ -24,6 +27,7 @@ import {
 	resizeSideGroups,
 	resizeSideRegion,
 	revealTool,
+	SEPARATE_PANES_REASON,
 	selectTab,
 	setAuxiliaryGroupFolded,
 	setBottomAlignment,
@@ -34,7 +38,7 @@ import {
 	splitCenterGroup,
 	toolTab,
 	unplacedTools,
-	unplacedToolsForSide,
+	unplacedToolsForRegion,
 	validateLayoutDocument,
 	withAvailablePlacementId,
 } from "./model";
@@ -73,6 +77,71 @@ function mutation<T extends { document: WorkspaceLayoutDocument } | { reason: st
 }
 
 describe("workspace layout model", () => {
+	test("revealing a tool never joins a terminal pane: beside its restore target, or the first pane that can take it", () => {
+		const terminal: LayoutTerminalTab = {
+			kind: "terminal",
+			id: "terminal:right",
+			tabKey: "right",
+			name: "Shell",
+		};
+		let document = baseDocument();
+		document = mutation(closeLayoutTab(document, "tool:files")).document;
+		expect(document.toolRestoreTargets.files).toMatchObject({
+			region: "right",
+			groupId: "right-a",
+		});
+		document = mutation(
+			moveTabToGroup(document, terminal, { area: "right", groupId: "right-a" }),
+		).document;
+		const beside = mutation(revealTool(document, "files", 6)).document;
+		expect(beside.right.groups.map((group) => group.tabs.map((tab) => tab.id))).toEqual([
+			["terminal:right"],
+			["tool:files"],
+		]);
+		expect(revealTool(document, "files", 1)).toEqual({
+			reason: "There is no auxiliary group available for this tool.",
+		});
+		const twoPanes = mutation(createAuxiliaryGroup(document, "right", toolTab("changes"), 1, 6));
+		const atLimit = mutation(revealTool(twoPanes.document, "files", 2)).document;
+		expect(atLimit.right.groups.map((group) => group.tabs.map((tab) => tab.id))).toEqual([
+			["terminal:right"],
+			["tool:changes", "tool:files"],
+		]);
+	});
+
+	test("a pane is described by its tab names, capped, never by an id", () => {
+		const terminal = (n: number): LayoutTerminalTab => ({
+			kind: "terminal",
+			id: `terminal:${n}`,
+			tabKey: `t${n}`,
+			name: `Terminal ${n}`,
+		});
+		expect(describeLayoutGroup([])).toBe("(empty)");
+		expect(describeLayoutGroup([toolTab("changes"), toolTab("review")])).toBe("(Changes, Review)");
+		expect(
+			describeLayoutGroup([terminal(1), terminal(2), terminal(3), terminal(4), terminal(5)]),
+		).toBe("(Terminal 1, Terminal 2, Terminal 3, +2)");
+	});
+
+	test("show restores an all-folded side or bottom on the first request", () => {
+		const document = baseDocument();
+		const group = document.right.groups[0];
+		if (!group) throw new Error("Missing group fixture");
+		group.folded = true;
+		document.bottom = {
+			...document.bottom,
+			visible: true,
+			groups: [{ id: "bottom-folded", weight: 1, folded: true, tabs: [] }],
+		};
+		const attention = reconcileAttention(document);
+		expect(
+			mutation(showSide(document, "right", 6, attention)).document.right.groups[0]?.folded,
+		).toBe(false);
+		expect(mutation(showBottom(document, 6, 3, attention)).document.bottom.groups[0]?.folded).toBe(
+			false,
+		);
+	});
+
 	test("canonical tool labels override stale persisted display copy", () => {
 		const legacyFiles = { ...toolTab("files"), name: "All files" };
 		expect(toolTab("files").name).toBe("Files");
@@ -193,10 +262,18 @@ describe("workspace layout model", () => {
 			tabKey: "t1",
 		};
 		let document = baseDocument([file("one"), terminal]);
-		document = mutation(
-			moveTabToGroup(document, terminal, { area: "right", groupId: "right-a" }),
-		).document;
-		expect(findTabLocation(document, terminal.id)).toEqual({ area: "right", groupId: "right-a" });
+		const intoToolPane = moveTabToGroup(document, terminal, { area: "right", groupId: "right-a" });
+		expect(intoToolPane).toEqual({ reason: SEPARATE_PANES_REASON });
+		document = mutation(createAuxiliaryGroup(document, "right", terminal, 1, 6)).document;
+		const terminalPane = document.right.groups[1];
+		if (!terminalPane) throw new Error("Missing terminal pane fixture");
+		expect(findTabLocation(document, terminal.id)).toEqual({
+			area: "right",
+			groupId: terminalPane.id,
+		});
+		expect(
+			moveTabToGroup(document, toolTab("files"), { area: "right", groupId: terminalPane.id }),
+		).toEqual({ reason: SEPARATE_PANES_REASON });
 		const renamedTerminal = { ...terminal, name: "Build shell" };
 		document = mutation(openCenterTab(document, renamedTerminal, "center-a", "preview")).document;
 		expect(
@@ -204,7 +281,10 @@ describe("workspace layout model", () => {
 				.flatMap((group) => group.tabs)
 				.find((tab) => tab.id === terminal.id)?.name,
 		).toBe("Build shell");
-		expect(findTabLocation(document, terminal.id)).toEqual({ area: "right", groupId: "right-a" });
+		expect(findTabLocation(document, terminal.id)).toEqual({
+			area: "right",
+			groupId: terminalPane.id,
+		});
 		const illegal = moveTabToGroup(document, file("one"), { area: "right", groupId: "right-a" });
 		expect(isLayoutUnavailable(illegal)).toBe(true);
 		document = mutation(
@@ -314,7 +394,7 @@ describe("workspace layout model", () => {
 			alignment: "center",
 			groups: [
 				{ id: "source", weight: 0.4, folded: false, tabs: [terminal] },
-				{ id: "destination", weight: 0.6, folded: false, tabs: [toolTab("changes")] },
+				{ id: "destination", weight: 0.6, folded: false, tabs: [] },
 			],
 		};
 
@@ -324,12 +404,7 @@ describe("workspace layout model", () => {
 
 		expect(moved.bottom.groups).toEqual([
 			{ id: "source", weight: 0.4, folded: false, tabs: [] },
-			{
-				id: "destination",
-				weight: 0.6,
-				folded: false,
-				tabs: [toolTab("changes"), terminal],
-			},
+			{ id: "destination", weight: 0.6, folded: false, tabs: [terminal] },
 		]);
 	});
 
@@ -403,12 +478,12 @@ describe("workspace layout model", () => {
 
 		expect(unplacedTools(document)).toContain("files");
 		expect(unplacedTools(document)).toContain("projects");
-		expect(unplacedToolsForSide(document, "right")).toContain("files");
-		expect(unplacedToolsForSide(document, "right")).not.toContain("projects");
-		expect(unplacedToolsForSide(document, "left")).toEqual(["projects"]);
+		expect(unplacedToolsForRegion(document, "right")).toContain("files");
+		expect(unplacedToolsForRegion(document, "right")).not.toContain("projects");
+		expect(unplacedToolsForRegion(document, "left")).toEqual(["projects"]);
 
 		const placedAgain = mutation(revealTool(document, "files", 6)).document;
-		expect(unplacedToolsForSide(placedAgain, "right")).not.toContain("files");
+		expect(unplacedToolsForRegion(placedAgain, "right")).not.toContain("files");
 	});
 
 	test("records singleton restore targets and reveals closed tools unfolded in place", () => {
@@ -589,6 +664,140 @@ describe("workspace layout model", () => {
 		);
 		expect(passivelySelected.selectedByGroup["center-a"]).toBe("one");
 		expect(passivelySelected.navigationClockByGroup["center-a"]).toBe(7);
+	});
+
+	test("adopts source tool selections without replacing a selected resource", () => {
+		const document = baseDocument();
+		const right = document.right.groups[0];
+		if (!right) throw new Error("missing right group");
+		right.tabs = [toolTab("specs"), toolTab("files")];
+		const source = reconcileAttention(document, undefined);
+		const target = {
+			...source,
+			selectedByGroup: { ...source.selectedByGroup, "right-a": "tool:specs" },
+		};
+		const sourceSelection = {
+			...source,
+			selectedByGroup: { ...source.selectedByGroup, "right-a": "tool:files" },
+		};
+
+		expect(
+			adoptToolSelections(target, document, sourceSelection, document).selectedByGroup["right-a"],
+		).toBe("tool:files");
+
+		const mixedDocument = structuredClone(document);
+		const mixedRight = mixedDocument.right.groups[0];
+		if (!mixedRight) throw new Error("missing right group");
+		mixedRight.tabs.push({
+			kind: "terminal",
+			id: "terminal:right",
+			name: "Terminal",
+			tabKey: "right-terminal",
+		});
+		const terminalSelection = {
+			...target,
+			selectedByGroup: { ...target.selectedByGroup, "right-a": "terminal:right" },
+		};
+		expect(adoptToolSelections(terminalSelection, mixedDocument, sourceSelection, document)).toBe(
+			terminalSelection,
+		);
+	});
+
+	test("tool selection adoption requires placement and respects the selected group set", () => {
+		const document = baseDocument();
+		const right = document.right.groups[0];
+		const left = document.left.groups[0];
+		if (!right || !left) throw new Error("missing side group");
+		right.tabs = [toolTab("specs"), toolTab("files")];
+		left.tabs = [toolTab("projects"), toolTab("changes")];
+		const source = reconcileAttention(document, undefined);
+		const target = {
+			...source,
+			selectedByGroup: {
+				...source.selectedByGroup,
+				"right-a": "tool:specs",
+				"left-a": "tool:projects",
+			},
+		};
+		const sourceSelection = {
+			...source,
+			selectedByGroup: {
+				...source.selectedByGroup,
+				"right-a": "tool:files",
+				"left-a": "tool:changes",
+			},
+		};
+		const targetWithoutFiles = structuredClone(document);
+		const targetRight = targetWithoutFiles.right.groups[0];
+		if (!targetRight) throw new Error("missing right group");
+		targetRight.tabs = [toolTab("specs")];
+		expect(
+			adoptToolSelections(target, targetWithoutFiles, sourceSelection, document).selectedByGroup[
+				"right-a"
+			],
+		).toBe("tool:specs");
+
+		const selected = adoptToolSelections(
+			target,
+			document,
+			sourceSelection,
+			document,
+			new Set(["right-a"]),
+		);
+		expect(selected.selectedByGroup["right-a"]).toBe("tool:files");
+		expect(selected.selectedByGroup["left-a"]).toBe("tool:projects");
+	});
+
+	test("tool selection adoption preserves identity when nothing changes", () => {
+		const document = baseDocument();
+		const attention = reconcileAttention(document, undefined);
+		expect(adoptToolSelections(attention, document, attention, document)).toBe(attention);
+	});
+
+	test("changed tool selections include only newly selected tool tabs", () => {
+		const document = baseDocument();
+		const right = document.right.groups[0];
+		if (!right) throw new Error("missing right group");
+		right.tabs = [toolTab("specs"), toolTab("files")];
+		document.bottom = {
+			visible: true,
+			height: 0.3,
+			alignment: "center",
+			groups: [
+				{
+					id: "bottom-a",
+					weight: 1,
+					folded: false,
+					tabs: [
+						{
+							kind: "terminal",
+							id: "terminal:bottom",
+							name: "Terminal",
+							tabKey: "bottom-terminal",
+						},
+						{
+							kind: "terminal",
+							id: "terminal:bottom-other",
+							name: "Other terminal",
+							tabKey: "bottom-other",
+						},
+					],
+				},
+			],
+		};
+		const previous: LayoutAttention = {
+			selectedByGroup: { "right-a": "tool:specs", "bottom-a": "terminal:bottom" },
+			lastFocusedCenterGroupId: "center-a",
+			lastFocusedSideGroupId: {},
+			navigationClockByGroup: {},
+		};
+		const next = {
+			...previous,
+			selectedByGroup: { "right-a": "tool:files", "bottom-a": "terminal:bottom-other" },
+		};
+		expect(changedToolSelections(previous, next, document)).toEqual(new Set(["right-a"]));
+		expect(changedToolSelections(previous, previous, document)).toEqual(new Set());
+		expect(changedToolSelections(undefined, next, document)).toEqual(new Set(["right-a"]));
 	});
 
 	test("attention tracks bottom selection and last focus without affecting center navigation", () => {

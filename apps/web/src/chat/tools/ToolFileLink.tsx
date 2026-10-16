@@ -1,4 +1,5 @@
-import { cn, isAbsolutePath, projectRelativePath } from "@/lib";
+import { cn } from "@thinkrail/ui/utils";
+import { isAbsolutePath, projectRelativePath } from "@/lib";
 import { hasUriScheme, workspaceFileTarget } from "../fileTargets";
 
 export function ToolFileLink({
@@ -42,7 +43,7 @@ export function ToolFileLink({
 			title={path}
 			onClick={() => onOpenFile(target)}
 			className={cn(
-				"min-w-0 cursor-pointer truncate rounded-[var(--radius-xs)] text-left outline-none hover:underline focus-visible:ring-2 focus-visible:ring-primary",
+				"min-w-0 cursor-pointer truncate rounded-xs text-left outline-none hover:underline focus-visible:ring-2 focus-visible:ring-primary",
 				className,
 			)}
 		>

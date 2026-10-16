@@ -5,13 +5,13 @@ status: active
 title: Desktop launcher/client (Electrobun)
 parent: architecture
 depends-on: [module-server, module-contracts, module-shared]
-tags: [desktop, v1, launcher, packaging]
+tags: [desktop, launcher, packaging]
 references: [submodule-web-navigation, module-artifact-tests, module-ci-release, submodule-web-shell]
 ---
 
 ## Responsibility
 
-The native Electrobun launcher/client over the existing web UI and wire. The V1 local-host profile embeds
+The native Electrobun launcher/client over the existing web UI and wire. The local-host profile embeds
 the server in the Electrobun Bun process, serves the packaged web artifact on one loopback origin, and
 opens that origin in a native system webview. `apps/cli` remains the sibling browser launcher and release
 rollback. A later shared-client profile may dial an existing host without introducing another UI, wire, or
@@ -28,7 +28,7 @@ engine architecture.
   exported by the application package.
 - **Allowed deps:** `server` for the embedded host and build-support manifest; `shared`
   for release identity; `contracts` for
-  compatibility/native-bridge types; the completed built web
+  compatibility/native-bridge types and the shared `createQuitConfirmation` rule; the completed built web
   artifact; Electrobun `2.0.1` and its generated SDK; build-only `pe-library`/`resedit` for the
   Electrobun 2.0.1 Windows-uninstaller icon gap; build-only `@resvg/resvg-js` to rasterize the icon
   source (below); Bun/Node.
@@ -37,9 +37,9 @@ engine architecture.
   storing one active location on the backend; or bundling CEF without a new acceptance failure that
   justifies it. Native shell, lifecycle, and packaging concerns are the only desktop-specific behavior.
 
-## V1 profile and topology
+## Profile and topology
 
-V1 ships only the local-host profile. One Electrobun Bun process owns the native shell and server on the
+Only the local-host profile ships. One Electrobun Bun process owns the native shell and server on the
 same event loop; the accepted in-process crash trade-off is unchanged. The host binds loopback port `0`
 and its actual port forms the window origin. The packaged `web/dist`, `/ws`, `/files`, and SPA fallback
 therefore remain same-origin and the web client has no desktop branch. A dynamic loopback port is never
@@ -55,16 +55,26 @@ another.
 1. Resolve app resources and set `BUN_PTY_LIB` to the staged current-target FFI library before any server
    import. Electrobun emits an ordinary JavaScript entry, not a `bun build --compile` executable, so it
    does not embed `bun-pty`'s library.
-2. Dynamically import the separately built, unpacked `server-runtime.ts` resource. The `.ts` filename is a
-   runtime contract: PI then selects its TypeScript source-runtime Jiti path and supplies bundled virtual
-   modules to external extensions. Flattening PI into Electrobun's normal `.js` entry makes it select
-   built-Node aliases that are absent from a self-contained app and breaks Central/external extensions.
-3. The runtime value-imports the five bundled extension factories and calls `registerBundledRuntime()`
-   with those factories, the named `pi-web-access` factory needed by delegation children, the staged skills,
-   and macOS/Windows trash helpers. The generator's key map must satisfy every key of the server-owned
+2. Dynamically import the separately built, unpacked `server-runtime.ts` resource. That bundle is built with
+   pi's `PI_BUNDLED_NODE=true` define, which makes PI use its embedded-modules extension loader (static jiti
+   with Babel bundled, plus virtual modules) for external extensions such as Central. Without the define a
+   single-file bundle is treated as a plain Node runtime and PI's lazy Babel `require` cannot resolve inside
+   it ([[submodule-server-agent]] owns the seam). Flattening PI into Electrobun's normal entry is still
+   forbidden: it would load `bun-pty` before `BUN_PTY_LIB` is set.
+3. The runtime value-imports the four bundled pi-package factories (`pi-web-access`, `pi-spec-graph`,
+   `pi-thinkrail-workflow`, `pi-todos`) and calls `registerBundledRuntime()` with those factories, the
+   `pi-web-access` factory needed by delegation children (picked by `BuildRuntimeSources.webAccessIndex`,
+   never by position), the staged skills (every `BuildRuntimeSources.skillRoots` entry flattened into one
+   dir, duplicate routes rejected), and macOS/Windows trash helpers. ThinkRail extensions from the server
+   registry ([[submodule-server-extensions]]) need no generated entry: their factories reach the bundle
+   through `@thinkrail/server`'s static import graph. The generator's key map must satisfy every key of the server-owned
    `BundledExtensions` contract, so adding a required launcher field fails desktop typecheck instead of
-   producing a packaged-only `undefined`. It then calls `bootHost()` on loopback port `0` with the staged web
-   directory, baked version, and `desktop` analytics provenance.
+   producing a packaged-only `undefined`. It then calls `bootHost({ resolveShellEnv: true, … })` on loopback port `0` with the staged web
+   directory, baked version and release-only analytics key, `desktop` analytics provenance, and, only when packaged, the launcher-supplied
+   `Utils.openExternal` callback used by the host's one-shot browser attribution claim. The callback passes through
+   `DesktopHostOptions` and the generated runtime. The first native-window `dom-ready` explicitly calls the
+   proxied `host.server.startAttributionClaim()` readiness method; host boot and elapsed time do not start a
+   saved-choice claim. No deep-link or RPC surface is added.
 4. Restore the valid route fragment and bounded client-preference map for
    `{ backendProfileId: "local", windowId: "main" }`. The route is appended to the fresh origin; the
    preference map is serialized as data and prepended to the preload source so the web client can hydrate
@@ -72,7 +82,7 @@ another.
    renderer.
 
 The Electrobun entry bundle contains native-shell code only. A static server import there is forbidden:
-it can load `bun-pty` before `BUN_PTY_LIB` and flatten PI into the wrong extension-loader mode. Startup
+it can load `bun-pty` before `BUN_PTY_LIB` and bypass the defined server-runtime build. Startup
 failure is logged through the shared crash path, shown in a native error dialog, and exits without leaving
 a hidden host.
 
@@ -89,9 +99,83 @@ webview surfaces without competing with their local key handling.
 
 macOS receives the conventional application, Edit, and Window role menus. Windows receives the supported
 Edit role menu. Linux skips registration because Electrobun 2.0.1 does not support application menus
-there; WebKitGTK keeps its renderer-native editing behavior. The policy is platform-pure and the packaged
+there; WebKitGTK keeps its renderer-native editing behavior. macOS Command-H, Option-Command-H, and Command-M carry explicit
+accelerators because role items get no default shortcut. Quit and Close are custom-action items, not
+roles; see Confirmed quit and close. The policy is platform-pure and the packaged
 ready seam reports whether registration ran, so unit tests pin menu composition while expanded-app smoke
 pins production wiring.
+
+### Confirmed quit and close
+
+Command-Q (`quit-shortcut`) must be confirmed: hold it for 1200 ms, then release Q or Command; or press
+it again within 500 ms of releasing the first press, then release. A single tap expires silently. A
+keyboard quit never fires while the chord is held, so key-repeat cannot leak Command-Q into the next app.
+Electrobun fires the menu action on every press and every OS key-repeat with no repeat flag, so
+`quitShortcut` drives the shared contracts `createQuitConfirmation` rule (the one copy of the gesture, also
+used by the web shell for Linux Ctrl+Q) and feeds it key state from CoreGraphics (`keyState.ts`, Bun FFI, HID system state,
+no extra permission) and polls it while engaged. The hold counts only the non-modifier keys down when
+the action fires, because the menu matches Q by character and its physical key differs per layout (AZERTY,
+Dvorak); a key-repeat press keeps that set and never adds to it, so a key pressed later never counts as the hold. A menu click arrives as the same action with no key down and a left mouse-up newer than the
+last key-down, so it quits directly. A keyboard or VoiceOver menu pick (Ctrl+F2, Enter; VO+Space) arrives
+with Command up and its last key-down newer than the last modifier change, so it quits directly too. A
+late-handled tap arms instead: its Command release is a modifier change newer than Q's key-down. A
+late-handled press where Command is released but Q stays down can pass as a menu pick; handling takes
+milliseconds, so this is accepted. Key state unreadable
+at press quits directly; unreadable while armed cancels, unless release was already reached. With no visible hint (window minimized, or host boot before the window and RPC exist), a press skips
+confirmation and quits on release. The menu listener is attached right after the menu, so quit works
+during boot; commands drop until the window exists. Every
+confirmed quit goes through the quit coordinator. Dock Quit, Apple Event quit, and update restart bypass
+the menu and stay direct. Hints travel as the `quitHintChanged` message. Quit stays outside the command
+channel: main owns it, it needs key state, and it must work while the webview hangs.
+
+On Linux no app menu exists, so the web shell owns Ctrl+Q: it confirms the same gesture from
+keydown/keyup and calls `NativeShortcutsBridge.quit()`, the `quitApp` RPC request, which starts the same
+quit coordinator without awaiting shutdown. Windows binds no quit chord; Alt+F4 stays the OS window close
+and its ordinary shutdown.
+
+Other menu shortcuts are forwarded `NativeCommand`s: the menu action is the command id (an exhaustive `Record<NativeCommand, true>` gates it) and main sends
+`nativeCommand`. A shared `repeatGate` makes them edge-triggered: after a forward with a key down, further
+actions drop until no non-modifier key is down, so key-repeat never fires a command twice. A click with no
+key down, or unreadable key state, always forwards. Command-W (`close-item`) asks the web client to close
+its focused item or do nothing; it never closes the native window. The preload exposes hints and commands
+as the frozen non-enumerable `__THINKRAIL_NATIVE_SHORTCUTS__` `NativeShortcutsBridge` (built by
+`shortcutsBridge.ts`) on every desktop platform; only the macOS menu sends events today. On Windows and
+Linux the web shell owns Ctrl+W / Ctrl+F4 (close item) through its command table.
+
+The preload also exposes the frozen non-enumerable `__THINKRAIL_NATIVE_NOTIFICATIONS__`
+`NativeNotificationBridge` ([[module-contracts]]) on every desktop platform. It has two capabilities:
+`show({ title, subtitle?, body, silent? })` forwards a `showNotification` RPC request to the main
+process, which calls Electrobun `Utils.showNotification` (native OS notification center); delivery is
+best-effort, so a failed request is dropped rather than surfacing an unhandled rejection.
+`isWindowFocused()` returns whether the native window holds OS-level focus; the main process tracks this
+via `BrowserWindow` `focus`/`blur` events and pushes the state to the renderer through a
+`windowFocusChanged` RPC message, which the preload caches synchronously. This correctly reports `true`
+when DevTools or other in-window chrome has renderer focus, unlike `document.hasFocus()` which returns
+`false` in that case. **Platform caveat:** on Windows, DevTools is a separate native window; focusing it
+fires `blur` on the main `BrowserWindow`, so `isWindowFocused()` falls back to the same limitation as
+the browser channel. On macOS, DevTools is docked and the main-window focus is preserved. Electrobun
+2.0.1 has no application-level activation signal; a cross-window solution requires a future API. The web
+client detects this bridge by capability and routes its attention notifications through it instead of the
+page Notifications API — the web shell keeps no desktop branch.
+Electrobun click callbacks are not landed yet, so the native notification carries no click action.
+
+Each chord has exactly one owner: a native menu accelerator (forwarded as a `NativeCommand`) or web
+keydown, never both, because the webview still receives keydown for accelerator chords. Native owns chords
+the OS or browser reserves (Command-Q/W/H/M); web owns Ctrl+Q/W/F4 where no native menu claims them.
+
+## Native page zoom
+
+Command/Ctrl-`+` (`=`), `-`, and `0` zoom as a browser's default action: the desktop preload listens after
+page handlers and yields any chord a handler already claimed with `preventDefault` (Monaco's `Mod+K` folding
+chords end on these keys), then sends a typed one-way request to the main process. A handler that only stops
+propagation also keeps the chord, so zoom is inert while such an input has focus. The main process steps from
+the webview's current native zoom to the adjacent bounded browser-style factor, so zoom changed outside the
+shortcuts (WebView2's Ctrl+wheel) cannot desync it.
+
+On macOS, WebKit's two-finger pinch lifecycle drives that same native page zoom continuously. The preload
+yields gestures claimed by page content and forwards validated scales; the main process captures native zoom
+at gesture start and applies each absolute scale against that baseline, bounded to 50%–200%, so updates never
+compound or introduce a second zoom owner. The web app owns no duplicate shortcut, gesture, or zoom state.
 
 ## Native window chrome
 
@@ -101,17 +185,36 @@ controls survive without a native strip. Electrobun 2.0.1 exposes no caption-col
 removing the native strip and letting the web header occupy it. The policy is platform-pure
 (`windowChrome.ts`, pinned by unit tests) and spread into the main `BrowserWindow`:
 
-| platform | `titleBarStyle` | traffic lights | published left inset |
-|---|---|---|---|
-| macOS | `hiddenInset` — transparent strip, hidden title, full-size content view; native traffic lights stay | `trafficLightOffset { x: 0, y: 4 }` centres the 12px buttons in the 40px topbar (measured on a packaged build: the default position centres them at 16px, so +4 lands on 20) | `64px` — the traffic-light zone (7 + 3×12 + 2×8 = 59px on the spacing grid) |
-| Windows, Linux | `default` | — | `0px` |
+| platform | `titleBarStyle` | native controls | published insets | header drag |
+|---|---|---|---|---|
+| macOS | `hiddenInset` — transparent strip, hidden title, full-size content view | AppKit traffic lights stay; `trafficLightOffset { x: 0, y: 4 }` centres the 12px buttons in the 40px topbar (measured on a packaged build: the default position centres them at 16px, so +4 lands on 20) | left `64px` — the traffic-light zone (7 + 3×12 + 2×8 = 59px on the spacing grid) | yes |
+| Windows | `hiddenInset` — Electrobun creates `WS_CAPTION \| WS_THICKFRAME` and strips the caption in `WM_NCCALCSIZE`: resize borders and the DWM shadow survive, no native caption buttons | none native; the web renders minimize / maximize-or-restore / close ([[submodule-web-shell]]) and drives the window over RPC | right `138px` — three 46px caption buttons | yes |
+| Linux | `default` | GTK/WM decorations | none | no |
 
-Windows is deferred because `hiddenInset` there strips the caption *including* minimize/maximize/close,
-which would have to be HTML controls over RPC (and Electrobun has no `HTMAXBUTTON` hit-test, so Win11
-snap layouts would not appear). Linux is not planned: `hiddenInset` is a no-op under GTK and `hidden`
-removes decorations together with WM-provided resize handles. Fully custom macOS chrome
-(`titleBarStyle: "hidden"` with drawn traffic lights) was rejected because the platform provides real
-ones.
+**Windows.** Electrobun 2.0.1 already enables WebView2's non-client-region support, so the header's
+`app-region: drag` is a real `HTCAPTION` hit: Aero Snap, drag-from-maximized, double-click-to-maximize and
+Alt+Space come from the OS, not from Electrobun's raw-input mover. What Electrobun omits from its
+`hiddenInset` style is `WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX` (upstream blackboardsh/electrobun#558):
+without them maximize covers the taskbar and the double-click / system-menu behaviours are inert. Until
+that lands upstream, `windowsFrame.ts` ORs the three bits onto the HWND once after window creation through
+a `dlopen`ed `user32.dll` (`GetWindowLongPtrW` → `SetWindowLongPtrW` → `SetWindowPos(SWP_FRAMECHANGED)`) —
+pure style arithmetic behind an injectable API, no C source, no runtime compilation; a failure is logged,
+never fatal. Success is judged by reading the style back, not by `SetWindowLongPtrW`'s return: a 0 previous
+style is ambiguous, and its `SetLastError`/`GetLastError` disambiguation would span separate FFI calls the
+runtime may clobber. The HTML controls call `minimizeWindow` / `toggleMaximizeWindow` / `closeWindow` requests;
+close goes through `requestClose()`, the same path as the native X, so the quit coordinator still owns
+shutdown. The main process publishes `windowStateChanged { maximized, fullScreen }` on every `dom-ready` and
+on `resize` when it changed, and the preload exposes the `NativeWindowControlsBridge`
+(`__THINKRAIL_NATIVE_WINDOW_CONTROLS__`, [[module-contracts]]) only when the injected seed says
+`windowControls`. Known gaps, accepted rather than patched with a window subclass: the top edge is not a
+resize hit (Electrobun folds it into the client area, also #558) and Windows 11 Snap Layouts do not appear on
+hover over the HTML maximize button (that needs `HTMAXBUTTON`, which nothing short of WebView2's prerelease
+window-controls overlay provides). PR #469 explored keeping DWM's own buttons through a runtime-compiled HWND
+subclass and WebView2 region masking; it was set aside as too heavy to verify.
+
+Linux is not planned: `hiddenInset` is a no-op under GTK and `hidden` removes decorations together with
+WM-provided resize handles. Fully custom macOS chrome (`titleBarStyle: "hidden"` with drawn traffic lights)
+was rejected because the platform provides real ones.
 
 **Geometry contract.** The desktop publishes three CSS custom properties on `<html>`: the two inset
 properties plus `--window-chrome-drag-region` (`drag` | `no-drag`), which tells the page whether its
@@ -120,11 +223,12 @@ geometry updates arrive as `windowChromeChanged { insetLeft, insetRight }`. The 
 with `0px` fallbacks, so a browser-hosted client and the neutral E2E-host window (`about:blank`, no
 preload) are unaffected and the *web client still has no desktop branch*. The preload validates geometry,
 keeps only the latest value while the document root is absent, and flushes it at `DOMContentLoaded`, so a
-pending startup write cannot overwrite a newer native state. The right inset is always `0px` today and
-exists so the Windows follow-up changes a value, not the contract.
+pending startup write cannot overwrite a newer native state. The right inset is `138px` on Windows and `0px` elsewhere; the seed additionally carries the
+per-policy `windowControls` flag, which the preload turns into the optional controls bridge.
 
-**Fullscreen.** macOS native fullscreen auto-hides the traffic lights with the menu bar, so fullscreen
-zeroes both insets. The main process publishes geometry on every webview `dom-ready` (a reload during
+**Fullscreen.** macOS native fullscreen auto-hides the traffic lights with the menu bar, and a Windows
+fullscreen window is a bare `WS_POPUP`, so fullscreen zeroes both insets and the web hides its controls when
+`windowStateChanged` reports `fullScreen`. The main process publishes geometry on every webview `dom-ready` (a reload during
 fullscreen must not inherit the windowed insets) and on `resize` only when the geometry changed. The
 neutral E2E-host window (`THINKRAIL_DESKTOP_E2E_HOST=1`) keeps the default native chrome and publishes
 nothing.
@@ -132,9 +236,30 @@ nothing.
 **Dragging.** The desktop's only contribution is the `drag` flag: the web header's `window-drag` utility
 resolves to `-webkit-app-region: drag` only when `--window-chrome-drag-region` says so, and Electrobun's
 own injected preload rewrites app-region declarations from same-origin stylesheets into a mirrored custom
-property it hit-tests against on `mousedown`. A decorated window (Windows, Linux, the neutral window)
-publishes `no-drag` and so never acquires a second, partial drag strip. Double-click-to-zoom on the header
-is not promised — the webview covers the strip, so the click reaches `NSWindow` only incidentally.
+property it hit-tests against on `mousedown`. A decorated window (Linux, the neutral window)
+publishes `no-drag` and so never acquires a second, partial drag strip.
+
+**Title-bar double-click.** The webview covers the native strip, so `NSWindow` never sees a header
+double-click, and Electrobun 2.0.1 implements app-region dragging only. Its native move uses pass-through
+event monitors, so the page still receives `dblclick`. The desktop preload listens for primary-button
+`dblclick` events the page did not `preventDefault` and sends a payload-free `titleBarDoubleClick` message
+when the target is a drag region by Electrobun's own hit-test input: the computed, inherited
+`--electrobun-app-region` property its stylesheet rewrite produces. Exactly the area that drags the window
+therefore also zooms it; the `window-no-drag` action cluster does neither, and the web client still has no
+desktop branch. The main process acts only when the macOS policy's `titleBarDoubleClick` flag is set and outside native
+fullscreen; Windows leaves it off because its `HTCAPTION` drag region already maximizes natively, and handling
+it too would toggle twice. It
+reads `AppleActionOnDoubleClick` on every double-click (asynchronous `defaults read -g`, so a changed
+setting applies without restart) and maps it as Chromium does for custom draggable areas: unset, `Maximize`
+(Zoom) or `Fill` toggles zoom through `maximize()`/`unmaximize()` (`[NSWindow zoom:]`); `Minimize`
+miniaturizes; `None` and unknown values do nothing. `Fill` uses zoom because Apple's `_zoomFill:` is
+private and unreachable through Electrobun; this window's standard zoom frame is the screen's visible
+frame, so only tiling margins differ. A double-click arriving while the previous one is still resolving is
+dropped. This workaround exists only because Electrobun lacks the behavior, tracked upstream in
+[electrobun#561](https://github.com/blackboardsh/electrobun/issues/561). An Electrobun upgrade must
+re-check the mirror property name and that issue: once the framework handles drag-region double-clicks
+itself, remove the preload listener, `titleBarDoubleClick` message, and handler, or the window toggles
+twice.
 
 ## Navigation and window security
 
@@ -146,8 +271,8 @@ SDK event factories, not copied into local declarations. Detail can be a raw URL
 serialized navigation JSON; bounded decoding retains only a string URL and the HTTP/HTTPS/mailto
 allowlist. Native `navigationRules` enforce confinement: navigation-event responses cannot cancel it.
 
-A desktop preload sends typed, one-way route and local-preference messages, and is the only writer of
-the window-chrome CSS properties described above. It wraps
+A desktop preload sends typed, one-way route, local-preference, page-zoom, and title-bar double-click
+messages, and is the only writer of the window-chrome CSS properties described above. It wraps
 `history.replaceState` and `history.pushState` before page scripts and also reports initial/hash/pop
 navigation, because Electrobun's native navigation events do not observe History API route changes. The
 main process accepts messages only from the main window. Routes persist as bounded fragment strings in a
@@ -159,6 +284,15 @@ size/shape and never learns feature meaning. Its frozen preload adapter exposes 
 are ignored; a filesystem refusal is logged without changing the in-memory document or terminating the
 client. The web feature still owns each value's validation and default. The web router remains the route
 grammar validator, and the preload exposes no host/domain capability.
+
+On Windows, webview-to-main RPC (requests and one-way messages) rides Electrobun's native host bridge,
+not its loopback WebSocket. Electrobun 2.0.1's core binds its fixed default socket port `50000` with
+address reuse on Windows, so a second running Electrobun app (another ThinkRail channel included) shares
+the port and receives this webview's socket traffic; every request then times out and every message is
+lost. The launcher therefore prepends a removal of the two injected socket-port globals to the Windows
+preload, which selects Electroview's documented no-socket path (`__electrobunHostBridge`, the same per-webview
+WebView2 channel used as its fallback). Main-to-webview delivery is unaffected. Re-check on an Electrobun
+upgrade: once the core picks a private port on Windows, drop `hostTransport.ts`.
 
 The host reads the staged preload bundle and passes its JavaScript **source text** to
 `BrowserWindow.preload`. A `views://` preload URL is forbidden: Electrobun 1.18.1 resolves it on macOS but
@@ -178,8 +312,17 @@ Abrupt death relies only on operating-system process cleanup.
 Artifact tests drive this same entrypoint through opt-in environment/ready/control seams: isolated user
 data, a hidden neutral window for browser-backed tests, host/launcher ids and origin on DOM-ready, and
 normal quit. Native UI smoke can capture an external-open result and request one fixed navigation probe
-instead of launching the user's browser. These hooks need the live window; their standalone drivers and
-assertions live in the test package, which product code never imports.
+instead of launching the user's browser. With a title-bar probe file, two control commands dispatch
+synthetic `dblclick`s in the live webview: `title-bar-double-click` on the header, and
+`title-bar-double-click-no-drag` on the no-drag action cluster followed by the header in one task. The
+launcher records how many double-click messages it received and handled, plus the last handled
+preference, action, and before/after window state. The header-only phase proves the header is
+forwarded; counting receipt as well as handling lets the second phase detect a forwarded no-drag
+click that the single-flight handler would drop. With a window-controls probe file,
+`window-controls-maximize` / `window-controls-restore` click the HTML caption button once it carries the
+expected label, and the launcher records every window-control request it handles plus the last published
+`NativeWindowState`. These hooks need the live window; their standalone
+drivers and assertions live in the test package, which product code never imports.
 
 ## Build and release
 
@@ -193,9 +336,11 @@ unsupported. The repository's independently pinned development/CI runtime is ali
 The package runs the official `electrobun build` / `dev` commands. Configuration reads the same shared
 version module as the launcher, without an environment-version bridge. One documented `preBuild` hook
 builds the shared web artifact and stages the application-specific PTY/trash/skill resources and PI
-runtime. The hook runs under Hutch's Cottontail, so it invokes the real Bun CLI to bundle the separately
-staged `.ts` server runtime rather than changing PI's bundler. Its transient factory entry is removed
-even on failure. Staged resources include the workflow SPEC consumed by the bundled skills. A documented
+runtime. The hook runs under Hutch's Cottontail, so it invokes the real Bun CLI both to read the
+`@thinkrail/server/build-support` manifest (which value-loads the server extension registry and with it
+the pi graph — Cottontail's module runtime cannot evaluate that graph; `typebox`'s `String` export is the
+first casualty) and to bundle the separately staged `.ts` server runtime rather than changing PI's
+bundler. Its transient factory entry is removed even on failure. Staged resources include the workflow SPEC consumed by the bundled skills. A documented
 `postBuild` hook removes staging after the framework has copied it; a failed build's staging is replaced
 at the next pre-build. On Windows that hook also brands the bundled uninstaller after its resource exists
 but before release compression, wrapping, and signing. Builds in one worktree remain sequential.
@@ -270,30 +415,20 @@ CI-only and are never shipped as user configuration.
 
 ## Auto-update policy
 
-Desktop updates check after window readiness and then on a jittered six-hour schedule with bounded retries.
-Checks and full-package downloads run in the background without blocking startup. Manual checks acknowledge
-promptly and state converges asynchronously through monotonic revisions. The one native controller owns the
-SDK's single status callback, coalesces concurrent work, reconciles returned errors as well as thrown ones,
-and retains a prepared newer version across transient poll failures. Electrobun's hash inequality alone is
-not eligibility: same-version and downgrade manifests are not downloaded or offered.
+Desktop updates check after window readiness and on a jittered six-hour schedule, but stop at an available
+release. Downloading and installation each require an explicit user action; closing Settings or quitting
+normally installs nothing. Same-version and downgrade manifests are ineligible.
 
 Production checks are enabled only in packaged supported stable/canary applications whose stamped release
-metadata supplies a nonempty HTTPS updater base URL. That packaged metadata is the sole feed authority;
-development and standard artifact-test seams stay disabled and cannot select a feed. Installation requires an
-explicit **Restart to Update** action; **Later** preserves the
-running app, and ordinary quit does not silently install. A cross-platform in-app control exposes manual
-checking, progress, the available version and retry; native menus are supplementary because this SDK has no
-Linux application menu. Installations stay on their packaged channel; CLI and remote-host updates are outside
-this capability. Release scope and manual-first acceptance belong to [[module-ci-release]].
+metadata supplies a nonempty HTTPS updater base URL. That metadata is the sole feed authority; development
+and standard artifact-test seams expose no updater. Installations stay on their packaged channel, while the UI
+calls Electrobun's canary channel **nightly**. Release qualification belongs to [[module-ci-release]].
 
-Electrobun calls, updater scheduling and update lifecycle stay behind the bounded desktop `updates` module;
-update controls stay in the web client and graceful host shutdown stays in server. The frozen optional
-`__THINKRAIL_NATIVE_UPDATES__` preload capability carries `getState`, prompt `checkForUpdates` and
-`restartToUpdate` requests, plus state subscription over the typed native RPC. Web imports no desktop SDK,
-and an ordinary browser connection acquires no host-update operation. An update restarts the entire local
-host: active agents may be aborted and PTYs terminate. **Restart to Update** is the sole confirmation and
-uses the existing ordinary-quit shutdown. There is no additional warning dialog, update-specific draft
-saving, or renderer-preparation handshake.
+Electrobun calls and lifecycle state stay behind the desktop `updates` module; controls stay in the web client
+and graceful host shutdown stays in server. The frozen optional `__THINKRAIL_NATIVE_UPDATES__` preload bridge
+exposes typed state, check/download/install actions, and subscription without importing the desktop SDK into
+web code. **Install & Restart** applies the prepared release through the existing quit coordinator; active
+agents and PTYs may terminate, with no second confirmation or renderer-preparation handshake.
 
 Quit coordination preserves its completion action. Electrobun 2.0.1's first `applyUpdate()` returns on the
 asynchronous `before-quit` veto before arming its replacement helper. The update intent waits for the same
@@ -315,6 +450,6 @@ release checks described in [[module-ci-release]].
 
 ## Deferred
 
-Shared/remote backend profiles, profile selection, multi-window/deep-link routing, CEF, and the Windows
-frameless title bar (HTML minimize/maximize/close over RPC behind a window-controls capability the geometry
-contract does not yet carry). The update feed publication described above remains release-owned.
+Shared/remote backend profiles, profile selection, multi-window/deep-link routing, CEF, and removing the
+`user32` style-bit shim once blackboardsh/electrobun#558 ships. The update feed publication described above
+remains release-owned.

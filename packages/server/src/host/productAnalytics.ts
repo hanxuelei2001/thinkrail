@@ -1,8 +1,10 @@
 import type {
 	AppConfig,
+	AppConfigUpdate,
 	JbcentralConnectResult,
 	OpenPrResult,
 	ProviderStatusReport,
+	ReviewComment,
 } from "@thinkrail/contracts";
 import { isJbcentralConnected } from "@thinkrail/contracts";
 import { errorCodeOf } from "@thinkrail/shared/codedError";
@@ -11,6 +13,10 @@ import {
 	type AdditionalAnalyticsCapture,
 	type AdditionalAnalyticsEvent,
 	getAdditionalAnalyticsCapture,
+	type PlanActionSource,
+	type ReviewCommentActor,
+	type ReviewResolveOutcome,
+	setAdditionalAnalyticsEnabled,
 } from "../analytics";
 import { listProjects } from "../projects";
 
@@ -18,10 +24,24 @@ type SetupState = Extract<AdditionalAnalyticsEvent, { name: "setup_state_observe
 type SetupResult = Extract<AdditionalAnalyticsEvent, { name: "setup_action_finished" }>["params"];
 type FailureReason = SetupResult["reason"];
 
-export function additionalAnalyticsEnabled(
+export function additionalAnalyticsEnabled(config: Pick<AppConfig, "analyticsEnabled">): boolean {
+	return config.analyticsEnabled;
+}
+
+export function initialAdditionalAnalyticsEnabled(
 	config: Pick<AppConfig, "analyticsEnabled" | "analyticsConsentConfirmed">,
 ): boolean {
-	return config.analyticsEnabled && config.analyticsConsentConfirmed;
+	return config.analyticsConsentConfirmed && config.analyticsEnabled;
+}
+
+export function applyAdditionalAnalyticsSettings(
+	config: Pick<AppConfig, "analyticsEnabled">,
+	appliedUpdate: AppConfigUpdate,
+): boolean {
+	if (appliedUpdate.analyticsEnabled === undefined) return false;
+	const previousGrant = additionalCapture();
+	setAdditionalAnalyticsEnabled(additionalAnalyticsEnabled(config));
+	return additionalCapture() !== previousGrant;
 }
 
 export function additionalCapture(): AdditionalAnalyticsCapture | null {
@@ -41,9 +61,53 @@ export function captureAdditional(
 	} catch {}
 }
 
+export function captureReviewCommentAdded(
+	capture: AdditionalAnalyticsCapture | null,
+	comment: ReviewComment,
+): void {
+	captureAdditional(capture, {
+		name: "review_comment_added",
+		params: {
+			author: comment.author === "agent" ? "agent" : "user",
+			kind: comment.kind,
+		},
+	});
+}
+
+export function captureReviewCommentsSent(
+	capture: AdditionalAnalyticsCapture | null,
+	comments: readonly ReviewComment[],
+): void {
+	for (const comment of comments) {
+		captureAdditional(capture, {
+			name: "review_comment_sent",
+			params: { outdated: comment.anchorState === "outdated" ? "yes" : "no" },
+		});
+	}
+}
+
+export function captureReviewCommentResolved(
+	capture: AdditionalAnalyticsCapture | null,
+	actor: ReviewCommentActor,
+	outcome: ReviewResolveOutcome,
+): void {
+	captureAdditional(capture, {
+		name: "review_comment_resolved",
+		params: { actor, outcome },
+	});
+}
+
 export function failureReason(error: unknown): FailureReason {
-	if (errorCodeOf(error) === "PUSH_AUTH_FAILED") return "auth";
-	return "unknown";
+	switch (errorCodeOf(error)) {
+		case "PUSH_AUTH_FAILED":
+			return "auth";
+		case "NOT_GIT":
+			return "not_git";
+		case "ALREADY_OPEN":
+			return "already_open";
+		default:
+			return "unknown";
+	}
 }
 
 export function providerAvailability(
@@ -186,17 +250,24 @@ export function centralConnectOutcome(
 	};
 }
 
-export async function observePrAction(
-	operation: () => Promise<OpenPrResult>,
-): Promise<OpenPrResult> {
+export function directoryPickOutcome(selected: {
+	path: string | null;
+}): Pick<SetupResult, "outcome" | "reason"> {
+	return { outcome: selected.path === null ? "cancelled" : "succeeded", reason: "none" };
+}
+
+export async function observePrAction<T extends OpenPrResult>(
+	operation: () => Promise<T>,
+	source: PlanActionSource = "other",
+): Promise<T> {
 	const capture = additionalCapture();
-	let result: OpenPrResult;
+	let result: T;
 	try {
 		result = await operation();
 	} catch (error) {
 		captureAdditional(capture, {
 			name: "pr_action_finished",
-			params: { action: "unknown", outcome: "failed", reason: failureReason(error) },
+			params: { action: "unknown", outcome: "failed", reason: failureReason(error), source },
 		});
 		throw error;
 	}
@@ -215,6 +286,7 @@ export async function observePrAction(
 								? "unsupported"
 								: "auth"
 							: "none",
+					source,
 				},
 			});
 		} catch {}

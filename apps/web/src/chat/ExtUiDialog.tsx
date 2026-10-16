@@ -1,5 +1,4 @@
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@thinkrail/ui/button";
 import {
 	Dialog,
 	DialogContent,
@@ -7,7 +6,8 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
-} from "@/components/ui/dialog";
+} from "@thinkrail/ui/dialog";
+import { useState } from "react";
 import type { ExtUiDialogRequest } from "./types";
 
 export function ExtUiDialog({
@@ -43,7 +43,7 @@ export function ExtUiDialog({
 								type="button"
 								data-testid="ext-ui-option"
 								onClick={() => onReply(option)}
-								className="rounded-[var(--radius-sm)] border border-control-border-default bg-control-bg px-12 py-8 text-left tr-text-ui text-text-default outline-none hover:bg-control-bg-hovered focus-visible:ring-2 focus-visible:ring-primary"
+								className="rounded-sm border border-control-border-default bg-control-bg px-12 py-8 text-left tr-text-ui text-text-default outline-none hover:bg-control-bg-hovered focus-visible:ring-2 focus-visible:ring-primary"
 							>
 								{option}
 							</button>
@@ -64,7 +64,7 @@ export function ExtUiDialog({
 								onReply(text);
 							}
 						}}
-						className="rounded-[var(--radius-sm)] border border-control-border-default bg-control-bg px-8 py-4 tr-text-ui text-text-default outline-none placeholder:text-text-muted focus-visible:border-control-border-active"
+						className="rounded-sm border border-control-border-default bg-control-bg px-8 py-4 tr-text-ui text-text-default outline-none placeholder:text-text-muted focus-visible:border-control-border-active"
 					/>
 				) : null}
 
@@ -75,7 +75,7 @@ export function ExtUiDialog({
 						value={text}
 						rows={8}
 						onChange={(e) => setText(e.target.value)}
-						className="resize-none rounded-[var(--radius-sm)] border border-control-border-default bg-control-bg px-8 py-4 tr-code-text text-text-default outline-none focus-visible:border-control-border-active"
+						className="resize-none rounded-sm border border-control-border-default bg-control-bg px-8 py-4 tr-code-text text-text-default outline-none focus-visible:border-control-border-active"
 					/>
 				) : null}
 

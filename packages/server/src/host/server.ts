@@ -4,41 +4,61 @@ import type {
 	HostPlatform,
 	HostUpdateNotice,
 	ServerWelcome,
-	SessionActivityPayload,
 	SessionCreatedPayload,
 	SessionDeletedPayload,
+	SessionStateRecord,
 	TerminalTabsPush,
 	WorkspaceFsChangedPayload,
 } from "@thinkrail/contracts";
 import {
 	FEEDBACK_INTERVIEW_PROTOCOL_VERSION,
+	MCP_PROTOCOL_VERSION,
 	PROTOCOL_VERSION,
 	WS_CHANNELS,
 } from "@thinkrail/contracts";
 import { errorCodeOf } from "@thinkrail/shared/codedError";
 import {
+	admissionContextFor,
+	cancelAllMcpProbes,
+	cancelMcpProbesOwnedBy,
 	disposeAllSessions,
 	getSessionWorkspaceId,
+	initializeSessionStates,
 	isProjectSkillPath,
+	liveSessionIdsOf,
+	mcpPolicyOf,
+	piTrustsProjectPath,
+	reconcileMcpSessions,
+	refreshAgentReviewTool,
+	refreshExtensionTools,
+	refreshSubagentConcurrency,
 	refreshSubagentTools,
-	setActivityProjectResolver,
-	setExtUiPendingObserver,
+	setAgentReviewEnabledResolver,
+	setDisabledExtensionsResolver,
 	setExtUiPublisher,
+	setMcpLoginPublisher,
+	setMcpPolicyResolver,
+	setMcpStatusPublisher,
+	setModelContextPublisher,
 	setReviewCommentHandler,
-	setSessionActivityPublisher,
 	setSessionCreatedPublisher,
 	setSessionDeletedPublisher,
+	setSessionProjectResolver,
 	setSessionPublisher,
+	setSessionResourcesPublisher,
+	setSessionStatePublisher,
 	setSkillAdmissionResolver,
+	setSubagentConcurrencyResolver,
 	setSubagentsEnabledResolver,
+	setTitleToolHost,
 	settleSessionsForShutdown,
-	syncSessionActivity,
+	watchUserMcpConfig,
 } from "../agent";
 import {
 	type AnalyticsOptions,
 	initializeAnalytics,
-	setAdditionalAnalyticsEnabled,
 	shutdownAnalytics,
+	startAttributionClaim,
 	track,
 } from "../analytics";
 import {
@@ -49,8 +69,8 @@ import {
 	setLoginPublisher,
 	stopJbcentralRuntime,
 } from "../auth";
+import { forgetOpenBranchReview } from "../branch-review";
 import { redeliverInterview, releaseInterview, setFeedbackPublisher } from "../feedback";
-import { resolveWorktreeFile } from "../fs";
 import { logger } from "../log";
 import { loadWorkspaces } from "../persistence";
 import {
@@ -58,11 +78,13 @@ import {
 	listProjects,
 	listRecentProjects,
 	openProject,
+	setPiTrustSeed,
 	setProjectPublisher,
 } from "../projects";
 import { reanchorWorkspace, resolveCommentFromAgent, setReviewPublisher } from "../reviews";
 import { getConfig, setSettingsPublisher } from "../settings";
 import {
+	clearTerminalClient,
 	closeAllTerminals,
 	persistTerminalSessions,
 	resumeClientTerminals,
@@ -71,42 +93,55 @@ import {
 	setTerminalTabsPublisher,
 } from "../terminal";
 import { isTodoToolEnd, maybeAttachChangeArtifacts } from "../todos";
+import { setTurnPublisher, TurnTracker } from "../turns";
 import {
 	setRepoMetaPublisher,
 	setSkillPathClassifier,
 	setWatchPublisher,
+	setWatchStartedPublisher,
 	stopAllWatches,
 } from "../watch";
-import { getWorkspace, refreshUserOwnedWorkspace, setWorkspacePublisher } from "../workspaces";
 import {
-	isPromptCommitted,
-	isSettledTurn,
-	maybeAutoRenameWorkspace,
-	maybeNaiveNameWorkspace,
-} from "./autoRename";
+	getWorkspace,
+	recordWorkspaceHead,
+	refreshUserOwnedWorkspace,
+	seedWorkspaceHead,
+	setWorkspacePublisher,
+} from "../workspaces";
+import { BLOB_PREFIX, FILES_PREFIX, serveBlob, serveWorktreeFile } from "./fileRoutes";
 import { setFsNudgePublisher } from "./fsNudge";
 import { handleRequest, requestMethodDiagnostic } from "./handlers";
 import { provisionInitialTerminal } from "./initialTerminal";
 import { trackLoginOutcome } from "./loginAnalytics";
 import {
-	additionalAnalyticsEnabled,
 	additionalCapture,
+	applyAdditionalAnalyticsSettings,
+	captureReviewCommentResolved,
+	initialAdditionalAnalyticsEnabled,
 	observeCurrentSetup,
 	setupObservation,
 } from "./productAnalytics";
 import { RequestReplayCache } from "./requestReplayCache";
-import { runObservation } from "./runAnalytics";
-import { resolveSubagentsEnabled } from "./subagentPolicy";
-import { taskObservation } from "./taskAnalytics";
-import { terminalDeliveryForSendStatus } from "./terminalSend";
 import {
-	handleReviewerSettled,
-	installTodoReviewSeams,
-	markClientStale,
+	installRequestReviewSeam,
 	maybeAutoReReview,
-	maybeResumeReflection,
-	reconcilePendingReviewsOnBoot,
-} from "./todoReview";
+	setReviewFailedPublisher,
+} from "./requestReview";
+import { runObservation } from "./runAnalytics";
+import {
+	REVIEW_REFRESH_INTERVAL_MS,
+	refreshOpenProjectReviews,
+	stampSessionActivity,
+} from "./settledLifecycle";
+import { resolveSubagentMaxConcurrent, resolveSubagentsEnabled } from "./subagentPolicy";
+import { taskObservation } from "./taskAnalytics";
+import {
+	BACKPRESSURE_RECONCILE_MS,
+	drainedClientKeys,
+	terminalDeliveryForSendStatus,
+} from "./terminalSend";
+import { titleToolHost } from "./titleTool";
+import { markClientStale, reconcilePendingReviewsOnBoot } from "./todoReview";
 
 export interface CreateServerOptions {
 	port?: number;
@@ -116,16 +151,31 @@ export interface CreateServerOptions {
 	appVersion?: string;
 	analytics?: Pick<
 		AnalyticsOptions,
-		"channel" | "build" | "posthogApiKey" | "posthogHost" | "mute"
+		| "channel"
+		| "build"
+		| "posthogApiKey"
+		| "posthogHost"
+		| "mute"
+		| "env"
+		| "fetchImpl"
+		| "openExternal"
+		| "attributionEndpoint"
+		| "attributionFetch"
+		| "attributionSleep"
+		| "attributionSchedule"
+		| "attributionRequestTimeoutMs"
+		| "attributionDeadlineMs"
 	>;
 	hostUpdate?: {
 		intervalMs: number;
 		check(): Promise<HostUpdateNotice | null>;
+		run(): Promise<void>;
 	};
 }
 
 export interface RunningServer {
 	readonly port: number;
+	startAttributionClaim: () => void;
 	stop: () => void;
 	shutdown: () => Promise<void>;
 }
@@ -146,7 +196,7 @@ function clientProtocolVersion(value: string | null): number {
 	return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
-function sameHostUpdateNotice(
+function sameHostUpdateRelease(
 	current: HostUpdateNotice | undefined,
 	next: HostUpdateNotice,
 ): boolean {
@@ -161,6 +211,7 @@ function sameHostUpdateNotice(
 export async function createServer(options: CreateServerOptions = {}): Promise<RunningServer> {
 	await initializeJbcentralRuntime();
 	getConfig();
+	setPiTrustSeed(piTrustsProjectPath);
 	const {
 		port = 24242,
 		host = "localhost",
@@ -171,14 +222,40 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		hostUpdate,
 	} = options;
 
+	setSessionProjectResolver((workspaceId) => {
+		try {
+			return getWorkspace(workspaceId).projectId;
+		} catch {
+			return null;
+		}
+	});
+	await initializeSessionStates(
+		loadWorkspaces().map((workspace) => ({
+			id: workspace.id,
+			projectId: workspace.projectId,
+			cwd: workspace.worktreePath,
+		})),
+	);
+
 	const sockets = new Map<string, Bun.ServerWebSocket<SocketData>>();
 	const reapTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	const requestReplays = new RequestReplayCache<string>();
 	const terminalBackpressured = new Set<string>();
 	let hostUpdateNotice: HostUpdateNotice | undefined;
 	let hostUpdateTimer: ReturnType<typeof setInterval> | undefined;
+	const reviewRefreshTimer = setInterval(
+		() =>
+			void refreshOpenProjectReviews().catch(() =>
+				log.warn("periodic settled lifecycle refresh failed"),
+			),
+		REVIEW_REFRESH_INTERVAL_MS,
+	);
+	reviewRefreshTimer.unref?.();
 	let hostUpdateActive = hostUpdate !== undefined;
 	let hostUpdateChecking = false;
+	let requestHostUpdate = (): void => {
+		throw new Error("Host update is unavailable.");
+	};
 	let stopping = false;
 	let shutdownPromise: Promise<void> | undefined;
 
@@ -192,7 +269,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 					armClientReap(clientKey);
 					return;
 				}
+				clearTerminalClient(clientKey);
 				releaseInterview(clientKey);
+				cancelMcpProbesOwnedBy(clientKey);
 			}, CLIENT_REPLAY_RETENTION_MS),
 		);
 	};
@@ -212,8 +291,11 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			if (url.pathname === "/health") {
 				return new Response("ok");
 			}
-			if (url.pathname.startsWith("/files/")) {
+			if (url.pathname.startsWith(FILES_PREFIX)) {
 				return serveWorktreeFile(url.pathname);
+			}
+			if (url.pathname.startsWith(BLOB_PREFIX)) {
+				return serveBlob(url.pathname, req.signal);
 			}
 			if (staticDir) {
 				return serveStatic(url.pathname, staticDir);
@@ -235,7 +317,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 				ws.subscribe(WS_CHANNELS.piExtensionUi);
 				ws.subscribe(WS_CHANNELS.sessionCreated);
 				ws.subscribe(WS_CHANNELS.sessionDeleted);
-				ws.subscribe(WS_CHANNELS.sessionActivity);
+				ws.subscribe(WS_CHANNELS.sessionResourcesChanged);
+				ws.subscribe(WS_CHANNELS.sessionState);
 				ws.subscribe(WS_CHANNELS.providerLogin);
 				ws.subscribe(WS_CHANNELS.providerChanged);
 				ws.subscribe(WS_CHANNELS.projectUpdated);
@@ -247,6 +330,9 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 				ws.subscribe(WS_CHANNELS.settingsChanged);
 				if (hostUpdate) ws.subscribe(WS_CHANNELS.hostUpdateAvailable);
 				ws.subscribe(WS_CHANNELS.reviewChanged);
+				ws.subscribe(WS_CHANNELS.reviewFailed);
+				ws.subscribe(WS_CHANNELS.turnChanged);
+				if (ws.data.protocolVersion >= MCP_PROTOCOL_VERSION) ws.subscribe(WS_CHANNELS.mcpStatus);
 				const hostPlatform: HostPlatform =
 					process.platform === "darwin" || process.platform === "win32"
 						? process.platform
@@ -321,6 +407,8 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 							try {
 								const result = await handleRequest(method, params, {
 									clientKey: ws.data.clientKey,
+									protocolVersion: ws.data.protocolVersion,
+									...(hostUpdate ? { runHostUpdate: requestHostUpdate } : {}),
 								});
 								return JSON.stringify({ id: requestId, ok: true, result });
 							} catch (err) {
@@ -360,25 +448,51 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		},
 	});
 
+	const backpressureReconciler = setInterval(() => {
+		const drained = drainedClientKeys(terminalBackpressured, (clientKey) =>
+			sockets.get(clientKey)?.getBufferedAmount(),
+		);
+		for (const clientKey of drained) {
+			log.warn(
+				`terminal backpressure latch lifted by reconciler, drain never arrived (${clientKey})`,
+			);
+			terminalBackpressured.delete(clientKey);
+			resumeClientTerminals(clientKey);
+		}
+	}, BACKPRESSURE_RECONCILE_MS);
+
+	const publishHostUpdate = (notice: HostUpdateNotice): void => {
+		if (!hostUpdateActive) return;
+		hostUpdateNotice = notice;
+		server.publish(
+			WS_CHANNELS.hostUpdateAvailable,
+			JSON.stringify({ channel: WS_CHANNELS.hostUpdateAvailable, data: notice }),
+		);
+	};
+
+	const clearHostUpdateTimer = (): void => {
+		if (hostUpdateTimer !== undefined) clearInterval(hostUpdateTimer);
+		hostUpdateTimer = undefined;
+	};
+
+	const hostUpdateBlocksDiscovery = (): boolean =>
+		hostUpdateNotice?.status === "running" || hostUpdateNotice?.status === "succeeded";
+
 	const checkForHostUpdate = async (): Promise<void> => {
-		if (!hostUpdate || !hostUpdateActive || hostUpdateChecking) return;
+		if (!hostUpdate || !hostUpdateActive || hostUpdateChecking || hostUpdateBlocksDiscovery()) {
+			return;
+		}
 		hostUpdateChecking = true;
 		try {
 			const result = await hostUpdate.check();
-			if (!hostUpdateActive) return;
-			if (result && !sameHostUpdateNotice(hostUpdateNotice, result)) {
-				hostUpdateNotice = {
+			if (!hostUpdateActive || hostUpdateBlocksDiscovery()) return;
+			if (result && !sameHostUpdateRelease(hostUpdateNotice, result)) {
+				publishHostUpdate({
 					currentVersion: result.currentVersion,
 					availableVersion: result.availableVersion,
 					channel: result.channel,
-				};
-				server.publish(
-					WS_CHANNELS.hostUpdateAvailable,
-					JSON.stringify({
-						channel: WS_CHANNELS.hostUpdateAvailable,
-						data: hostUpdateNotice,
-					}),
-				);
+					status: "available",
+				});
 			}
 		} catch {
 		} finally {
@@ -386,10 +500,30 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		}
 	};
 
+	requestHostUpdate = (): void => {
+		if (!hostUpdate || !hostUpdateActive || !hostUpdateNotice) {
+			throw new Error("Host update is unavailable.");
+		}
+		if (hostUpdateNotice.status === "running" || hostUpdateNotice.status === "succeeded") {
+			return;
+		}
+		publishHostUpdate({ ...hostUpdateNotice, status: "running" });
+		void (async () => {
+			try {
+				await hostUpdate.run();
+				if (!hostUpdateActive || hostUpdateNotice?.status !== "running") return;
+				publishHostUpdate({ ...hostUpdateNotice, status: "succeeded" });
+				clearHostUpdateTimer();
+			} catch {
+				if (!hostUpdateActive || hostUpdateNotice?.status !== "running") return;
+				publishHostUpdate({ ...hostUpdateNotice, status: "failed" });
+			}
+		})();
+	};
+
 	const stopHostUpdateChecks = (): void => {
 		hostUpdateActive = false;
-		if (hostUpdateTimer !== undefined) clearInterval(hostUpdateTimer);
-		hostUpdateTimer = undefined;
+		clearHostUpdateTimer();
 	};
 
 	setTerminalPublisher((clientKey, channel, data) => {
@@ -418,27 +552,22 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		}
 	});
 
-	setActivityProjectResolver((workspaceId) => {
-		try {
-			return getWorkspace(workspaceId).projectId;
-		} catch {
-			return null;
-		}
-	});
-
 	setSkillAdmissionResolver((workspaceId) => {
 		try {
 			const { projectId, skillOverrides } = getWorkspace(workspaceId);
 			const project = getProjects().find((p) => p.id === projectId);
-			return {
-				trusted: project?.trusted === true,
-				acknowledged: project?.acknowledgedSkills ?? [],
-				disabled: project?.disabledSkills ?? [],
-				disabledGroups: project?.disabledGroups ?? [],
-				overrides: skillOverrides ?? {},
-			};
+			return admissionContextFor(project, skillOverrides ?? {});
 		} catch {
-			return { trusted: false, acknowledged: [], disabled: [], disabledGroups: [], overrides: {} };
+			return admissionContextFor(undefined);
+		}
+	});
+
+	setMcpPolicyResolver((workspaceId) => {
+		try {
+			const { projectId } = getWorkspace(workspaceId);
+			return mcpPolicyOf(getProjects().find((p) => p.id === projectId));
+		} catch {
+			return mcpPolicyOf(undefined);
 		}
 	});
 
@@ -449,6 +578,19 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			return false;
 		}
 	});
+
+	setSubagentConcurrencyResolver((workspaceId) => {
+		const globalDefault = getConfig().subagentMaxConcurrent;
+		try {
+			return resolveSubagentMaxConcurrent(globalDefault, getWorkspace(workspaceId));
+		} catch {
+			return resolveSubagentMaxConcurrent(globalDefault, undefined);
+		}
+	});
+
+	setAgentReviewEnabledResolver(() => getConfig().agentReviewEnabled !== false);
+
+	setDisabledExtensionsResolver(() => new Set(getConfig().disabledExtensions));
 
 	setProjectPublisher((project) => {
 		const capture = additionalCapture();
@@ -491,13 +633,24 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			JSON.stringify({ channel: WS_CHANNELS.workspaceFsChanged, data: payload }),
 		);
 		reanchorWorkspace(payload.workspaceId);
+		if (
+			payload.truncated ||
+			payload.paths.some((path) => path === ".pi" || path.startsWith(".pi/"))
+		) {
+			void reconcileMcpSessions(liveSessionIdsOf(payload.workspaceId));
+		}
 	};
+	const stopUserMcpWatch = watchUserMcpConfig();
 	setWatchPublisher(publishFsChanged);
 	setSkillPathClassifier(isProjectSkillPath);
 	setFsNudgePublisher(publishFsChanged);
 
+	setWatchStartedPublisher(seedWorkspaceHead);
 	setRepoMetaPublisher((workspaceId) => {
+		recordWorkspaceHead(workspaceId);
 		refreshUserOwnedWorkspace(workspaceId);
+		const workspace = loadWorkspaces().find((w) => w.id === workspaceId);
+		if (workspace) forgetOpenBranchReview(workspace.worktreePath);
 		publishFsChanged({ workspaceId, paths: [], truncated: false, skillChange: "none" });
 	});
 
@@ -510,32 +663,58 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			}),
 		);
 	});
-	setReviewCommentHandler((sessionId, commentId, note) => ({
-		resolvedBody: resolveCommentFromAgent(sessionId, commentId, note).body,
-	}));
-	installTodoReviewSeams();
+	setReviewFailedPublisher((payload) => {
+		server.publish(
+			WS_CHANNELS.reviewFailed,
+			JSON.stringify({ channel: WS_CHANNELS.reviewFailed, data: payload }),
+		);
+	});
+	setReviewCommentHandler((sessionId, commentId, note) => {
+		const capture = additionalCapture();
+		const resolved = resolveCommentFromAgent(sessionId, commentId, note);
+		captureReviewCommentResolved(capture, "agent", "resolved");
+		return { resolvedBody: resolved.body };
+	});
+	installRequestReviewSeam();
+	setTitleToolHost(titleToolHost);
 	reconcilePendingReviewsOnBoot();
 
-	setSettingsPublisher((config) => {
+	setSettingsPublisher((config, appliedUpdate) => {
 		server.publish(
 			WS_CHANNELS.settingsChanged,
 			JSON.stringify({ channel: WS_CHANNELS.settingsChanged, data: config }),
 		);
-		const previousGrant = additionalCapture();
-		setAdditionalAnalyticsEnabled(additionalAnalyticsEnabled(config));
-		if (additionalCapture() !== previousGrant) {
+		if (applyAdditionalAnalyticsSettings(config, appliedUpdate)) {
 			setupObservation.clear();
 			runObservation.clear();
 			taskObservation.clear();
 			void observeCurrentSetup();
 		}
-		refreshSubagentTools();
+		if (
+			config.analyticsEnabled &&
+			config.analyticsConsentConfirmed &&
+			(appliedUpdate.analyticsEnabled === true || appliedUpdate.analyticsConsentConfirmed === true)
+		) {
+			startAttributionClaim();
+		}
+		if (appliedUpdate.subagentsEnabled !== undefined) refreshSubagentTools();
+		if (appliedUpdate.subagentMaxConcurrent !== undefined) refreshSubagentConcurrency();
+		if (appliedUpdate.agentReviewEnabled !== undefined) refreshAgentReviewTool();
+		if (appliedUpdate.disabledExtensions !== undefined) refreshExtensionTools();
 	});
 
 	setSessionCreatedPublisher((payload: SessionCreatedPayload) => {
 		server.publish(
 			WS_CHANNELS.sessionCreated,
 			JSON.stringify({ channel: WS_CHANNELS.sessionCreated, data: payload }),
+		);
+	});
+
+	setSessionStatePublisher((record: SessionStateRecord) => {
+		stampSessionActivity(record);
+		server.publish(
+			WS_CHANNELS.sessionState,
+			JSON.stringify({ channel: WS_CHANNELS.sessionState, data: record }),
 		);
 	});
 
@@ -548,17 +727,46 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		);
 	});
 
-	setSessionActivityPublisher((payload: SessionActivityPayload) => {
+	setMcpLoginPublisher((push, ownerClientKey) => {
+		const ws = sockets.get(ownerClientKey);
+		if (!ws) return;
+		try {
+			ws.send(JSON.stringify({ channel: WS_CHANNELS.providerLogin, data: push }));
+		} catch {}
+	});
+
+	setMcpStatusPublisher((snapshot) => {
 		server.publish(
-			WS_CHANNELS.sessionActivity,
-			JSON.stringify({ channel: WS_CHANNELS.sessionActivity, data: payload }),
+			WS_CHANNELS.mcpStatus,
+			JSON.stringify({ channel: WS_CHANNELS.mcpStatus, data: snapshot }),
 		);
 	});
 
-	setExtUiPendingObserver(syncSessionActivity);
+	setSessionResourcesPublisher((payload) => {
+		server.publish(
+			WS_CHANNELS.sessionResourcesChanged,
+			JSON.stringify({ channel: WS_CHANNELS.sessionResourcesChanged, data: payload }),
+		);
+	});
 
+	const turnTracker = new TurnTracker((sessionId) => {
+		const workspaceId = getSessionWorkspaceId(sessionId);
+		if (!workspaceId) return null;
+		try {
+			return { workspaceId, worktreePath: getWorkspace(workspaceId).worktreePath };
+		} catch {
+			return null;
+		}
+	});
+	setTurnPublisher((turn) => {
+		server.publish(
+			WS_CHANNELS.turnChanged,
+			JSON.stringify({ channel: WS_CHANNELS.turnChanged, data: turn }),
+		);
+	});
 	setSessionPublisher((payload) => {
 		runObservation.observe(payload.sessionId, payload.event);
+		void turnTracker.observe(payload.sessionId, payload.event);
 		if (payload.event.type === "tool_execution_start") {
 			const workspaceId = getSessionWorkspaceId(payload.sessionId);
 			if (workspaceId) taskObservation.toolStarted(workspaceId, payload.sessionId, payload.event);
@@ -567,15 +775,6 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			WS_CHANNELS.piEvent,
 			JSON.stringify({ channel: WS_CHANNELS.piEvent, data: payload }),
 		);
-		if (isPromptCommitted(payload.event)) {
-			const workspaceId = getSessionWorkspaceId(payload.sessionId);
-			if (workspaceId) void maybeNaiveNameWorkspace(payload.sessionId, workspaceId);
-		} else if (isSettledTurn(payload.event)) {
-			const workspaceId = getSessionWorkspaceId(payload.sessionId);
-			if (workspaceId) void maybeAutoRenameWorkspace(payload.sessionId, workspaceId);
-			handleReviewerSettled(payload.sessionId, payload.event);
-			maybeResumeReflection(payload.sessionId);
-		}
 		if (isTodoToolEnd(payload.event)) {
 			const workspaceId = getSessionWorkspaceId(payload.sessionId);
 			const observeCompletion = taskObservation.toolFinished(payload.sessionId, payload.event);
@@ -587,11 +786,18 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		}
 	});
 
-	setExtUiPublisher((request) => {
-		server.publish(
-			WS_CHANNELS.piExtensionUi,
-			JSON.stringify({ channel: WS_CHANNELS.piExtensionUi, data: request }),
-		);
+	setExtUiPublisher((request, audience) => {
+		const frame = JSON.stringify({ channel: WS_CHANNELS.piExtensionUi, data: request });
+		if (!audience) {
+			server.publish(WS_CHANNELS.piExtensionUi, frame);
+			return;
+		}
+		for (const ws of sockets.values()) {
+			if (ws.data.protocolVersion >= audience.belowProtocol) continue;
+			try {
+				ws.send(frame);
+			} catch {}
+		}
 	});
 
 	setLoginPublisher((push, generation) => {
@@ -607,19 +813,21 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 			params: { provider: "jbcentral", method: "central", auth_method: "central" },
 		});
 	});
-	setJbcentralChangedPublisher(() => {
+	const publishProviderChanged = () => {
 		server.publish(
 			WS_CHANNELS.providerChanged,
 			JSON.stringify({ channel: WS_CHANNELS.providerChanged, data: {} }),
 		);
-	});
+	};
+	setJbcentralChangedPublisher(publishProviderChanged);
+	setModelContextPublisher(publishProviderChanged);
 
+	const initialConfig = getConfig();
 	initializeAnalytics({
 		...(appVersion ? { appVersion } : {}),
 		...(analytics ?? {}),
-		additionalEnabled: additionalAnalyticsEnabled(getConfig()),
+		additionalEnabled: initialAdditionalAnalyticsEnabled(initialConfig),
 	});
-
 	reviveTerminalSessions();
 	for (const workspace of loadWorkspaces()) provisionInitialTerminal(workspace);
 
@@ -636,24 +844,29 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 	const stop = (): void => {
 		if (stopping) return;
 		stopping = true;
+		clearInterval(reviewRefreshTimer);
 		setupObservation.clear();
 		runObservation.reset();
 		taskObservation.clear();
 		void shutdownAnalytics();
 		stopHostUpdateChecks();
 		cancelAllLogins();
+		cancelAllMcpProbes();
 		stopJbcentralRuntime();
 		stopAllWatches();
+		stopUserMcpWatch();
 		disposeAllSessions();
 		for (const timer of reapTimers.values()) clearTimeout(timer);
 		reapTimers.clear();
 		sockets.clear();
+		clearInterval(backpressureReconciler);
 		terminalBackpressured.clear();
 		requestReplays.clear();
 		persistTerminalSessions();
 		closeAllTerminals();
 		setFeedbackPublisher(null);
 		setSettingsPublisher(null);
+		setModelContextPublisher(null);
 		setJbcentralAppliedPublisher(() => {});
 		setJbcentralChangedPublisher(() => {});
 		server.stop(true);
@@ -662,6 +875,7 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		shutdownPromise ??= (async () => {
 			stopHostUpdateChecks();
 			await Promise.allSettled([settleSessionsForShutdown(), shutdownAnalytics()]);
+			await turnTracker.drain();
 			stop();
 		})();
 		return shutdownPromise;
@@ -672,28 +886,19 @@ export async function createServer(options: CreateServerOptions = {}): Promise<R
 		hostUpdateTimer = setInterval(() => void checkForHostUpdate(), hostUpdate.intervalMs);
 	}
 
+	const startAttributionClaimWhenReady = (): void => {
+		const config = getConfig();
+		if (config.analyticsEnabled && config.analyticsConsentConfirmed) startAttributionClaim();
+	};
+
 	return {
 		get port() {
 			return server.port ?? port;
 		},
+		startAttributionClaim: startAttributionClaimWhenReady,
 		stop,
 		shutdown,
 	};
-}
-
-async function serveWorktreeFile(pathname: string): Promise<Response> {
-	const rest = pathname.slice("/files/".length);
-	const slash = rest.indexOf("/");
-	if (slash <= 0) return new Response("not found", { status: 404 });
-	const workspaceId = decodeURIComponent(rest.slice(0, slash));
-	const relPath = decodeURIComponent(rest.slice(slash + 1));
-	try {
-		const file = Bun.file(resolveWorktreeFile(workspaceId, relPath));
-		if (!(await file.exists())) return new Response("not found", { status: 404 });
-		return new Response(file);
-	} catch {
-		return new Response("not found", { status: 404 });
-	}
 }
 
 async function serveStatic(pathname: string, staticDir: string): Promise<Response> {

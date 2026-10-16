@@ -4,20 +4,26 @@ import {
 	BUILTIN_LAYOUT_PRESETS,
 	closeLayoutTab,
 	collectAllGroups,
+	findTabLocation,
+	openCenterTab,
 	resizeBottomRegion,
 	resizeSideRegion,
+	selectTab,
 	toolTab,
 } from "../layout";
 import {
+	applyLayoutAttention,
 	applyLayoutPresetLocally,
 	claimLayoutSurfaceId,
 	commitWorkspaceLayout,
+	emptyWorkspaceProjection,
 	ensureWorkspaceLayoutState,
 	initializeLocalLayoutState,
 	localLayoutStorageKey,
 	resetLayoutStateForTests,
 	setLayoutStateStablePreferencesForTests,
 	setLayoutStateStorageForTests,
+	workspaceProjectionReference,
 } from "./layoutState";
 
 class MemoryStorage implements Storage {
@@ -65,7 +71,8 @@ function resetStore(): void {
 		},
 		layoutDocumentsByWorkspace: {},
 		layoutAttentionByWorkspace: {},
-		layoutProjectionEpochByWorkspace: {},
+		layoutProjectionEpoch: 0,
+		workspaceSelectionHistory: [],
 		toasts: [],
 	});
 }
@@ -76,6 +83,98 @@ beforeEach(() => {
 });
 
 describe("frontend-local layout state", () => {
+	test("a document and tool selection publish atomically with sibling fan-out", async () => {
+		const local = new MemoryStorage();
+		const session = new MemoryStorage();
+		session.setItem("thinkrail:layout-surface-id", "atomic-surface");
+		setLayoutStateStorageForTests({ local, session }, endpoint);
+		await ensureWorkspaceLayoutState("A");
+		await ensureWorkspaceLayoutState("B");
+		const before = useAppStore.getState();
+		const base = before.layoutDocumentsByWorkspace.A;
+		const attention = before.layoutAttentionByWorkspace.A;
+		if (!base || !attention) throw new Error("Missing fixture");
+		const group = collectAllGroups(base).find(
+			(candidate) =>
+				candidate.location.area !== "center" &&
+				candidate.tabs.filter((tab) => tab.kind === "tool").length > 1,
+		);
+		if (!group) throw new Error("Missing mixed tool group");
+		const tool = group.tabs.find(
+			(tab) => tab.kind === "tool" && tab.id !== attention.selectedByGroup[group.location.groupId],
+		);
+		if (!tool) throw new Error("Missing alternate tool");
+		const changes: {
+			width: number | undefined;
+			selected: string | undefined;
+			sibling: string | undefined;
+		}[] = [];
+		const unsubscribe = useAppStore.subscribe((state) =>
+			changes.push({
+				width: state.workbenchFrame?.left.width,
+				selected: state.layoutAttentionByWorkspace.A?.selectedByGroup[group.location.groupId],
+				sibling: state.layoutAttentionByWorkspace.B?.selectedByGroup[group.location.groupId],
+			}),
+		);
+		try {
+			await commitWorkspaceLayout("A", resizeSideRegion(base, "left", 0.31), {
+				baseDocument: base,
+				attention: selectTab(attention, group.location, tool.id),
+			});
+		} finally {
+			unsubscribe();
+		}
+		expect(changes).toEqual([{ width: 0.31, selected: tool.id, sibling: tool.id }]);
+	});
+
+	test("retired recall and mixed-pane fields in saved state are dropped, and a terminal saved inside a tool pane rehomes", async () => {
+		const local = new MemoryStorage();
+		const session = new MemoryStorage();
+		session.setItem("thinkrail:layout-surface-id", "retired-fields");
+		setLayoutStateStorageForTests({ local, session }, endpoint);
+		const doc = await ensureWorkspaceLayoutState("A");
+		await commitWorkspaceLayout("A", resizeSideRegion(doc, "left", 0.33));
+		const key = localLayoutStorageKey(endpoint, "retired-fields");
+		const raw = local.getItem(key);
+		if (!raw) throw new Error("Missing persistence");
+		const stored = JSON.parse(raw) as {
+			frame: { right: { groups: { id: string; tools: unknown[] }[] } };
+			viewsByWorkspace: Record<string, { groups: Record<string, Record<string, unknown>> }>;
+			attentionByWorkspace: Record<string, Record<string, unknown>>;
+		};
+		const attention = stored.attentionByWorkspace.A;
+		if (!attention) throw new Error("Missing persisted attention");
+		attention.lastTerminalByGroup = { invalid: 42, unknown: "missing" };
+		const toolPane = stored.frame.right.groups.find((group) => group.tools.length > 0);
+		if (!toolPane) throw new Error("Missing right tool pane");
+		stored.viewsByWorkspace.A = {
+			groups: {
+				[toolPane.id]: {
+					tabs: [{ kind: "terminal", id: "terminal:legacy", name: "Legacy", tabKey: "legacy" }],
+					beforeToolByTabId: { "terminal:legacy": "specs" },
+				},
+			},
+		};
+		local.setItem(key, JSON.stringify(stored));
+		resetLayoutStateForTests();
+		resetStore();
+		setLayoutStateStorageForTests({ local, session }, endpoint);
+		const restored = await ensureWorkspaceLayoutState("A");
+		expect(restored.left.width).toBe(0.33);
+		expect(
+			"lastTerminalByGroup" in (useAppStore.getState().layoutAttentionByWorkspace.A ?? {}),
+		).toBe(false);
+		const location = findTabLocation(restored, "terminal:legacy");
+		expect(location?.area).toBe("bottom");
+		const view = useAppStore.getState().workspaceViewsByWorkspace.A;
+		expect(JSON.stringify(view)).not.toContain("beforeToolByTabId");
+		expect(
+			collectAllGroups(restored)
+				.find((group) => group.location.groupId === toolPane.id)
+				?.tabs.some((tab) => tab.kind === "terminal"),
+		).toBe(false);
+	});
+
 	test("a copied live surface id is reminted while an available reload id is retained", async () => {
 		const copied = new MemoryStorage();
 		copied.setItem("thinkrail:layout-surface-id", "surface-a");
@@ -138,6 +237,188 @@ describe("frontend-local layout state", () => {
 		expect(local.getItem(localLayoutStorageKey(endpoint, "surface-a"))).not.toBeNull();
 	});
 
+	test("a ready layout installs a new workspace view", async () => {
+		const local = new MemoryStorage();
+		const session = new MemoryStorage();
+		session.setItem("thinkrail:layout-surface-id", "surface-a");
+		setLayoutStateStorageForTests({ local, session }, endpoint);
+		await initializeLocalLayoutState();
+
+		const state = useAppStore.getState();
+		expect(state.layoutStateReady).toBe(true);
+		expect(state.workbenchFrame).not.toBeNull();
+		const document = await ensureWorkspaceLayoutState("new-workspace");
+
+		expect(useAppStore.getState().layoutDocumentsByWorkspace["new-workspace"]).toBe(document);
+	});
+
+	test("tool attention changes fan out to other workspace views", async () => {
+		const local = new MemoryStorage();
+		const session = new MemoryStorage();
+		session.setItem("thinkrail:layout-surface-id", "surface-a");
+		setLayoutStateStorageForTests({ local, session }, endpoint);
+		await ensureWorkspaceLayoutState("A");
+		await ensureWorkspaceLayoutState("B");
+
+		const state = useAppStore.getState();
+		const document = state.layoutDocumentsByWorkspace.A;
+		const attention = state.layoutAttentionByWorkspace.A;
+		if (!document || !attention) throw new Error("missing workspace A state");
+		const group = collectAllGroups(document).find(
+			(candidate) =>
+				candidate.location.area !== "center" &&
+				candidate.tabs.filter((tab) => tab.kind === "tool").length >= 2,
+		);
+		if (!group) throw new Error("missing multi-tool side group");
+		const selectedTool = group.tabs.find(
+			(tab) => tab.kind === "tool" && tab.id !== attention.selectedByGroup[group.location.groupId],
+		);
+		if (selectedTool?.kind !== "tool") {
+			throw new Error("missing alternate tool in side group");
+		}
+		const next = selectTab(attention, group.location, selectedTool.id);
+
+		applyLayoutAttention("A", next);
+
+		const after = useAppStore.getState();
+		expect(after.layoutAttentionByWorkspace.A).toEqual(next);
+		expect(after.layoutAttentionByWorkspace.B?.selectedByGroup[group.location.groupId]).toBe(
+			selectedTool.id,
+		);
+	});
+
+	test("re-applying unchanged attention writes nothing to the store", async () => {
+		const local = new MemoryStorage();
+		const session = new MemoryStorage();
+		session.setItem("thinkrail:layout-surface-id", "surface-a");
+		setLayoutStateStorageForTests({ local, session }, endpoint);
+		await ensureWorkspaceLayoutState("A");
+		const before = useAppStore.getState();
+		const attention = before.layoutAttentionByWorkspace.A;
+		const document = before.layoutDocumentsByWorkspace.A;
+		if (!attention || !document) throw new Error("missing workspace A state");
+		const center = collectAllGroups(document).find((group) => group.location.area === "center");
+		if (!center) throw new Error("missing center group");
+		let writes = 0;
+		const unsubscribe = useAppStore.subscribe(() => {
+			writes += 1;
+		});
+
+		applyLayoutAttention("A", attention);
+		applyLayoutAttention("A", { ...attention, selectedByGroup: { ...attention.selectedByGroup } });
+		applyLayoutAttention(
+			"A",
+			selectTab(attention, center.location, center.tabs[0]?.id ?? "", false),
+		);
+		unsubscribe();
+
+		expect(writes).toBe(0);
+		expect(useAppStore.getState().layoutAttentionByWorkspace.A).toBe(attention);
+	});
+
+	test("tool attention fan-out preserves a selected terminal in a mixed side group", async () => {
+		const local = new MemoryStorage();
+		const session = new MemoryStorage();
+		session.setItem("thinkrail:layout-surface-id", "surface-a");
+		setLayoutStateStorageForTests({ local, session }, endpoint);
+		await ensureWorkspaceLayoutState("A");
+		await ensureWorkspaceLayoutState("B");
+
+		const initial = useAppStore.getState();
+		const documentA = initial.layoutDocumentsByWorkspace.A;
+		const attentionA = initial.layoutAttentionByWorkspace.A;
+		const documentB = initial.layoutDocumentsByWorkspace.B;
+		if (!documentA || !attentionA || !documentB) throw new Error("missing workspace state");
+		const group = collectAllGroups(documentA).find(
+			(candidate) =>
+				candidate.location.area !== "center" &&
+				candidate.tabs.filter((tab) => tab.kind === "tool").length >= 2,
+		);
+		if (!group) throw new Error("missing multi-tool side group");
+		const targetGroup = collectAllGroups(documentB).find(
+			(candidate) => candidate.location.groupId === group.location.groupId,
+		);
+		if (!targetGroup) throw new Error("missing corresponding side group");
+		const terminalId = "terminal:layout-test";
+		targetGroup.tabs.push({
+			kind: "terminal",
+			id: terminalId,
+			name: "Layout test terminal",
+			tabKey: "layout-test",
+		});
+		await commitWorkspaceLayout("B", documentB);
+		const afterCommit = useAppStore.getState();
+		const attentionB = afterCommit.layoutAttentionByWorkspace.B;
+		if (!attentionB) throw new Error("missing workspace B attention");
+		afterCommit.setLayoutAttention("B", selectTab(attentionB, group.location, terminalId));
+
+		const selectedTool = group.tabs.find(
+			(tab) => tab.kind === "tool" && tab.id !== attentionA.selectedByGroup[group.location.groupId],
+		);
+		if (selectedTool?.kind !== "tool") {
+			throw new Error("missing alternate tool in side group");
+		}
+		applyLayoutAttention("A", selectTab(attentionA, group.location, selectedTool.id));
+
+		expect(
+			useAppStore.getState().layoutAttentionByWorkspace.B?.selectedByGroup[group.location.groupId],
+		).toBe(terminalId);
+	});
+
+	test("a first-visit projection matches the installed workspace view", async () => {
+		const local = new MemoryStorage();
+		const session = new MemoryStorage();
+		session.setItem("thinkrail:layout-surface-id", "surface-a");
+		setLayoutStateStorageForTests({ local, session }, endpoint);
+		await initializeLocalLayoutState();
+
+		const frame = useAppStore.getState().workbenchFrame;
+		if (!frame) throw new Error("The local workbench frame is not ready");
+		const pending = emptyWorkspaceProjection(frame);
+		const installed = await ensureWorkspaceLayoutState("first-visit");
+
+		expect(installed).toEqual(pending.document);
+		expect(useAppStore.getState().layoutAttentionByWorkspace["first-visit"]).toEqual(
+			pending.attention,
+		);
+	});
+
+	test("a first visit inherits the most recently active workspace tool selection", async () => {
+		const local = new MemoryStorage();
+		const session = new MemoryStorage();
+		session.setItem("thinkrail:layout-surface-id", "surface-a");
+		setLayoutStateStorageForTests({ local, session }, endpoint);
+		await ensureWorkspaceLayoutState("A");
+		const initial = useAppStore.getState();
+		const document = initial.layoutDocumentsByWorkspace.A;
+		const attention = initial.layoutAttentionByWorkspace.A;
+		const frame = initial.workbenchFrame;
+		if (!document || !attention || !frame) throw new Error("missing workspace A state");
+		const group = collectAllGroups(document).find(
+			(candidate) =>
+				candidate.location.area !== "center" &&
+				candidate.tabs.filter((tab) => tab.kind === "tool").length >= 2,
+		);
+		if (!group) throw new Error("missing multi-tool side group");
+		const selectedTool = group.tabs.find(
+			(tab) => tab.kind === "tool" && tab.id !== attention.selectedByGroup[group.location.groupId],
+		);
+		if (selectedTool?.kind !== "tool") {
+			throw new Error("missing alternate tool in side group");
+		}
+		applyLayoutAttention("A", selectTab(attention, group.location, selectedTool.id));
+		useAppStore.setState({ workspaceSelectionHistory: ["A"] });
+
+		const reference = workspaceProjectionReference("C");
+		const pending = emptyWorkspaceProjection(frame, reference);
+		const installed = await ensureWorkspaceLayoutState("C");
+
+		expect(reference?.document).toBe(document);
+		expect(pending.attention.selectedByGroup[group.location.groupId]).toBe(selectedTool.id);
+		expect(installed).toEqual(pending.document);
+		expect(useAppStore.getState().layoutAttentionByWorkspace.C).toEqual(pending.attention);
+	});
+
 	test("an invalid local frame falls back directly to Balanced", async () => {
 		const local = new MemoryStorage();
 		const session = new MemoryStorage();
@@ -169,6 +450,34 @@ describe("frontend-local layout state", () => {
 		expect(restored.center).toMatchObject({ kind: "group", tabs: [] });
 		expect(restored.left.groups[0]?.tabs).toEqual([toolTab("projects")]);
 		expect(restored.bottom.visible).toBe(true);
+	});
+
+	test("a persisted changes review tab survives reload as a preview-eligible center tab", async () => {
+		const local = new MemoryStorage();
+		const session = new MemoryStorage();
+		session.setItem("thinkrail:layout-surface-id", "surface-a");
+		setLayoutStateStorageForTests({ local, session }, endpoint);
+		const initial = await ensureWorkspaceLayoutState("workspace");
+		if (initial.center.kind !== "group") throw new Error("expected a single center group");
+		const opened = openCenterTab(
+			initial,
+			{ kind: "changes", id: "ws:changes:branch", name: "Changes", scope: { kind: "branch" } },
+			initial.center.id,
+			"preview",
+		);
+		if (!("document" in opened)) throw new Error(opened.reason);
+		await commitWorkspaceLayout("workspace", opened.document);
+
+		resetLayoutStateForTests();
+		resetStore();
+		setLayoutStateStorageForTests({ local, session }, endpoint);
+
+		const restored = await ensureWorkspaceLayoutState("workspace");
+		expect(restored.center).toMatchObject({
+			kind: "group",
+			previewTabId: "ws:changes:branch",
+			tabs: [{ kind: "changes", id: "ws:changes:branch", scope: { kind: "branch" } }],
+		});
 	});
 
 	test("reload restores the same surface without another host read", async () => {
@@ -235,12 +544,38 @@ describe("frontend-local layout state", () => {
 		setLayoutStateStorageForTests({ local, session }, endpoint);
 		const base = await ensureWorkspaceLayoutState("workspace");
 
-		await commitWorkspaceLayout("workspace", resizeBottomRegion(base, 0.45), base);
-		await commitWorkspaceLayout("workspace", resizeSideRegion(base, "left", 0.31), base);
+		await commitWorkspaceLayout("workspace", resizeBottomRegion(base, 0.45), {
+			baseDocument: base,
+		});
+		await commitWorkspaceLayout("workspace", resizeSideRegion(base, "left", 0.31), {
+			baseDocument: base,
+		});
 
 		const current = useAppStore.getState().layoutDocumentsByWorkspace.workspace;
 		expect(current?.bottom.height).toBe(0.45);
 		expect(current?.left.width).toBe(0.31);
+	});
+
+	test("geometry-only frame commits keep the projection epoch while shape changes advance it", async () => {
+		const local = new MemoryStorage();
+		const session = new MemoryStorage();
+		session.setItem("thinkrail:layout-surface-id", "surface-a");
+		setLayoutStateStorageForTests({ local, session }, endpoint);
+		const base = await ensureWorkspaceLayoutState("workspace");
+		const epoch = useAppStore.getState().layoutProjectionEpoch;
+
+		const resized = await commitWorkspaceLayout(
+			"workspace",
+			resizeBottomRegion(resizeSideRegion(base, "left", 0.31), 0.4),
+		);
+		expect(resized.left.width).toBe(0.31);
+		expect(useAppStore.getState().layoutProjectionEpoch).toBe(epoch);
+
+		await commitWorkspaceLayout("workspace", {
+			...resized,
+			left: { ...resized.left, visible: false },
+		});
+		expect(useAppStore.getState().layoutProjectionEpoch).toBe(epoch + 1);
 	});
 
 	test("a newly shown singleton tool cannot collide with a hidden workspace resource", async () => {
@@ -277,7 +612,15 @@ describe("frontend-local layout state", () => {
 		);
 		if (!active?.right.groups[0]) throw new Error("missing active right group");
 		active.right.groups[0].tabs.push(toolTab("review"));
-		await commitWorkspaceLayout("workspace-one", active);
+		const activeAttention = useAppStore.getState().layoutAttentionByWorkspace["workspace-one"];
+		if (!activeAttention) throw new Error("Missing active attention");
+		await commitWorkspaceLayout("workspace-one", active, {
+			attention: selectTab(
+				activeAttention,
+				{ area: "right", groupId: active.right.groups[0].id },
+				"tool:review",
+			),
+		});
 
 		const hiddenAfter = useAppStore.getState().layoutDocumentsByWorkspace["workspace-two"];
 		const allIds = hiddenAfter
@@ -288,6 +631,11 @@ describe("frontend-local layout state", () => {
 			.flatMap((group) => group.tabs)
 			.find((tab) => tab.kind === "tool" && tab.tool === "review");
 		expect(review?.id).not.toBe("tool:review");
+		expect(
+			useAppStore.getState().layoutAttentionByWorkspace["workspace-one"]?.selectedByGroup[
+				active.right.groups[0].id
+			],
+		).toBe(review?.id);
 	});
 
 	test("applying a preset changes one frame and reflows every local workspace view", async () => {

@@ -29,6 +29,10 @@ is one or many.
 The automatic count is half the available CPU parallelism, clamped to 1–8. Developers may explicitly
 select 1–16 lanes; `e2e:serial` is the stable debugging fallback. A focused invocation carrying Playwright
 arguments defaults to one lane unless its shard count is explicit, so an iteration on one spec stays cheap.
+CI splits the suite across machines with `THINKRAIL_E2E_JOB_SHARD=k/N`: the invocation runs slice `k` of
+`N`, and its local lanes subdivide that slice into global Playwright shards `(k-1)·L+i` of `N·L`, so the
+union of all jobs is exactly the suite. The runner owns `--shard`; combining the variable with an explicit
+`--shard` argument is rejected.
 Every public browser E2E runner owns one process-lifetime idle-sleep assertion on macOS before setup or
 build work begins; source, agent, full, binary, and desktop modes all receive it. The assertion uses the
 system `caffeinate` executable with idle-system-sleep scope and the owning runner pid, so display sleep stays
@@ -52,8 +56,12 @@ forwards SIGINT/SIGTERM to each tracked group exactly once and individually only
 then force-kills those same non-overlapping targets after a bounded grace even if the root exited. Windows
 first snapshots and retains
 descendant PIDs through PowerShell's `Get-CimInstance Win32_Process`, gracefully falls back when unavailable,
-and uses `taskkill /T` before a root fallback; force targets every retained PID with `taskkill /T /F`. This
-guarantee does not extend to the separate binary or desktop artifact runners. Tests for primary-modifier
+and uses `taskkill /T` before a root fallback; force targets every retained PID with `taskkill /T /F`. Managed
+roots are process-group leaders only on POSIX. On Windows they remain non-detached with `windowsHide: true`,
+so their ordinary Playwright, host, and build descendants inherit a nonvisual console instead of allocating
+visible console windows; Windows tree termination does not depend on detachment. Unit coverage pins only
+this platform-to-detachment selection; native window visibility is verified with a manual Windows console
+probe. This guarantee does not extend to the separate binary or desktop artifact runners. Tests for primary-modifier
 chords read the page's browser-reported platform through one fixture helper and inject Meta on Apple or
 Control elsewhere; hard-coding the runner host's modifier would exercise the wrong product branch under
 browser/platform emulation.
@@ -70,10 +78,102 @@ web-identity/config source making another provider available. A drift canary der
 environment literal from pi-ai's pinned credential-discovery distribution and requires it in the denylist;
 defensive cloud-source extras remain even when that distribution does not currently name them. No host may
 discover a real `central`, `pi`, or editor executable. The compiled-binary and
-packaged-desktop suites remain distinct artifact gates. Each has an unsharded, non-overlapping namespace;
-any artifact run and `e2e:serial` still run sequentially in the same worktree. A future launcher or
+packaged-desktop suites remain distinct artifact gates. Each has one lane-free, non-overlapping namespace
+per machine; any artifact run and `e2e:serial` still run sequentially in the same worktree. Artifact
+configs distribute individual tests, so a passed-through Playwright `--shard=k/N` splits them evenly
+across CI machines, each booting its own artifact host. A future launcher or
 deployment adds another host adapter for this same suite, never copied feature specs; shared behavior is
 therefore proven through every composition root.
+
+## Chat resource controls
+
+Resource wire coverage opens persisted chat fixtures through the real UI and checks the authoritative
+catalog's session/workspace scope, missing-output result, unavailable controls and empty stop-all.
+Its wire connection uses the launched page's port, not the source host's fixed port: binary and
+packaged-desktop adapters launch different endpoints for the same test.
+Historical fixtures are seeded before entering their workspace, so discovery does not race a just-created
+placement's persistence during browser reload. It never seeds a running resource or turns transcript
+text into execution authority. The empty-catalog UI probes cover the inspector's keyboard focus and
+focus return, the absent dock, narrow layouts, welcome/reconnect hydration and old-host capability hiding
+using real responses; the old-host probe changes only the advertised protocol version. The
+retirement focus probe supplies a completed child and persisted-form transcript at the wire seam, selects
+it in the inspector, then downgrades the next welcome; the UI, reconnect, capability retirement and Radix
+focus teardown remain real. This terminal-only fixture is not evidence of
+agent resource execution. Tagged provider-backed probes launch real commands and
+children through agent tools, inspect bounded plain-text logs/transcripts in the inspector, verify chat
+isolation, reload and closed-inspector completion, and exercise individual Stop and confirmed Stop all. They never
+select a model or seed a running-resource catalog. SDK faux-provider unit tests are not evidence of
+browser agent execution. `attention-background-work.live` pins the background-work unread hold end to end:
+while a real background command or detached subagent runs after the parent settled, the host never
+publishes an unread completion and the worktree row shows running, not a dot; with the window unfocused
+(a seen result is read at once), the dot lights only after the woken turn and the running badge clears.
+
+**MCP servers** coverage (`mcp-settings.spec.ts`) runs the server package's stdio fixture through the
+absolute path of the runner's `bun`, since the host's hermetic `PATH` has none. It adds a user server
+through the Settings form while the workspace's persisted chat is open (entering a workspace auto-opens
+its latest chat, so the test waits for that tab first instead of racing it), sees it Connected · 4 tools
+once that chat reloads, and disabled for that chat from the Resources inspector, then removes it; it opens a chat from a not-running
+server's row, reconnects that server per chat once it fails and shows its masked log, and names an
+unreadable user `mcp.json` with an edit hint; and it proves a repository-defined server flags the chat's
+attention marker, waits for Review & approve, and starts once approved. Each test removes the `mcp.json`
+it wrote (the lane's agent dir or the fixture repository's `.pi/`) in `finally`, so no later scenario
+starts servers.
+
+Native wheel probes target the actual transcript viewport again after clicking a floating Latest
+button; a pointer left at a removed overlay is not evidence of a gesture delivered to the scroller.
+Disclosure-anchor probes place the complete header below the real sticky breadcrumb before asserting
+fixed-position behavior. Intersection with the scroller alone does not prove that a header is unobscured.
+Pierre surfaces paint plain text first and replace their rows when the worker's highlight lands, which
+is late on slower hosts such as the compiled-binary and packaged-desktop artifacts; pointer probes wait
+for highlighted tokens (`pierreHighlightedTokens`) before measuring or dragging rows.
+
+## Render profiling harness
+
+`bun run perf:render [--runs N] [--out file] [--cpu N] [--scenario a,b] [playwright args]` is an opt-in
+measurement run, never a gate. It builds `apps/web/dist-profile` (see [[module-web]]), boots the ordinary
+isolated host on it through `playwright.perf.config.ts`, and runs `e2e/perf/*.perf.ts` — a pattern the
+default config does not match. It uses the worktree's serial lane (port block and state dir), so do not
+run it alongside another serial E2E run in the same worktree. Defaults: 5 runs, output
+`$TMPDIR/thinkrail-render-profile.json`. Unknown `--scenario` names fail before the build. A failed
+Playwright run writes no output, so the last good file survives.
+
+- **Collection.** An init script installs a minimal `__REACT_DEVTOOLS_GLOBAL_HOOK__` before React loads,
+  which puts the root in profile mode. Each commit walks the fiber tree DevTools-style (descend only into
+  re-rendered subtrees) and records, per component name, commits, self time (`selfBaseDuration`) and
+  inclusive time (`actualDuration`, not double-counted for nested same-name instances). Unnamed components
+  are labelled by their nearest named owner. Hooks report under their host component. Labels are bundle
+  function names: a `$N` suffix marks a name the bundler renamed to avoid a clash (`Markdown$1` is
+  react-markdown, not the app's `Markdown`). A named subtree
+  (`markdown`: roots `AssistantMarkdown,Markdown`, override with `THINKRAIL_PERF_MARKDOWN_ROOTS`) sums the
+  self time and renders of every component under its outermost root, so any markdown engine is counted.
+- **Timer precision.** The harness adds COOP/COEP headers to documents and scripts through `page.route` so
+  the page is cross-origin isolated (5 µs timers, not 100 µs); the measurement browser disables Chromium's
+  local-network-access check, which otherwise blocks the WS from a fulfilled document. A run fails if the
+  page is not isolated, or if no profiled commit with nonzero duration was recorded since load, which means
+  the host serves `dist/` instead of `dist-profile/`.
+- **Scenarios.** Chat streaming seeds a persisted transcript and replays a deterministic Pi event stream
+  (`text_delta` chunks, tool calls, `partialResult` updates, `agent_settled`) into the browser at the
+  wire seam with fixed pacing; this measures client rendering only and is not evidence of agent behavior.
+  Region toggles fold and unfold a right tool group, hide and show the right side, and hide and show the
+  bottom over a seeded transcript with a live terminal; it exists to catch a shape change that remounts the
+  center or a neighbouring pane (a regression shows up as `ChatView`/`Markdown`/tool-panel mounts rather
+  than a handful of chrome updates). Live file edits rewrite a worktree file under an open file tab. Large
+  diff opens a 3,000-line Pierre diff and wheel-scrolls it. Runs interleave scenarios; the runner reports
+  medians and run-to-run spread.
+- **Heavy scenarios** (only with `--scenario`; the default set is the four above). `long-stream` replays one
+  ~26k-char seeded markdown answer (headings, nested lists, ts/py/bash/json fences, a GFM table, mermaid) in
+  10–60-char deltas every 15 ms; `long-stream-xl` is the same at ~100k chars. `parallel-agents` opens 20
+  persisted chats as tabs in one workspace and interleaves 20 replays; `background-agents` streams the 19
+  hidden tabs while the visible chat stays idle, so every commit it records is cost the visible UI pays for
+  background work. Both then open a hidden tab and assert its streamed text arrived.
+- **Weak machine.** `--cpu N` applies CDP `Emulation.setCPUThrottlingRate` for the measured window only.
+- **Extra metrics.** Per run: long tasks (count, total, max), rAF frame gaps (p50/p95/max, dropped 60 Hz
+  frames), CDP main-thread task/script/layout/style ms and heap delta, scenario counters (deltas, mounted
+  chats), and markdown subtree root renders, self ms, and self ms per delta. Main-thread time includes
+  Playwright's `routeWebSocket` relay, so compare it only across variants of the same scenario.
+- **Variants.** Run the command from a worktree root to measure that worktree; the output records
+  `rootDir`, `gitHead`, `dirty` and `dirtyTreeHash` (sha256 of `git status --porcelain` plus `git diff HEAD`;
+  untracked file contents are not hashed).
 
 ## Desktop-backed mode
 
@@ -96,14 +196,19 @@ whether credentials exist, and how an action fails are independent facts about a
 made real combinations unrepresentable, and a state that cannot be reached is a failure mode nothing asserts
 (`update --install` refusing while the host is below the minimum needs both at once). It
 materializes a test-owned synthetic PI extension written solely against PI's public API; no Central artifact,
-source fragment, output string, route, constant, binary, or secret is copied. Browser scenarios cover
+source fragment, output string, route, constant, binary, or secret is copied. Like the real artifact it both
+introduces a novel provider (never a row) and re-registers the built-in `anthropic` (a configured row
+labelled JetBrains AI with no Sign-out, gone again once the artifact is removed). Browser scenarios cover
 absent/outdated/malformed probes plus an above-minimum version staying ready, update, sign-in/retry, native
 add/remove, synchronous-action
 serialization, watched external add/change/remove, successful current-generation cutover for new chats, old
 live-chat coexistence after Disconnect, and boot/runtime retention after a closed synthetic-extension load
-failure. Unit coverage owns action single-flight, watcher debounce/coalescing, stale-candidate rejection, boot
-with and without the opaque extension, and exact-model no-fallback for new or reattached chats after Central
-is removed. There is no legacy migration, busy-turn drain, reattachment of live chats, compensation,
+failure. External replacement waits for the settled configured verdict and verifies that the replacement
+model is visible while the old model is gone. A fast candidate may finish before a browser poll observes
+`configuring`; that pending-work state is checked with a held candidate in the server unit fixture, not a
+minimum-visible-duration assumption in the browser. Unit coverage owns action single-flight, watcher
+debounce/coalescing, stale-candidate rejection, boot with and without the opaque extension, and exact-model
+no-fallback for new or reattached chats after Central is removed. There is no legacy migration, busy-turn drain, reattachment of live chats, compensation,
 affected-chat blocking, or recovery seal to test. Sentinel values in synthetic child output, extension
 diagnostics, and provider routing fields
 are asserted absent from the closed results and rendered settings surface; structural DTO allowlists and
@@ -142,8 +247,8 @@ Connect is withheld while the verdict says signed out, every connect-driven scen
 button appears instead of assuming it — a verdict left behind by an earlier scenario would otherwise hide it,
 exactly as it would for someone returning to the panel inside the window. Each state is also captured as a
 review PNG under `e2e/screenshots/<group>/`
-(gitignored, stable path, one element shot per state, retina). Screenshots are evidence, never the
-assertion — a state that only a picture would catch is a missing `data-testid`. Identical files across
+(gitignored, stable path, one element shot per state, retina, CSS animations fast-forwarded so a
+spring mid-flight never ends up in the picture). Screenshots are evidence, never the assertion — a state that only a picture would catch is a missing `data-testid`. Identical files across
 scenarios are a finding, not a defect: they are how the suite shows two distinct host situations rendering
 one indistinguishable card.
 
@@ -158,19 +263,17 @@ used when the variable is absent). A missing artifact, failed generation, or una
 before any provider turn; PI's ordinary first-available fallback is never accepted as test configuration.
 The same copy and hermetic environment seed the private restart host.
 
-**Workspace activity** (`workspace-activity.spec.ts`) covers the Projects rail's agent-state glyphs without
-an agent, and is the reason the host's `failed`/`waiting` derivations read the transcript: a seeded fixture
-transcript (an assistant with `stopReason: "error"`, or an `ask_user_question` call plus its `ack` tool
-result) becomes real activity, so the whole chain — host derivation, `session.activity` push, store fold,
-rollup, render — runs for real on the no-agent lane. It asserts the row's `data-activity` and the glyph's
-`aria-label` (never the tooltip, which needs hover), the rollup breakdown when one workspace holds both
-states, and the collapsed-project rollup.
-
-Two entry paths are covered on purpose. Opening the chat attaches the session and exercises the **live**
-path; a **reload after seeding** exercises the **disk** path — the snapshot union — by asserting the glyph
-appears while the workspace is never activated and no chat tab exists, which is the reviewer scenario a
-host restart produces. Note that **seeding must happen after `openFixtureProject`**: `openAppFresh` calls
-`resetState`, which deletes the isolated agent dir's `sessions` tree, so anything seeded earlier is wiped.
+**Session state** coverage seeds complete transcript states and drives normalized host blockers/runs to pin
+Projects rail presentation: both needs-input and owner-globally unread results render the same static green
+attention dot (“Needs attention”), while genuinely running sessions swap the workspace/project identity
+icon for the shared `RunningIcon` brand badge in the row's own colour. The rail must not substitute
+question/check/result glyphs or a generic spinner. Running alone has no attention dot; queued, hidden/background, and explicitly stopped sessions stay
+quiet; a live blocked question keeps its dot while its orthogonal running badge may coexist. Reconnect/restart
+snapshots, direct-versus-passive activation, owner-global clearing, and snapshot
+retry are covered; live-agent coverage pins `data-running`/`running-icon` (its strokes animate, and stay fully drawn and still under
+reduced motion) and coexistence with
+`data-attention`/`attention-dot`. These are stable visual hooks rather than alternate state models. The retired `session.activityList → []` compatibility method
+remains a focused handler test.
 
 **Topbar chrome** (`topbar-chrome.spec.ts`) proves the web side of the desktop title-bar contract without a
 desktop: it injects the three host-published CSS properties (`--window-chrome-inset-left|right`,
@@ -188,12 +291,35 @@ file/terminal/chat placement nor misses the peer-created chat's history-only dom
 
 Bottom-workbench coverage retains all four alignments with real side-stack ownership of excluded lower
 corners, live alignment during side resizing and narrow-width compression, pointer/keyboard persistence of
-only the separator-owned side ratio, independent height/group resizing, 27 px folding with `Ctrl+F6` restore
-focus, modal-aware visibility chords, PTY continuity while hidden, and process-free default-terminal
+only the separator-owned side ratio, separator hit areas that leave the preceding panel's scrollbar edge alone, independent height/group resizing, zero-body-space folding with
+edge-rail and `Ctrl+F6` restoration, modal-aware visibility chords, PTY continuity while hidden, and process-free default-terminal
 reservation. Terminal creation now exercises the host pending-marker handshake plus independent local
-placement, not a layout revision or peer geometry synchronization.
+placement, not a layout revision or peer geometry synchronization. `tool-rails.spec.ts` covers multiple
+sessions per existing pane, independent terminal groups, the pane-cluster rail grammar (clusters mirror
+pane order, boundary drops create panes while entry-half drops join one, a tool paints no target on a
+terminal strip, the pane-header title drags its tool, an unplaced tool sits dimmed in a trailing cluster),
+a terminal pane's selected session surviving fold and reload, linked collapsed regions, keyboard focus without implicit activation, a browser
+history workspace switch during a singleton drag, and DOM continuity across shape changes: it stamps the
+center tabs, chat input, terminal, Projects tree, and Changes toolbar before each fold/hide/show and asserts
+the same nodes survive, which fails if any panel group is remounted. The compressed-resize matrix uses independent cases
+with explicit compression assertions, avoiding accidental collapse caused by the rails' occupied width.
+`rail-layout-regressions.spec.ts` covers node replacement before bottom measurement, explicit drops into
+partially/all-folded destinations (a terminal beside a folded tool pane lands in its own pane), and switch-mid-resize rollback across every resize consumer. It checks
+live geometry during the canceled gesture, unchanged persistence, retained DOM, reload, and subsequent
+resize usability rather than treating a cancellation toast alone as success. `project-home-chrome.spec.ts`
+covers the no-workspace branch: the fresh start screen and Project Home carry the left tool rail and
+plain Projects pane header with no right/bottom rail, the rail entry / Hide / `Mod+B` toggle with their
+focus endpoints, and rail/header geometry that matches the workbench across a workspace round trip.
 
 ## Isolation contract
+
+The no-agent setup seeds a test-owned empty `models.json` and never reads or copies developer
+`auth.json` or `models.json`; provider scenarios use synthetic fixtures, and the separately authorized
+real-Central mode keeps its opaque-artifact-only credential contract above. Model-context coverage
+exercises the Default / 1M / Custom selector through the real host: shared and per-provider saves,
+retained live-chat limits versus new-chat metadata, Custom validation and Apply focus, cross-client
+convergence with draft invalidation, sanitized read/write failures with Retry, mobile keyboard use,
+and pre-v76 hiding.
 
 General and private-restart fixtures seed additional analytics off with consent already confirmed, so
 unrelated scenarios stay unblocked. They also seed the automatic interview invitation as permanently
@@ -201,17 +327,22 @@ dismissed: the serial agent lane intentionally accumulates accepted prompts acro
 feedback coverage injects and asserts the addressed invitation channel directly. Before any fixture reset
 deletes transcript storage, it lists and disposes every live session through the public wire; disposal aborts
 and settles an unfinished provider turn first, so a test ending mid-turn cannot recreate a headerless JSONL
-behind the next scenario. Consent tests reset the choice over the real settings wire and cover drafts,
-persistence failures, reloads, cross-client convergence, prompt priority, and pre-v64 fallback.
+behind the next scenario. Consent tests reset the choice over the real settings wire and cover on-by-default preference priming,
+Done/ordinary-close acceptance, immediate off refusal, persistence failures and retries, confirmed reloads,
+cross-client convergence, prompt priority, and pre-v65 fallback.
 
 Every concurrent lane derives a distinct data dir, HOME, pi-agent dir, fixture repository, binary cache,
 desktop cache/state plus ready/control files, Playwright transform cache, restart artifacts,
 picker/editor/provider control files, host/restart/binary/desktop ports, and Central fixture artifacts. The
 transform cache is lane-local because Playwright's shared cache assumes a single runner process; sharing it
-lets a cold shard consume another shard's partially written transform. The lane's fake executable directory
-lives under `.bun/bin`: this intentionally marks the injected, hermetic host `PATH` as complete to
-`resolveShellEnv()`, preventing login-shell repair from replacing the Central/editor stubs with
-developer-machine executables. Folder selection comes from one picker control file across the source,
+lets a cold shard consume another shard's partially written transform. Every host (source, binary, desktop,
+and the restart spec's own) receives `SHELL` pointing at the lane's fixture `login-shell` next to the
+Central/editor stubs: `resolveShellEnv()` always probes the login shell at boot and merges its PATH in, so the
+fixture answers the probe (recognized by shared's `LOGIN_ENV_MARKER`) with that marker and the same hermetic
+PATH the host was given, and otherwise execs the runner's real shell, keeping terminal specs on a genuine
+shell. Without it the probe would merge developer-machine directories into the hermetic PATH (and import the
+developer's login environment) and a spec could reach a real `central`, `pi`, or editor. (The `.bun/bin` directory name is historical: it once marked the PATH as complete to a short-circuit
+that no longer exists.) Folder selection comes from one picker control file across the source,
 binary, and desktop hosts: plain content returns a path and an `error:<message>` directive forces a
 platform-independent failure. The source host also receives empty `DISPLAY` and `WAYLAND_DISPLAY`, so a
 broken control cannot reach a developer's Linux display; native Linux preflight stays unit-covered. Port
@@ -219,6 +350,9 @@ allocation remains stable and collision-safe across
 worktrees: the registry claim distinguishes
 a lane's logical key while checking staleness against the real worktree path. Legacy plain-path claims are
 still valid.
+
+Cross-window placement probes wait for the peer's initial chat hydration before changing its layout;
+creating a terminal can legitimately supersede an in-flight passive restore, which is not placement leakage.
 
 Different worktrees may run concurrently. Two complete E2E invocations in one worktree remain sequential;
 the lane ids are deliberately stable across runs so interrupted state is reclaimed rather than leaked.
@@ -235,7 +369,14 @@ Windows lane into the real profile (see `module-shared`).
   isolation and port-allocation rules, report orchestration, and the public `e2e*` package commands.
   `e2e/fixtures/git.ts` is the one place specs shell out to `git` (`git`, `gitQuiet`, `gitText`, `gitAs`,
   `commitFile`); `gitAs`/`commitFile` pin a throwaway e2e identity so a seeded commit's authorship never
-  depends on the developer machine's real git config.
+  depends on the developer machine's real git config. `e2e/fixtures/pierre.ts` is the one place specs
+  touch `@pierre/diffs`' DOM (`pierreLines`, `pierreLineNumber`, `selectPierreLine`,
+  `pierreCollapsedContext`, `pierreDeletionsSide`): a Pierre release that renames `data-line`,
+  `data-column-number`, `data-unmodified-lines` or `data-deletions` is a one-file repair, and no spec
+  encodes how a line is selected. `e2e/phone-review.spec.ts` is the phone-class gate for the review
+  surface — Pierre file rendering, unified-only diffs, tap-to-comment and inline placement at
+  `PHONE_VIEWPORT` — reached the way the desktop shell reaches a phone today: open at desktop width, then
+  resize and hide the auxiliary stacks.
 - **Consumes:** the built web artifact, the host's public boot/wire behavior, sanctioned server test-fixture
   exports, CLI binary, the locator from [[module-artifact-tests]], shared retrying teardown helper, git,
   Chromium, and Playwright. Standalone native/installer smoke and shared artifact probes are owned by
@@ -259,13 +400,33 @@ browser-local persistence, and cross-browser isolation without involving a provi
 coverage seeds one canonical giant Markdown block and drives real coarse wheel input so initial virtual
 geometry cannot clamp before the row mounts. Chat-title coverage uses persisted Pi transcripts to prove the
 native `/name` path, open-tab and closed-history inline rename paths, keyboard focus recovery, bounded
-long-history scrolling, and reload durability without involving a provider. Questionnaire paging uses
-canonical persisted tool-call/ack fixtures to pin six-question rounds beyond four, tall-page reveal,
+long-history scrolling, and reload durability without involving a provider. Visualize coverage
+(`visualize.spec.ts`) independently seeds short historical tool-call/result transcripts through the
+sanctioned session fixture before workspace entry. It pins completed/default-expanded diagrams,
+fullscreen SVG growth, pan/reset/Escape and claimed WebKit pinch gestures, exact comparison pros/cons
+and recommendation, and assistant mermaid fences alongside tool diagrams re-rendering to the host's
+`--container-elevated-bg` after selecting a discovered opposite appearance in real settings. Malformed
+source is seeded as a successful historical tool result (`isError: false`) so both tool and chat exercise
+the renderer's plain-source fallback, not the tool-error branch. These regressions need no provider,
+prompt submission, route mock, or screenshot. Extension on/off coverage (`extensions-settings.spec.ts`) drives the
+real Settings → Extensions switch through `settings.update`, proves it survives a reload, and seeds a
+historical `visualize` call that must still render its diagram while the extension is off; each test restores
+the switch in `afterEach` because the shard shares one host. The provider-backed counterpart in
+`visualize.live.spec.ts` runs first: with the extension off the agent is never offered `visualize`, and the
+existing diagram/comparison tests that follow re-prove the restored tool in the same chat. MCP tool-card coverage
+(`mcp-tool-cards.spec.ts`) seeds historical `mcp__*`, resource and `tool_search` results the same way and pins
+the single shared image strip, the collapsed JSON tree, Full output through the real `mcp.readOutput`
+(a recorded file and an expired one), Sign in deep links into Settings › MCP servers or Providers according
+to pi's reported authentication kind (provider identity remains visible), and the raw-text fallback for a truncated listing; its element shots under `e2e/screenshots/mcp-tool-cards/` are review evidence
+only. Questionnaire paging uses canonical persisted tool-call/ack fixtures to pin six-question rounds beyond
+four, tall-page reveal,
 fresh-chat restored-page reveal, visible review focus, and coarse-pointer focus
 without provider variability; desktop package tests separately pin the stable
 backend-profile/window adapter required across dynamic-port restarts. Streaming-band coverage remains
-`@agent` because only Pi's real row growth exercises that lifecycle. Before handoff, every app-affecting
-change runs the complete `bun run e2e` no-agent gate. Artifact-only regressions remain covered by
+`@agent` because only Pi's real row growth exercises that lifecycle. Stream-mount coverage injects
+synthetic `pi.event` frames into the page wire (`fixtures/streamReplay.ts`) under CPU throttling to prove
+a working chat stays shown when it mounts; it is not evidence of provider behavior. Before handoff, every
+app-affecting change runs the complete `bun run e2e` no-agent gate. Artifact-only regressions remain covered by
 `e2e:binary`, `e2e:desktop`, and their shared host probe: a synthetic opaque external extension loads with
 no `pi` executable on `PATH` for default and custom `PI_CODING_AGENT_DIR`; desktop additionally proves its
 staged `.ts` PI runtime and physical resources. Real Central acceptance remains explicitly authorized and

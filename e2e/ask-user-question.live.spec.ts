@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import { openWorkspaceChat } from "./fixtures/app";
+import { activeWorktreeRow, openWorkspaceChat } from "./fixtures/app";
 
 async function ask(page: Page, prompt: string): Promise<void> {
 	await openWorkspaceChat(page);
@@ -29,6 +29,17 @@ test("single-select: focus, roving keys, and Enter resolve the tool", {
 
 	const card = activeCard(page);
 	await expect(card).toBeVisible({ timeout: 90_000 });
+	const workspaceRow = activeWorktreeRow(page);
+	await expect(workspaceRow).toHaveAttribute("data-attention", "true");
+	await expect(workspaceRow.getByTestId("attention-dot")).toHaveAttribute(
+		"aria-label",
+		"Needs attention",
+	);
+	await expect(workspaceRow).toHaveAttribute("data-running", "true");
+	await expect(workspaceRow.getByTestId("running-icon")).toHaveAttribute(
+		"aria-label",
+		"Agent working",
+	);
 
 	const options = card.getByTestId("ask-option");
 	await expect(options.first()).toBeFocused();
@@ -381,28 +392,30 @@ test("multi-question: page arrows, Tab-to-note, and Enter reach review before su
 	await expect(record).toContainText("second line");
 });
 
-test("typing while a live question waits queues steering instead of superseding it", {
+test("typing while a live question waits supersedes it and delivers the text as the next user message", {
 	tag: "@agent",
 }, async ({ page }) => {
 	test.setTimeout(150_000);
 	await ask(
 		page,
-		`Call the ask_user_question tool with one single-select question and 2 options. ${ONLY_TOOL} After I answer, follow any queued steering and reply briefly.`,
+		`Call the ask_user_question tool with one single-select question and 2 options. ${ONLY_TOOL} If I reply in chat instead of answering, reply with one short sentence that repeats my message.`,
 	);
 	const card = activeCard(page);
 	await expect(card).toBeVisible({ timeout: 90_000 });
 
-	await page.getByTestId("chat-input").fill("Apply this after I answer the question.");
+	await page.getByTestId("chat-input").fill("Never mind the question, just say hello.");
 	await page.getByTestId("chat-send").click();
 
-	await expect(card).toBeVisible();
-	await expect(page.getByTestId("queue-item").first()).toContainText(
-		"Apply this after I answer the question.",
-	);
-	await card.getByTestId("ask-option").first().click();
-	await card.getByTestId("ask-submit").click();
-	await expect(answeredRecord(page)).toBeVisible({ timeout: 60_000 });
+	const superseded = page
+		.locator('[data-testid="ask-user-question"][data-tone="superseded"]')
+		.first();
+	await expect(superseded).toBeVisible({ timeout: 60_000 });
+	await expect(superseded).toContainText("Superseded");
+	await expect(activeCard(page)).toHaveCount(0);
 	await expect(page.getByTestId("queue-item")).toHaveCount(0, { timeout: 60_000 });
+	await expect(page.getByTestId("user-message-body").last()).toContainText(
+		"Never mind the question, just say hello.",
+	);
 });
 
 test("the awaiting card survives closing and reopening the chat", { tag: "@agent" }, async ({

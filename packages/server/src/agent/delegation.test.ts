@@ -1,9 +1,13 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
-import { createFauxCore, fauxAssistantMessage } from "@earendil-works/pi-ai/providers/faux";
+import {
+	createFauxCore,
+	fauxAssistantMessage,
+	fauxToolCall,
+} from "@earendil-works/pi-ai/providers/faux";
 import { ModelRuntime, SessionManager } from "@earendil-works/pi-coding-agent";
 import {
 	SUBAGENT_COMPLETION_CUSTOM_TYPE,
@@ -23,7 +27,13 @@ import {
 	setSessionPublisher,
 	settleSessionsForShutdown,
 } from "./agentSessionManager";
-import { delegationRootDir, delegationServiceFor, readChildTranscript } from "./delegation";
+import {
+	delegationRootDir,
+	delegationServiceFor,
+	readChildTranscript,
+	refreshSubagentConcurrency,
+	setSubagentConcurrencyResolver,
+} from "./delegation";
 import { configurePiRuntime } from "./piRuntime";
 
 const faux = createFauxCore({
@@ -183,6 +193,67 @@ function gatedChildResponse(): { release: () => void } {
 	return { release };
 }
 
+test("owned children remain inspectable before and during their first provider response", async () => {
+	const cwd = tmpDir("trdel-prefile-");
+	const workspaceId = "ws-prefile";
+	const { sessionId } = await createSession({ cwd, workspaceId });
+	const service = delegationServiceFor(workspaceId);
+	const child = await service.createChild({
+		parent: sessionId,
+		info: { createdBy: "test" },
+		visibility: "hidden",
+		session: {},
+	});
+	expect(existsSync(child.record.sessionFile)).toBe(false);
+	expect(readChildTranscript(workspaceId, sessionId, child.sessionId)).toEqual({
+		messages: [],
+		status: "queued",
+	});
+	for (const [workspace, parent, id] of [
+		["foreign-workspace", sessionId, child.sessionId],
+		[workspaceId, "foreign-parent", child.sessionId],
+		[workspaceId, sessionId, "unknown-child"],
+	] as const)
+		expect(() => readChildTranscript(workspace, parent, id)).toThrow("No transcript found");
+	const { release } = gatedChildResponse();
+	const run = child.runQueued("Wait for the provider.");
+	try {
+		await waitFor(() => child.snapshot?.status === "running");
+		expect(existsSync(child.record.sessionFile)).toBe(true);
+		expect(readChildTranscript(workspaceId, sessionId, child.sessionId)).toMatchObject({
+			messages: [
+				{
+					role: "user",
+					content: [{ type: "text", text: "Wait for the provider." }],
+				},
+			],
+			status: "running",
+		});
+	} finally {
+		release();
+		await run;
+	}
+	expect(JSON.stringify(readChildTranscript(workspaceId, sessionId, child.sessionId))).toContain(
+		"GATED_DONE",
+	);
+	const canceled = await service.createChild({
+		parent: sessionId,
+		info: { createdBy: "test" },
+		visibility: "hidden",
+		session: {},
+	});
+	await canceled.runQueued("Never sent.", { signal: AbortSignal.abort() });
+	expect(existsSync(canceled.record.sessionFile)).toBe(false);
+	expect(readChildTranscript(workspaceId, sessionId, canceled.sessionId)).toEqual({
+		messages: [],
+		status: "aborted",
+	});
+	await removeSession(sessionId);
+	expect(() => readChildTranscript(workspaceId, sessionId, canceled.sessionId)).toThrow(
+		"No transcript found",
+	);
+});
+
 test("deleteSession resolves only after its child cascade settles", async () => {
 	const cwd = tmpDir("trdel-await-");
 	const { sessionId } = await createSession({ cwd, workspaceId: "ws-await" });
@@ -324,7 +395,96 @@ test("children follow their parent's retained runtime generation across a flip",
 	}
 });
 
-test("transcript reads reject path-like ids — wire strings never escape the delegation root", () => {
+function pngHeaderOnly(width: number, height: number): Buffer {
+	const ihdr = Buffer.alloc(25);
+	ihdr.writeUInt32BE(13, 0);
+	ihdr.write("IHDR", 4, "ascii");
+	ihdr.writeUInt32BE(width, 8);
+	ihdr.writeUInt32BE(height, 12);
+	ihdr[16] = 8;
+	ihdr[17] = 2;
+	return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), ihdr]);
+}
+
+test("a child without extensions reads images raw and still gets the oversized-image guard", async () => {
+	const cwd = tmpDir("trdel-image-");
+	writeFileSync(join(cwd, "wide.png"), pngHeaderOnly(9000, 10));
+	baseRuntime.registerProvider("faux-claude", {
+		api: faux.api,
+		baseUrl: "http://faux.local",
+		apiKey: "faux",
+		streamSimple: faux.streamSimple,
+		models: [
+			{
+				id: "claude-faux",
+				name: "claude-faux",
+				api: faux.api,
+				reasoning: false,
+				input: ["text", "image"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 100_000,
+				maxTokens: 4096,
+			},
+		],
+	});
+	const { sessionId } = await createSession({ cwd, workspaceId: "ws-image" });
+	let toolResult: unknown;
+	faux.setResponses([
+		fauxAssistantMessage(fauxToolCall("read", { path: "wide.png" })),
+		(context) => {
+			toolResult = context.messages.at(-1);
+			return fauxAssistantMessage("SEEN");
+		},
+	]);
+	try {
+		const child = await delegationServiceFor("ws-image").createChild({
+			parent: sessionId,
+			visibility: "hidden",
+			info: { createdBy: "tool:Agent", roleName: "custom", roleSource: "project" },
+			session: { model: { provider: "faux-claude", id: "claude-faux" }, tools: ["read"] },
+		});
+		expect((await child.runQueued("Read wide.png.")).finalText).toBe("SEEN");
+		const seen = JSON.stringify(toolResult);
+		expect(seen).toContain("9000\u00d710 exceeds the provider's 8000px image-dimension limit");
+		expect(seen).not.toContain("Image omitted");
+	} finally {
+		await removeSession(sessionId);
+		baseRuntime.unregisterProvider("faux-claude");
+	}
+});
+
+test("the host concurrency resolver binds new services and live-resizes only the refreshed workspace", () => {
+	const limits: Record<string, number> = { "ws-limit-a": 2, "ws-limit-b": 5 };
+	const resolved: string[] = [];
+	setSubagentConcurrencyResolver((workspaceId) => {
+		resolved.push(workspaceId);
+		return limits[workspaceId] ?? 4;
+	});
+	try {
+		const a = delegationServiceFor("ws-limit-a");
+		const b = delegationServiceFor("ws-limit-b");
+		expect(resolved).toEqual(["ws-limit-a", "ws-limit-b"]);
+		const applied: Array<[string, number]> = [];
+		a.setMaxConcurrentPerParent = (slots) => applied.push(["ws-limit-a", slots]);
+		b.setMaxConcurrentPerParent = (slots) => applied.push(["ws-limit-b", slots]);
+
+		limits["ws-limit-a"] = 9;
+		refreshSubagentConcurrency("ws-limit-a");
+		expect(applied).toEqual([["ws-limit-a", 9]]);
+
+		limits["ws-limit-b"] = 1;
+		refreshSubagentConcurrency();
+		expect(applied).toContainEqual(["ws-limit-a", 9]);
+		expect(applied).toContainEqual(["ws-limit-b", 1]);
+	} finally {
+		setSubagentConcurrencyResolver(() => 4);
+	}
+});
+
+test("transcript reads accept canonical dotted session ids and reject path-like ids", () => {
+	expect(() => readChildTranscript("ws", "parent..session", "child..session")).toThrow(
+		"No transcript found",
+	);
 	expect(() => readChildTranscript("../../etc", "p", "c")).toThrow("Invalid workspaceId");
 	expect(() => readChildTranscript("ws", "..", "c")).toThrow("Invalid parentSessionId");
 	expect(() => readChildTranscript("ws", "p", "x/../y")).toThrow("Invalid childSessionId");

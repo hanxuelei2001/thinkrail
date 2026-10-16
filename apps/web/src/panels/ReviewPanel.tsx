@@ -9,11 +9,11 @@ import {
 	RiDeleteBin6Line as Trash2,
 } from "@remixicon/react";
 import type { ReviewComment } from "@thinkrail/contracts";
+import { PopoverTrigger } from "@thinkrail/ui/popover";
+import { IconTooltip } from "@thinkrail/ui/tooltip";
+import { cn } from "@thinkrail/ui/utils";
 import { useState } from "react";
 import { QuietScrollArea } from "@/components/QuietScrollArea";
-import { PopoverTrigger } from "@/components/ui/popover";
-import { IconTooltip } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
 import { PlanStatusIcon, SectionLabel } from "../chat/planKit";
 import { sessionGlance } from "../chat/planView";
 import { glanceIcon } from "../chat/TodoList";
@@ -28,6 +28,7 @@ import {
 	commentSurface,
 	fileSummaries,
 	lineRef,
+	outdatedReason,
 	type ReviewFileSummary,
 	type ReviewSurface,
 	reviewFileSurface,
@@ -150,7 +151,7 @@ export function ReviewPanel({ workspaceId, failed }: { workspaceId: string; fail
 					</ConfirmPopover>
 				</div>
 			)}
-			<QuietScrollArea className="min-h-0 flex-1" viewportClassName="p-12">
+			<QuietScrollArea className="min-h-0 flex-1" viewportClassName="p-panel-inset">
 				{files.length === 0 ? (
 					<p data-testid="review-empty" className="px-8 py-4 tr-text-metadata text-text-subtle">
 						{hasComments
@@ -342,10 +343,10 @@ function CommentRow({
 	const isDraft = comment.status === "draft";
 	const [confirmDelete, setConfirmDelete] = useState(false);
 	const ref = lineRef(comment);
-	const runtime = useAppStore((s) =>
-		comment.sessionId ? s.sessions[comment.sessionId] : undefined,
-	);
-	const glance = runtime ? sessionGlance(runtime) : "waiting";
+	const glance = useAppStore((s) => {
+		const runtime = comment.sessionId ? s.sessions[comment.sessionId] : undefined;
+		return runtime ? sessionGlance(runtime) : "waiting";
+	});
 
 	const update = async (patch: { status?: ReviewComment["status"] }) => {
 		try {
@@ -379,7 +380,7 @@ function CommentRow({
 				data-testid="review-comment-open"
 				onClick={() => (comment.sessionId ? onOpenChat(comment.sessionId) : onNavigate())}
 				title={comment.sessionId ? "Open the discussion" : "Show in file"}
-				className="flex w-full items-start gap-8 rounded-[var(--radius-sm)] px-4 py-4 text-left hover:bg-control-bg-hovered"
+				className="flex w-full items-start gap-8 rounded-sm px-4 py-4 text-left hover:bg-control-bg-hovered"
 			>
 				{ordinal !== undefined ? (
 					<span className="w-16 shrink-0 text-center tr-code-text text-text-subtle">
@@ -403,15 +404,7 @@ function CommentRow({
 							</span>
 						)}
 						{ref && <span className="tr-code-text text-text-subtle">{ref}</span>}
-						{comment.reflection?.verdict === "refuted" ? (
-							<span
-								data-testid="review-comment-refuted"
-								title={`An independent reflector judged this finding refuted: ${comment.reflection.reason} — it was held back from the auto-fix cycle.`}
-								className="tr-text-eyebrow text-text-subtle"
-							>
-								refuted by reflection
-							</span>
-						) : comment.stale ? (
+						{comment.stale ? (
 							<span
 								data-testid="review-comment-stale"
 								title="The code this finding was filed against was rewritten after review — it won't ride the auto-fix cycle"
@@ -421,7 +414,12 @@ function CommentRow({
 							</span>
 						) : (
 							comment.anchorState === "outdated" && (
-								<span className="tr-text-eyebrow text-text-subtle">outdated</span>
+								<span
+									className="tr-text-eyebrow text-text-subtle"
+									title={outdatedReason(comment.anchor)}
+								>
+									outdated
+								</span>
 							)
 						)}
 					</span>
@@ -508,7 +506,7 @@ function ResolvedRow({
 	return (
 		<div
 			data-testid="review-comment-resolved"
-			className="group relative flex items-center gap-8 rounded-[var(--radius-sm)] px-4 py-4"
+			className="group relative flex items-center gap-8 rounded-sm px-4 py-4"
 		>
 			<PlanStatusIcon kind="done" />
 			<span

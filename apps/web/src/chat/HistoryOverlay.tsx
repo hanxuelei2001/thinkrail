@@ -5,14 +5,15 @@ import {
 	RiDeleteBin6Line as Trash2,
 } from "@remixicon/react";
 import type { HistoryScope, MessageHit, PromptHit } from "@thinkrail/contracts";
-import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
 	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { IconTooltip } from "@/components/ui/tooltip";
+} from "@thinkrail/ui/dropdown-menu";
+import { IconTooltip } from "@thinkrail/ui/tooltip";
+import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useNow } from "@/components/useNow";
 import { platformShortcutLabel, relativeTime } from "@/lib";
 import {
 	type ChatLocationRequest,
@@ -59,7 +60,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
 		<>
 			{parts.map(({ text: part, key }) =>
 				terms.includes(part.toLowerCase()) ? (
-					<mark key={key} className="rounded-[var(--radius-xs)] bg-primary-soft text-text-default">
+					<mark key={key} className="rounded-xs bg-primary-soft text-text-default">
 						{part}
 					</mark>
 				) : (
@@ -92,7 +93,7 @@ function DeleteChatButton({
 					event.stopPropagation();
 					onDeleteChat(workspaceId, sessionId);
 				}}
-				className={`flex shrink-0 items-center justify-center rounded-[var(--radius-sm)] p-4 text-text-muted opacity-0 transition hover:bg-container-elevated-bg hover:text-feedback-error group-hover:opacity-100 ${
+				className={`flex shrink-0 items-center justify-center rounded-sm p-4 text-text-muted opacity-0 transition hover:bg-container-elevated-bg hover:text-feedback-error group-hover:opacity-100 ${
 					isSelected ? "opacity-100" : ""
 				}`}
 			>
@@ -123,6 +124,7 @@ function PromptRow({
 	onOpenMessage: (target: ChatLocationRequest) => void;
 	onDeleteChat: (workspaceId: string, sessionId: string) => void;
 }) {
+	const now = useNow();
 	const firstLine = hit.text.split("\n")[0] ?? hit.text;
 	const showChip = (scope.kind === "project" || scope.kind === "all") && !!hit.workspaceId;
 	const target = jumpTarget(hit);
@@ -131,7 +133,7 @@ function PromptRow({
 			data-testid="history-item"
 			data-kind="prompt"
 			data-selected={isSelected}
-			className={`group flex w-full items-center gap-4 rounded-[var(--radius-sm)] border-l-2 py-4 pl-8 pr-4 text-left tr-text-ui ${
+			className={`group flex w-full items-center gap-4 rounded-sm border-l-2 py-4 pl-8 pr-4 text-left tr-text-ui ${
 				isSelected
 					? "border-l-primary bg-control-bg-selected text-text-default"
 					: "border-l-transparent text-text-muted"
@@ -151,7 +153,7 @@ function PromptRow({
 					</span>
 				) : null}
 				<span className="shrink-0 text-text-muted tr-text-metadata">
-					{relativeTime(hit.timestamp)}
+					{relativeTime(hit.timestamp, now)}
 				</span>
 			</button>
 			{isSelected ? (
@@ -171,7 +173,7 @@ function PromptRow({
 						e.stopPropagation();
 						onSaveAsTemplate();
 					}}
-					className={`flex shrink-0 items-center justify-center rounded-[var(--radius-sm)] p-4 text-text-muted opacity-0 transition hover:bg-container-elevated-bg hover:text-text-default group-hover:opacity-100 ${
+					className={`flex shrink-0 items-center justify-center rounded-sm p-4 text-text-muted opacity-0 transition hover:bg-container-elevated-bg hover:text-text-default group-hover:opacity-100 ${
 						isSelected ? "opacity-100" : ""
 					}`}
 				>
@@ -197,7 +199,7 @@ function PromptRow({
 								e.stopPropagation();
 								onOpenMessage(target);
 							}}
-							className={`flex shrink-0 items-center justify-center rounded-[var(--radius-sm)] p-4 text-text-muted opacity-0 transition hover:bg-container-elevated-bg hover:text-text-default group-hover:opacity-100 ${
+							className={`flex shrink-0 items-center justify-center rounded-sm p-4 text-text-muted opacity-0 transition hover:bg-container-elevated-bg hover:text-text-default group-hover:opacity-100 ${
 								isSelected ? "opacity-100" : ""
 							}`}
 						>
@@ -229,13 +231,14 @@ function MessageRow({
 	onPick: () => void;
 	onDeleteChat: (workspaceId: string, sessionId: string) => void;
 }) {
+	const now = useNow();
 	const unmapped = !hit.workspaceId;
 	return (
 		<div
 			data-testid="history-item"
 			data-kind="message"
 			data-selected={isSelected}
-			className={`group flex w-full items-center gap-4 rounded-[var(--radius-sm)] border-l-2 pr-4 tr-text-ui ${
+			className={`group flex w-full items-center gap-4 rounded-sm border-l-2 pr-4 tr-text-ui ${
 				isSelected
 					? "border-l-primary bg-control-bg-selected text-text-default"
 					: "border-l-transparent text-text-muted"
@@ -254,7 +257,7 @@ function MessageRow({
 					<span>·</span>
 					<span>{hit.role}</span>
 					<span>·</span>
-					<span>{relativeTime(hit.timestamp)}</span>
+					<span>{relativeTime(hit.timestamp, now)}</span>
 					{unmapped ? <span>· not a ThinkRail workspace</span> : null}
 				</span>
 				<span className="overflow-hidden whitespace-nowrap text-ellipsis">
@@ -278,10 +281,11 @@ function PromptPreviewFooter({
 	hit: PromptHit;
 	workspaceName: string | undefined;
 }) {
+	const now = useNow();
 	const parts = [
 		hit.sessionTitle,
 		hit.workspaceId ? (workspaceName ?? "workspace") : undefined,
-		relativeTime(hit.timestamp),
+		relativeTime(hit.timestamp, now),
 	].filter((part): part is string => !!part);
 	return <>{parts.join(" · ")}</>;
 }
@@ -297,6 +301,7 @@ function HistoryPreview({
 	workspaceName: string | undefined;
 	className: string;
 }) {
+	const now = useNow();
 	return (
 		<div data-testid="history-preview" className={`flex flex-col overflow-hidden ${className}`}>
 			{item ? (
@@ -308,7 +313,7 @@ function HistoryPreview({
 						{item.kind === "prompt" ? (
 							<PromptPreviewFooter hit={item.hit} workspaceName={workspaceName} />
 						) : (
-							messageCrumb(item.hit)
+							messageCrumb(item.hit, now)
 						)}
 					</div>
 				</>
@@ -317,8 +322,8 @@ function HistoryPreview({
 	);
 }
 
-function messageCrumb(hit: MessageHit): string {
-	return `${hit.sessionTitle || hit.cwd.split("/").pop() || "session"} · ${hit.role} · ${relativeTime(hit.timestamp)}`;
+function messageCrumb(hit: MessageHit, now: number): string {
+	return `${hit.sessionTitle || hit.cwd.split("/").pop() || "session"} · ${hit.role} · ${relativeTime(hit.timestamp, now)}`;
 }
 
 export interface HistoryOverlayProps {
@@ -513,7 +518,7 @@ export function HistoryOverlay({
 		<div
 			data-testid="history-overlay"
 			data-stage={stage}
-			className="absolute bottom-full left-8 right-8 mb-4 flex flex-col overflow-hidden rounded-[var(--radius-lg)] border border-border-default bg-container-elevated-bg shadow-[var(--shadow-md)]"
+			className="absolute bottom-full left-8 right-8 mb-4 flex flex-col overflow-hidden rounded-lg border border-border-default bg-container-elevated-bg shadow-[var(--shadow-md)]"
 		>
 			<div className="flex items-center gap-8 border-b border-border-default p-8">
 				<input

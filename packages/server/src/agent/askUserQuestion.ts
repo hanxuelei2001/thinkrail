@@ -29,7 +29,6 @@ export const RESERVED_LABELS = ["Other", "Type something.", "Chat about this", "
 
 const OptionSchema = Type.Object({
 	label: Type.String({
-		maxLength: MAX_LABEL_LENGTH,
 		description: `MAX ${MAX_LABEL_LENGTH} CHARACTERS. The concise (1-5 word) text the user sees and selects.`,
 	}),
 	description: Type.String({
@@ -43,7 +42,6 @@ const OptionSchema = Type.Object({
 	),
 	recommendedReason: Type.Optional(
 		Type.String({
-			maxLength: MAX_RECOMMENDED_REASON_LENGTH,
 			description: `MAX ${MAX_RECOMMENDED_REASON_LENGTH} CHARACTERS. Why you recommend this option — one short sentence, rendered inline as a 'Why:' line under the option. Set only on the option whose label carries '(Recommended)'.`,
 		}),
 	),
@@ -55,7 +53,6 @@ const QuestionSchema = Type.Object({
 			'The complete question, ending with a question mark. E.g. "Which library should we use for date formatting?"',
 	}),
 	header: Type.String({
-		maxLength: MAX_HEADER_LENGTH,
 		description: `MAX ${MAX_HEADER_LENGTH} CHARACTERS. Very short chip/tag next to the question, e.g. "Auth method".`,
 	}),
 	options: Type.Array(OptionSchema, {
@@ -86,17 +83,17 @@ const DESCRIPTION = `Ask the user one or more structured, multiple-choice questi
 1. The request is underspecified and you cannot proceed without a concrete decision.
 2. You need a user preference, requirement, or a direction/implementation choice.
 
-Calling this tool PAUSES EXECUTION until the user answers: the questions render inline in the chat as an interactive card (tabs when there are several), and the user's answers arrive as this tool's result. Do not continue working on the blocked task or assume an answer while the tool is pending. The user answers or skips through the card; composer messages sent meanwhile queue behind the question and do not resolve it. Notes:
+Calling this tool PAUSES EXECUTION until the user answers: the questions render inline in the chat as an interactive card (tabs when there are several), and the user's answers arrive as this tool's result. Do not continue working on the blocked task or assume an answer while the tool is pending. The user answers or skips through the card, or replies in chat instead — then the card is superseded and their free-form reply arrives as the next user message. Notes:
 - Every question also gets an "Other" option with a free-text field, and the user can always Skip the whole questionnaire (you are told they declined) — do NOT author "Other"-style, free-text, or escape options yourself (reserved labels are rejected).
 - Set multiSelect: true when several answers are valid; the user may combine checked options with their own typed answer.
 - If you recommend one option, make it FIRST, append "(Recommended)" to its label, and set its recommendedReason to one short sentence on why you recommend it over the alternatives (shown inline under the option).
 - Use options[].preview (markdown) for concrete artifacts to compare side-by-side (code, ASCII mockups, configs). Single-select only.
-- Group all clarifying questions into ONE call — do not chain calls back-to-back.
+- One call = one round: ask every question you can ask now in a single call — never split independent questions across back-to-back calls. A question that depends on another question's answer waits for a later round; ask follow-up rounds until no decision is left assumed.
 - Call ask_user_question as the only tool in the assistant response; other tool calls in that response are discarded and can be re-issued after the answer.
 - The user may answer only some questions; unanswered ones are reported as declined.`;
 
 const PROMPT_GUIDELINES = [
-	`Call ask_user_question whenever the request is ambiguous and a concrete decision is needed — include every question needed in one call, with ${MIN_OPTIONS}-${MAX_OPTIONS} options each. The call blocks until its result contains the user's answers.`,
+	`Call ask_user_question whenever the request is ambiguous and a concrete decision is needed — one call is one round holding every question answerable now (dependent questions wait for the next round), with ${MIN_OPTIONS}-${MAX_OPTIONS} options each. The call blocks until its result contains the user's answers.`,
 	"Every option needs a concise label (1-5 words) and a description of what it means / its trade-off.",
 	'Recommend by putting the option first with "(Recommended)" appended and setting its recommendedReason to one short sentence (shown inline under the option) on why you recommend it over the alternatives; the user can always type a custom answer or skip the questionnaire.',
 	"Call ask_user_question as the only tool in the assistant response; continue with other tools after the answer.",
@@ -307,9 +304,15 @@ export const ASK_STOPPED_ERROR = "Question cancelled because the run was stopped
 
 export type AskUserQuestionWaitOutcome =
 	| { kind: "answer"; result: AskUserQuestionResult }
+	| { kind: "superseded" }
 	| { kind: "abandoned" };
 
-type LiveQuestionPhase = "expected" | "waiting" | "answer-accepted-uncommitted" | "stopped";
+type LiveQuestionPhase =
+	| "expected"
+	| "waiting"
+	| "answer-accepted-uncommitted"
+	| "superseded"
+	| "stopped";
 
 interface LiveQuestionWaiter {
 	phase: LiveQuestionPhase;
@@ -368,7 +371,8 @@ export interface AskUserQuestionWaiters {
 			isError?: boolean;
 		}[],
 	): void;
-	isWaitingForAnswer(): boolean;
+	supersede(): boolean;
+	currentQuestion(): { interactionId: string; needsInput: boolean } | null;
 	hasRecoverableCall(): boolean;
 	prepareShutdown(): Promise<void> | null;
 	prepareAbort(): Promise<void> | null;
@@ -407,6 +411,7 @@ export function createAskUserQuestionWaiters(): AskUserQuestionWaiters {
 			}
 			waiter.executeStarted = true;
 			if (waiter.phase === "answer-accepted-uncommitted") return waiter.answerPromise;
+			if (waiter.phase === "superseded") return Promise.resolve({ kind: "superseded" });
 			if (waiter.phase === "stopped") return Promise.reject(new Error(ASK_STOPPED_ERROR));
 			waiter.phase = "waiting";
 			if (signal?.aborted) {
@@ -428,8 +433,11 @@ export function createAskUserQuestionWaiters(): AskUserQuestionWaiters {
 			const waiter = waiting.get(toolCallId);
 			if (!waiter) return { handled: false };
 			if (waiter.phase === "stopped") throw notAwaiting(toolCallId);
+			if (waiter.phase === "superseded") {
+				throw new Error(`${ANSWERABILITY_ERRORS.superseded}: ${toolCallId}`);
+			}
 			if (waiter.phase === "answer-accepted-uncommitted") {
-				throw new Error(`This questionnaire was already answered: ${toolCallId}`);
+				throw new Error(`${ANSWERABILITY_ERRORS.already_answered}: ${toolCallId}`);
 			}
 			waiter.phase = "answer-accepted-uncommitted";
 			waiter.resolveAnswer({ kind: "answer", result });
@@ -469,13 +477,29 @@ export function createAskUserQuestionWaiters(): AskUserQuestionWaiters {
 				}
 			}
 		},
-		isWaitingForAnswer() {
-			return [...waiting.values()].some(
-				(waiter) => waiter.phase === "expected" || waiter.phase === "waiting",
-			);
+		supersede() {
+			let superseded = false;
+			for (const waiter of waiting.values()) {
+				if (waiter.phase !== "expected" && waiter.phase !== "waiting") continue;
+				if (waiter.phase === "waiting") waiter.resolveAnswer({ kind: "superseded" });
+				waiter.phase = "superseded";
+				superseded = true;
+			}
+			return superseded;
+		},
+		currentQuestion() {
+			for (const [interactionId, waiter] of waiting) {
+				return {
+					interactionId,
+					needsInput: waiter.phase === "expected" || waiter.phase === "waiting",
+				};
+			}
+			return null;
 		},
 		hasRecoverableCall() {
-			return [...waiting.values()].some((waiter) => waiter.phase !== "stopped");
+			return [...waiting.values()].some(
+				(waiter) => waiter.phase !== "stopped" && waiter.phase !== "superseded",
+			);
 		},
 		prepareShutdown() {
 			shutdownPrepared = true;
@@ -521,7 +545,7 @@ export function isolateAskUserQuestionBatch(message: AgentMessage): AgentMessage
 
 export function createAskUserQuestionTool(
 	waiters: AskUserQuestionWaiters,
-): ToolDefinition<typeof AskUserQuestionSchema, AskUserQuestionResult> {
+): ToolDefinition<typeof AskUserQuestionSchema, AskUserQuestionResult | AskUserQuestionAckDetails> {
 	return {
 		name: ASK_USER_QUESTION_TOOL_NAME,
 		label: "Ask User Question",
@@ -537,6 +561,9 @@ export function createAskUserQuestionTool(
 			if (!validation.ok) return toolResult(validation.message, { answers: [], cancelled: true });
 
 			const outcome = await waiters.wait(toolCallId, signal);
+			if (outcome.kind === "superseded") {
+				return { content: [{ type: "text", text: ASK_ACK_TEXT }], details: { kind: "ack" } };
+			}
 			if (outcome.kind === "abandoned") {
 				return {
 					...toolResult(ASK_STOPPED_ERROR, { answers: [], cancelled: true }),

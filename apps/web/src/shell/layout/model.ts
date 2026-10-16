@@ -1,4 +1,5 @@
 import {
+	isPreviewCompatibleTabKind,
 	type LayoutAttention,
 	layoutResourceIdentity,
 	randomId,
@@ -32,8 +33,7 @@ export const LAYOUT_LIMITS = {
 	minSideBodyHeight: 120,
 	minBottomBodyHeight: 120,
 	minBottomGroupWidth: 160,
-	foldedSideHeight: 27,
-	foldedBottomWidth: 27,
+	auxiliaryHeaderHeight: 32,
 	initialBottomHeight: 0.3,
 	maxBottomHeight: 0.7,
 } as const;
@@ -73,6 +73,7 @@ export const LAYOUT_TOOLS: readonly LayoutToolId[] = [
 	"files",
 	"changes",
 	"review",
+	"plan",
 ];
 
 export const LAYOUT_TOOL_DEFAULT_SIDES: Record<LayoutToolId, LayoutSide> = {
@@ -81,6 +82,7 @@ export const LAYOUT_TOOL_DEFAULT_SIDES: Record<LayoutToolId, LayoutSide> = {
 	files: "right",
 	changes: "right",
 	review: "right",
+	plan: "right",
 };
 
 const LAYOUT_TOOL_NAMES: Record<LayoutToolId, string> = {
@@ -89,6 +91,7 @@ const LAYOUT_TOOL_NAMES: Record<LayoutToolId, string> = {
 	files: "Files",
 	changes: "Changes",
 	review: "Review",
+	plan: "TODO List",
 };
 
 export function layoutTabName(tab: LayoutTab): string {
@@ -351,9 +354,14 @@ export function removeLayoutGroup(
 			focusGroupId: centerId,
 		};
 	}
-	const targetIndex = sourceIndex > 0 ? sourceIndex - 1 : 1;
-	const target = region.groups[targetIndex];
-	if (!target) return { reason: "The auxiliary group no longer exists." };
+	const target = [sourceIndex - 1, sourceIndex + 1]
+		.map((index) => region.groups[index])
+		.find(
+			(candidate) =>
+				candidate !== undefined &&
+				source.tabs.every((tab) => canJoinAuxiliaryGroup(candidate, tab)),
+		);
+	if (!target) return { reason: "Move or hide this group's tabs before removing it." };
 	const groups = region.groups
 		.filter((group) => group.id !== source.id)
 		.map((group) =>
@@ -423,13 +431,13 @@ export function unplacedTools(document: WorkspaceLayoutDocument): readonly Layou
 	return LAYOUT_TOOLS.filter((tool) => findPlacedResource(document, toolTab(tool)) === null);
 }
 
-export function unplacedToolsForSide(
+export function unplacedToolsForRegion(
 	document: WorkspaceLayoutDocument,
-	side: LayoutSide,
+	region: LayoutAuxiliaryRegion,
 ): readonly LayoutToolId[] {
 	return unplacedTools(document).filter(
 		(tool) =>
-			(document.toolRestoreTargets[tool]?.region ?? LAYOUT_TOOL_DEFAULT_SIDES[tool]) === side,
+			(document.toolRestoreTargets[tool]?.region ?? LAYOUT_TOOL_DEFAULT_SIDES[tool]) === region,
 	);
 }
 
@@ -455,7 +463,7 @@ export function openCenterTab(
 ): LayoutOperationResult {
 	const resolved = resolvePlacedResource(document, tab);
 	if (resolved.conflictingId) return { reason: "That tab id belongs to another resource." };
-	const previewCompatible = tab.kind === "file" || tab.kind === "diff";
+	const previewCompatible = isPreviewCompatibleTabKind(tab.kind);
 	const effectiveIntent = intent === "preview" && !previewCompatible ? "keep" : intent;
 	const existingTab = resolved.placed;
 	const existing = existingTab ? findTabLocation(document, existingTab.id) : null;
@@ -544,6 +552,24 @@ export function canPlaceLayoutTab(tab: LayoutTab, area: "center" | LayoutAuxilia
 	return tab.kind === "tool" || tab.kind === "terminal";
 }
 
+export const SEPARATE_PANES_REASON = "Tools and terminals use separate panes.";
+
+export function describeLayoutGroup(tabs: readonly LayoutTab[], limit = 3): string {
+	if (tabs.length === 0) return "(empty)";
+	const names = tabs.slice(0, limit).map((tab) => layoutTabName(tab));
+	const rest = tabs.length - names.length;
+	return `(${names.join(", ")}${rest > 0 ? `, +${rest}` : ""})`;
+}
+
+export function canJoinAuxiliaryGroup(
+	group: { tabs: readonly LayoutTab[] },
+	tab: LayoutTab,
+): boolean {
+	if (tab.kind === "tool") return !group.tabs.some((candidate) => candidate.kind === "terminal");
+	if (tab.kind === "terminal") return !group.tabs.some((candidate) => candidate.kind === "tool");
+	return false;
+}
+
 export function moveTabToGroup(
 	document: WorkspaceLayoutDocument,
 	tab: LayoutTab,
@@ -619,6 +645,7 @@ export function moveTabToGroup(
 		groupIndex < 0 ||
 		movingTab.kind === "file" ||
 		movingTab.kind === "diff" ||
+		movingTab.kind === "changes" ||
 		movingTab.kind === "chat" ||
 		movingTab.kind === "document"
 	) {
@@ -626,6 +653,7 @@ export function moveTabToGroup(
 	}
 	const group = groups[groupIndex];
 	if (!group) return { reason: "The destination group no longer exists." };
+	if (!canJoinAuxiliaryGroup(group, movingTab)) return { reason: SEPARATE_PANES_REASON };
 	const insertion = Math.max(0, Math.min(index ?? group.tabs.length, group.tabs.length));
 	const tabs = [...group.tabs];
 	tabs.splice(insertion, 0, movingTab);
@@ -859,7 +887,22 @@ export function hideBottom(
 }
 
 export function canShowSide(document: WorkspaceLayoutDocument, side: LayoutSide): boolean {
-	return document[side].groups.length > 0 || unplacedToolsForSide(document, side).length > 0;
+	return document[side].groups.length > 0 || unplacedToolsForRegion(document, side).length > 0;
+}
+
+function focusUnfoldedGroup(
+	document: WorkspaceLayoutDocument,
+	region: LayoutAuxiliaryRegion,
+	group: LayoutSideGroup,
+	attention?: LayoutAttention,
+): LayoutOperationResult {
+	const result = group.folded
+		? setAuxiliaryGroupFolded(document, region, group.id, false)
+		: { document };
+	if (isLayoutUnavailable(result)) return result;
+	const selectedId = attention ? readLayoutSelection(attention, group.id) : undefined;
+	const tab = group.tabs.find((candidate) => candidate.id === selectedId) ?? group.tabs[0];
+	return { ...result, focusGroupId: group.id, ...(tab ? { focusTabId: tab.id } : {}) };
 }
 
 export function showBottom(
@@ -877,13 +920,7 @@ export function showBottom(
 			shown.bottom.groups.find((candidate) => candidate.tabs.length > 0) ??
 			shown.bottom.groups[0];
 		if (!group) return { document: shown };
-		const selectedId = attention ? readLayoutSelection(attention, group.id) : undefined;
-		const tab = group.tabs.find((candidate) => candidate.id === selectedId) ?? group.tabs[0];
-		return {
-			document: shown,
-			focusGroupId: group.id,
-			...(tab ? { focusTabId: tab.id } : {}),
-		};
+		return focusUnfoldedGroup(shown, "bottom", group, attention);
 	}
 	const tool = TOOL_RESTORE_ORDER.find(
 		(candidate) =>
@@ -897,7 +934,7 @@ export function showBottom(
 		const group =
 			shown.bottom.groups.find((candidate) => candidate.id === preferredId) ??
 			shown.bottom.groups[0];
-		return { document: shown, ...(group ? { focusGroupId: group.id } : {}) };
+		return group ? focusUnfoldedGroup(shown, "bottom", group, attention) : { document: shown };
 	}
 	const group: LayoutSideGroup = {
 		id: createLayoutId("bottom-group"),
@@ -942,10 +979,7 @@ export function showSide(
 				);
 			if (restore) return revealTool(shown, restore, maxSideGroups);
 		}
-		return {
-			document: shown,
-			...(tab ? { focusGroupId: group.id, focusTabId: tab.id } : { focusGroupId: group.id }),
-		};
+		return focusUnfoldedGroup(shown, side, group, attention);
 	}
 	const tool =
 		TOOL_RESTORE_ORDER.find(
@@ -997,7 +1031,17 @@ export function revealTool(
 	const restoreGroup = restore?.groupId
 		? groups.find((group) => group.id === restore.groupId)
 		: undefined;
-	if (restoreGroup) {
+	const maxGroups = region === "bottom" ? maxBottomGroups : maxSideGroups;
+	if (restoreGroup && !canJoinAuxiliaryGroup(restoreGroup, requestedTab)) {
+		const beside = createAuxiliaryGroup(
+			document,
+			region,
+			requestedTab,
+			groups.indexOf(restoreGroup) + 1,
+			maxGroups,
+		);
+		if (!isLayoutUnavailable(beside)) return beside;
+	} else if (restoreGroup) {
 		const tabs = [...restoreGroup.tabs];
 		tabs.splice(Math.max(0, Math.min(restore?.index ?? tabs.length, tabs.length)), 0, requestedTab);
 		return {
@@ -1015,9 +1059,8 @@ export function revealTool(
 			focusTabId: requestedTab.id,
 		};
 	}
-	const maxGroups = region === "bottom" ? maxBottomGroups : maxSideGroups;
 	if (groups.length > 0 && groups.length >= maxGroups) {
-		const group = groups[0];
+		const group = groups.find((candidate) => canJoinAuxiliaryGroup(candidate, requestedTab));
 		if (!group) return { reason: "There is no auxiliary group available for this tool." };
 		return moveTabToGroup(
 			{
@@ -1177,9 +1220,15 @@ export function reconcileAttention(
 			(candidate) => candidate.location.groupId === group.location.groupId,
 		);
 		const oldIndex = oldGroup?.tabs.findIndex((tab) => tab.id === previousId) ?? -1;
+		const previousTab = oldIndex >= 0 ? oldGroup?.tabs[oldIndex] : undefined;
+		const sameResource = previousTab
+			? group.tabs.find(
+					(tab) => layoutResourceIdentity(tab) === layoutResourceIdentity(previousTab),
+				)
+			: undefined;
 		const nearest =
 			oldIndex >= 0 ? group.tabs[Math.min(oldIndex, group.tabs.length - 1)] : undefined;
-		const selected = exact ?? nearest ?? group.tabs[0];
+		const selected = exact ?? sameResource ?? nearest ?? group.tabs[0];
 		if (selected) selectedByGroup[group.location.groupId] = selected.id;
 	}
 	const previousCenter = previous?.lastFocusedCenterGroupId;
@@ -1224,6 +1273,53 @@ export function reconcileAttention(
 		lastFocusedSideGroupId,
 		navigationClockByGroup,
 	};
+}
+
+export function adoptToolSelections(
+	attention: LayoutAttention,
+	document: WorkspaceLayoutDocument,
+	source: LayoutAttention,
+	sourceDocument: WorkspaceLayoutDocument,
+	groupIds?: ReadonlySet<string>,
+): LayoutAttention {
+	let selectedByGroup: Record<string, string> | undefined;
+	const sourceGroups = collectAllGroups(sourceDocument);
+	for (const group of collectAllGroups(document)) {
+		const groupId = group.location.groupId;
+		if (groupIds && !groupIds.has(groupId)) continue;
+		const sourceId = readLayoutSelection(source, groupId);
+		if (sourceId === undefined) continue;
+		const sourceGroup = sourceGroups.find((candidate) => candidate.location.groupId === groupId);
+		const sourceTab = sourceGroup?.tabs.find((tab) => tab.id === sourceId);
+		if (sourceTab?.kind !== "tool") continue;
+		if (!group.tabs.some((tab) => tab.id === sourceId)) continue;
+		const currentId = readLayoutSelection(attention, groupId);
+		const current = group.tabs.find((tab) => tab.id === currentId);
+		if (current && current.kind !== "tool") continue;
+		if (currentId === sourceId) continue;
+		const nextSelectedByGroup =
+			selectedByGroup ?? Object.assign(Object.create(null), attention.selectedByGroup);
+		nextSelectedByGroup[groupId] = sourceId;
+		selectedByGroup = nextSelectedByGroup;
+	}
+	return selectedByGroup ? { ...attention, selectedByGroup } : attention;
+}
+
+export function changedToolSelections(
+	previous: LayoutAttention | undefined,
+	next: LayoutAttention,
+	document: WorkspaceLayoutDocument,
+): Set<string> {
+	const changed = new Set<string>();
+	for (const group of collectAllGroups(document)) {
+		const groupId = group.location.groupId;
+		const nextId = readLayoutSelection(next, groupId);
+		if (previous && nextId === readLayoutSelection(previous, groupId)) continue;
+		if (group.tabs.some((tab) => tab.id === nextId && tab.kind === "tool")) {
+			changed.add(groupId);
+		}
+	}
+	return changed;
 }
 
 export function selectTab(
@@ -1310,7 +1406,7 @@ export function validateLayoutDocument(
 		for (const tab of node.tabs) trackTab(tab, "center");
 		if (node.previewTabId) {
 			const preview = node.tabs.find((tab) => tab.id === node.previewTabId);
-			if (!preview || (preview.kind !== "file" && preview.kind !== "diff")) {
+			if (!preview || !isPreviewCompatibleTabKind(preview.kind)) {
 				errors.push(`Invalid preview resource: ${node.previewTabId}`);
 			}
 		}
