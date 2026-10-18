@@ -37,6 +37,7 @@ import { TerminalWorkbenchBody, useTerminalClose } from "../panels/TerminalWorkb
 import { useWorkspaceReview } from "../panels/useWorkspaceReview";
 import { useWorkspaceSpecs } from "../panels/useWorkspaceSpecs";
 import { useLoadWorkspaceTurns } from "../panels/useWorkspaceTurns";
+import { createWorkspaceAssetResolver } from "../panels/workspaceAssets";
 import {
 	createChangesTab,
 	type EditorTab,
@@ -186,6 +187,7 @@ function ChatResourceBody({
 }) {
 	const t = useT();
 	const available = useAppStore((state) => state.sessions[tab.sessionId] !== undefined);
+	const resolveAsset = useMemo(() => createWorkspaceAssetResolver(workspaceId), [workspaceId]);
 	const [stalled, setStalled] = useState(false);
 	useEffect(() => {
 		if (available) return;
@@ -197,7 +199,12 @@ function ChatResourceBody({
 		return (
 			<ErrorBoundary label="chat" resetKeys={[workspaceId, tab.id]}>
 				<Suspense fallback={<MissingResource label={t("shell.resource.chat")} />}>
-					<ChatView sessionId={tab.sessionId} workspaceId={workspaceId} onOpenFile={onOpenFile} />
+                    <ChatView
+                        sessionId={tab.sessionId}
+                        workspaceId={workspaceId}
+                        onOpenFile={onOpenFile}
+                        resolveAsset={resolveAsset}
+                    />
 				</Suspense>
 			</ErrorBoundary>
 		);
