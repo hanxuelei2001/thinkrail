@@ -16,6 +16,13 @@ name: Build Desktop (Skip Generated Checks)
 # (`tsc --noEmit`) and `vite build` still run, so type errors and bundling failures
 # remain fatal here.
 #
+# The stamp writes every export the native bundle imports, including
+# `posthogProjectKey`: the desktop main process imports it from
+# `@thinkrail/shared/version`, and a stamp without it fails the Electrobun bundle with
+# "No matching export". The key comes from the optional `POSTHOG_PROJECT_KEY`
+# repository secret — when set it must be a `phc_` project key, when absent the app
+# packages with analytics disabled. The key is never echoed to the log.
+#
 # Uploading happens under the same artifact names as `build-desktop.yml`; the two
 # workflows are separate runs, so a tag build running both would produce two sets of
 # artifacts (one per run).
@@ -95,6 +102,7 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_CHANNEL: ${{ inputs.channel }}
+          POSTHOG_PROJECT_KEY: ${{ secrets.POSTHOG_PROJECT_KEY }}
         run: |
           set -eu
           version="${INPUT_VERSION:-}"
@@ -114,13 +122,19 @@ jobs:
             nightly) environment="canary" ;;
             *) echo "::error::unsupported channel: $channel"; exit 1 ;;
           esac
+          case "${POSTHOG_PROJECT_KEY:-}" in
+            "") analytics_key=""; analytics_state="unset" ;;
+            phc_?*) analytics_key="$POSTHOG_PROJECT_KEY"; analytics_state="set" ;;
+            *) echo "::error::POSTHOG_PROJECT_KEY must be a phc_ project key"; exit 1 ;;
+          esac
           commit=$(git rev-parse --short HEAD)
           cat > packages/shared/src/version.ts <<EOF
           export const version = "${version}";
           export const channel = "${channel}";
           export const commit = "${commit}";
+          export const posthogProjectKey = "${analytics_key}";
           EOF
-          cat packages/shared/src/version.ts
+          echo "stamped version=${version} channel=${channel} commit=${commit} posthogProjectKey=${analytics_state}"
           {
             echo "version=$version"
             echo "channel=$channel"
