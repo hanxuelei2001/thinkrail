@@ -9,6 +9,7 @@ import {
 	useMemo,
 	useState,
 } from "react";
+import { t, useLocale } from "@/i18n";
 import { usePhoneViewport } from "@/lib";
 import {
 	describeResource,
@@ -57,7 +58,7 @@ export interface DiffSurfaceInput {
 }
 
 function fileRevertMessage(receipt: ChangeReceipt, base: string): string {
-	return receipt.trashed ? `Moved ${base} to the trash` : `Reverted ${base}`;
+	return receipt.trashed ? t("diff.movedTrash", { base }) : t("diff.revertedFile", { base });
 }
 
 export interface DiffSurface {
@@ -129,6 +130,7 @@ export function useDiffSurface({
 	reload,
 	triage,
 }: DiffSurfaceInput): DiffSurface {
+	useLocale();
 	const mobile = usePhoneViewport();
 	const protocolVersion = useAppStore((state) => state.protocolVersion);
 	const agentWorking = useAppStore((state) => selectWorkspaceIsRunning(state, workspaceId));
@@ -203,12 +205,12 @@ export function useDiffSurface({
 			const code = wsErrorCode(error);
 			if (code === "STALE_VIEW") {
 				reload();
-				toast.info("This file changed since you opened it — review the new diff");
+				toast.info(t("diff.stale"));
 				return;
 			}
 			if (code === "RECEIPT_UNKNOWN") {
 				reload();
-				toast.info("This change can no longer be undone — the host no longer holds it");
+				toast.info(t("diff.undoUnavailable"));
 				return;
 			}
 			toast.error(errorText(error), title);
@@ -224,7 +226,7 @@ export function useDiffSurface({
 					expect: { modifiedHash: receipt.after.hash },
 				});
 			} catch (error) {
-				handleMutationError(error, "Couldn't undo the revert");
+				handleMutationError(error, t("diff.error.undo"));
 			}
 		},
 		[handleMutationError, workspaceId],
@@ -236,7 +238,7 @@ export function useDiffSurface({
 				message,
 				durationMs: 8000,
 				action: {
-					label: "Undo",
+					label: t("diff.undo"),
 					onClick: () => {
 						void undoReceipt(receipt);
 					},
@@ -248,7 +250,7 @@ export function useDiffSurface({
 	const revertBlock = useCallback<HunkActions["revert"]>(
 		async (block) => {
 			if (!mutationExpect) {
-				handleMutationError(new Error("Change metadata is not ready"), "Couldn't revert the hunk");
+				handleMutationError(new Error(t("diff.error.metadata")), t("diff.error.revertHunk"));
 				return;
 			}
 			try {
@@ -259,16 +261,16 @@ export function useDiffSurface({
 					target: { kind: "range", original: block.original, modified: block.modified },
 					expect: mutationExpect,
 				});
-				showUndoToast(receipt, `Reverted hunk in ${base}`);
+				showUndoToast(receipt, t("diff.revertedHunk", { base }));
 			} catch (error) {
-				handleMutationError(error, "Couldn't revert the hunk");
+				handleMutationError(error, t("diff.error.revertHunk"));
 			}
 		},
 		[base, handleMutationError, mutationExpect, showUndoToast, path, scope, workspaceId],
 	);
 	const revertFile = useCallback(async () => {
 		if (!mutationExpect) {
-			handleMutationError(new Error("Change metadata is not ready"), "Couldn't revert the file");
+			handleMutationError(new Error(t("diff.error.metadata")), t("diff.error.revertFile"));
 			return;
 		}
 		try {
@@ -281,7 +283,7 @@ export function useDiffSurface({
 			});
 			showUndoToast(receipt, fileRevertMessage(receipt, base));
 		} catch (error) {
-			handleMutationError(error, "Couldn't revert the file");
+			handleMutationError(error, t("diff.error.revertFile"));
 		}
 	}, [base, handleMutationError, mutationExpect, showUndoToast, path, scope, workspaceId]);
 	const askAgent = useCallback<HunkActions["askAgent"]>(

@@ -799,7 +799,7 @@ both message orders. *Rejected:* keeping the modal for non-MCP extensions — ev
   chats" once the pair matches) and the **Refresh** row (`force: true`, spins and reads "Updating…" while
   the awaited refresh runs; opening fires an unforced read served from the host snapshot). The web still keeps **no
   enumeration of the level vocabulary**: rows are `WireModel.thinkingLevels` verbatim, the host clamps,
-  and `LEVEL_HINT` is a partial record of qualitative copy a level may simply lack. Rows follow the
+  and `levelHint()` is the qualitative copy a level may simply lack. Rows follow the
   **live catalog** — `ChatView` resolves the session's model through `store`'s `selectCatalogModel`
   before passing it down, so a `model.refresh` that changes what a model supports changes the offered
   levels with it), `SessionStatsBar`, `ChatHeader` (the fixed, single-line **panel-header row** —
@@ -1388,8 +1388,8 @@ The divider's "still running" chip and the dock keep counting work only. No PID 
 none — and there is no immediate per-server stop.
 
 The dependency edges are `ChatView`/`useChatResources` → `resources`, `store`, `transport`, and
-`ChatView` → the transcript pane. The `resources` child stays props-only and imports no sibling tool
-implementation; it receives the shared 30 s clock as a `now` prop. Command logs are fetched by the
+`ChatView` → the transcript pane. The `resources` child stays props-only and imports no sibling tool implementation (the
+feature-neutral `i18n` leaf is the only app-runtime dependency it may take); it receives the shared 30 s clock as a `now` prop. Command logs are fetched by the
 integration hook and passed into its read-only view; the module never loads xterm.
 
 The hook hydrates on mount/current welcome, subscribes to `session.resourcesChanged`, and coalesces

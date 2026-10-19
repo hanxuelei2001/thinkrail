@@ -1,6 +1,7 @@
 import type { DelegationRunDetails, DelegationRunStatus } from "@thinkrail/contracts";
 import { isDelegationRunDetails } from "@thinkrail/contracts";
 import { strArg, type ToolRenderProps } from "@thinkrail/extension-api/web";
+import { t } from "@/i18n";
 import { formatCost, formatElapsed, formatTokens } from "../../SessionStatsBar";
 
 export function readRunDetails(value: unknown): DelegationRunDetails | undefined {
@@ -19,12 +20,15 @@ export function runCounters(
 ): string[] {
 	const parts: string[] = [];
 	const u = details.usage;
-	if (u.turns > 0) parts.push(`${u.turns} ${u.turns === 1 ? "turn" : "turns"}`);
+	if (u.turns > 0) parts.push(t("chat.subagent.turns", { count: u.turns }));
 	if (u.input > 0 || u.output > 0) {
 		parts.push(
 			tokens === "split"
-				? `in ${formatTokens(u.input)} / out ${formatTokens(u.output)}`
-				: `${formatTokens(u.input + u.output)} tok`,
+				? t("chat.subagent.inOut", {
+						input: formatTokens(u.input),
+						output: formatTokens(u.output),
+					})
+				: t("chat.subagent.tokens", { tokens: formatTokens(u.input + u.output) }),
 		);
 	}
 	if (u.cost > 0) parts.push(formatCost(u.cost));
@@ -39,11 +43,11 @@ export function agentSummary({ args, result }: ToolRenderProps): string {
 		const task = strArg(args, "task");
 		return role && task ? `${role}: ${task}` : role || task;
 	}
-	const parts = [details.roleName ?? "subagent"];
-	if (details.status === "queued") parts.push("queued");
-	if (details.status === "aborted") parts.push("aborted");
+	const parts = [details.roleName ?? t("chat.subagent.role")];
+	if (details.status === "queued") parts.push(t("chat.subagent.queued"));
+	if (details.status === "aborted") parts.push(t("chat.subagent.aborted"));
 	if (args.run_in_background === true && !isTerminalRunStatus(details.status)) {
-		parts.push("background");
+		parts.push(t("chat.subagent.backgroundLabel"));
 	}
 	parts.push(...runCounters(details));
 	if (details.status === "running" && details.activity) parts.push(details.activity);

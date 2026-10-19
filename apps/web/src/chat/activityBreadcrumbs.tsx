@@ -5,6 +5,7 @@ import {
 	RiToolsLine as Tools,
 } from "@remixicon/react";
 import { useCallback, useEffect, useState } from "react";
+import { useT } from "@/i18n";
 
 export type ActivityBreadcrumbKind = "activity" | "thinking" | "tool";
 
@@ -88,9 +89,10 @@ export function ActivityBreadcrumbBar({
 	onJump: (id: string) => void;
 	onToggle: (id: string) => void;
 }) {
+	const t = useT();
 	return (
 		<nav
-			aria-label="Current chat activity path"
+			aria-label={t("chat.activityPath")}
 			data-testid="activity-breadcrumb-trail"
 			className="pointer-events-auto border-border-default border-b bg-container-header-bg shadow-[var(--shadow-md)]"
 		>

@@ -3,6 +3,7 @@ import { File, VirtualizerContext } from "@pierre/diffs/react";
 import { RiChatNewLine as MessageSquarePlus } from "@remixicon/react";
 import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useT } from "@/i18n";
 import type { AnchorDraft, ResourceViewProps } from "@/resources";
 import { ReviewComposer } from "../../ReviewComposer";
 import { ReviewThreadCard } from "../../ReviewThreadCard";
@@ -71,6 +72,7 @@ function PierreFileSurface({
 	viewState,
 	onViewState,
 }: ResourceViewProps) {
+	const t = useT();
 	const text = content.kind === "text" ? content.text : "";
 	const hash = content.kind === "absent" || !content.hash ? undefined : content.hash;
 	const file = useMemo(
@@ -163,11 +165,11 @@ function PierreFileSurface({
 					selectedLines={selectedLines}
 					className="flex-1"
 					renderGutterUtility={(getHoveredLine) => (
-						<IconTooltip label="Comment on this line">
+						<IconTooltip label={t("code.commentLine")}>
 							<button
 								type="button"
 								data-testid="review-add-icon"
-								aria-label="Comment on this line"
+								aria-label={t("code.commentLine")}
 								onPointerDown={(event) => {
 									event.preventDefault();
 									event.stopPropagation();

@@ -1,4 +1,5 @@
 import type { McpServerEntryInput, McpServerScope } from "@thinkrail/contracts";
+import { t } from "@/i18n";
 
 export interface McpPreset {
 	id: string;
@@ -57,6 +58,27 @@ export const MCP_PRESETS: readonly McpPreset[] = [
 		optInPerProject: true,
 	},
 ];
+
+export function mcpPresetTitle(preset: McpPreset): string {
+	return preset.id === "linear" ? t("mcp.preset.linearTitle") : preset.title;
+}
+
+export function mcpPresetDescription(preset: McpPreset): string {
+	switch (preset.id) {
+		case "context7":
+			return t("mcp.preset.context7");
+		case "deepwiki":
+			return t("mcp.preset.deepwiki");
+		case "linear":
+			return t("mcp.preset.linear");
+		case "sentry":
+			return t("mcp.preset.sentry");
+		case "playwright":
+			return t("mcp.preset.playwright");
+		default:
+			return preset.description;
+	}
+}
 
 export const GITHUB_MCP_RECIPE_JSON = JSON.stringify(
 	{

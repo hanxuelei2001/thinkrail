@@ -1,6 +1,7 @@
 import { RiArrowRightSLine as ChevronRight } from "@remixicon/react";
 import type { McpResultSummary } from "@thinkrail/contracts";
 import { cn } from "@thinkrail/ui/utils";
+import { useT } from "@/i18n";
 import { useFold } from "../../foldState";
 import { isRecord } from "./mcpResult";
 
@@ -82,6 +83,7 @@ function JsonEntries({
 	value: JsonContainer;
 	expandAll: boolean;
 }) {
+	const t = useT();
 	const [all, toggleAll, toggleAllRef] = useFold(`${id}:all`);
 	const entries = entriesOf(value);
 	const shown = all ? entries : entries.slice(0, CHILD_LIMIT);
@@ -105,7 +107,7 @@ function JsonEntries({
 					className={cn(toggleClass, "self-start text-primary hover:underline")}
 				>
 					<Indent />
-					{all ? "Show fewer" : `Show all ${entries.length}`}
+					{all ? t("chat.json.showFewer") : t("chat.json.showAll", { count: entries.length })}
 				</button>
 			) : null}
 		</div>

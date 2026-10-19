@@ -2,6 +2,7 @@ import { RiLoader4Line as Loader2 } from "@remixicon/react";
 import { parseToolResultContent } from "@thinkrail/extension-api/web";
 import { cn } from "@thinkrail/ui/utils";
 import type { ReactNode } from "react";
+import { useT } from "@/i18n";
 import { ToolArgList, toolArgEntries } from "../../ToolArgList";
 import { Collapsible, countLines } from "../Collapsible";
 
@@ -66,9 +67,10 @@ export function McpOutput({
 	result: unknown;
 	failed: boolean;
 }) {
+	const t = useT();
 	if (!text) {
 		return parseToolResultContent(result).images.length > 0 ? null : (
-			<span className="text-text-muted tr-text-metadata italic">(no output)</span>
+			<span className="text-text-muted tr-text-metadata italic">{t("chat.mcp.noOutput")}</span>
 		);
 	}
 	return (

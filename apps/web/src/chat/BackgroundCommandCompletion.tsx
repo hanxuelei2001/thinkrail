@@ -1,11 +1,13 @@
 import { RiTerminalBoxLine } from "@remixicon/react";
 import type { BackgroundCommandCompletionDetails } from "@thinkrail/contracts";
+import { useT } from "@/i18n";
 
 export function BackgroundCommandCompletion({
 	details,
 }: {
 	details: BackgroundCommandCompletionDetails;
 }) {
+	const t = useT();
 	return (
 		<div
 			data-testid="background-command-completion"
@@ -19,7 +21,7 @@ export function BackgroundCommandCompletion({
 				<span className="shrink-0 text-text-muted tr-text-metadata">
 					{details.status}
 					{details.exitCode !== undefined && details.exitCode !== null
-						? ` · Exit ${details.exitCode}`
+						? ` · ${t("chat.exitCode", { code: details.exitCode })}`
 						: ""}
 				</span>
 			</div>
@@ -29,16 +31,14 @@ export function BackgroundCommandCompletion({
 				</p>
 			) : null}
 			{details.output.truncated ? (
-				<p className="text-text-muted tr-text-metadata">
-					Output truncated — retained tail at completion.
-				</p>
+				<p className="text-text-muted tr-text-metadata">{t("chat.outputTruncated")}</p>
 			) : null}
 			{details.output.text ? (
 				<pre className="max-h-240 overflow-auto whitespace-pre-wrap break-words rounded-sm bg-container-content-bg p-8 tr-code-text">
 					{details.output.text}
 				</pre>
 			) : (
-				<p className="text-text-muted tr-text-metadata">No output.</p>
+				<p className="text-text-muted tr-text-metadata">{t("chat.noOutput")}</p>
 			)}
 		</div>
 	);

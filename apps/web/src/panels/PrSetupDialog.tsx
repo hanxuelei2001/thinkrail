@@ -16,6 +16,7 @@ import {
 	DialogTitle,
 } from "@thinkrail/ui/dialog";
 import { useState } from "react";
+import { t, useT } from "@/i18n";
 import { copyText } from "@/lib";
 
 export type PrSetupState =
@@ -23,6 +24,7 @@ export type PrSetupState =
 	| { kind: "gh"; problem: GhSetupProblem; compareUrl?: string };
 
 function CommandRow({ command, onRun }: { command: string; onRun: (command: string) => void }) {
+	const t = useT();
 	const [copied, setCopied] = useState(false);
 	const copy = async () => {
 		if (await copyText(command)) {
@@ -37,7 +39,7 @@ function CommandRow({ command, onRun }: { command: string; onRun: (command: stri
 				variant="ghost"
 				size="icon"
 				data-testid="open-pr-setup-copy"
-				aria-label="Copy command"
+				aria-label={t("prSetup.copyCommand")}
 				onClick={() => void copy()}
 			>
 				{copied ? (
@@ -50,27 +52,27 @@ function CommandRow({ command, onRun }: { command: string; onRun: (command: stri
 				variant="outline"
 				size="sm"
 				data-testid="open-pr-setup-run"
-				title="Run this command in a workspace terminal — answer its prompts there"
+				title={t("prSetup.runTitle")}
 				onClick={() => onRun(command)}
 			>
 				<Play className="size-14" />
-				Run
+				{t("prSetup.run")}
 			</Button>
 		</div>
 	);
 }
 
-const GH_TITLE: Record<GhSetupProblem, string> = {
-	missing: "GitHub CLI isn't installed",
-	unauthenticated: "GitHub CLI isn't signed in",
-};
+function ghTitle(problem: GhSetupProblem): string {
+	return problem === "missing"
+		? t("prSetup.gh.missingTitle")
+		: t("prSetup.gh.unauthenticatedTitle");
+}
 
-const GH_DESCRIPTION: Record<GhSetupProblem, string> = {
-	missing:
-		"The branch was pushed, but creating the PR directly needs the GitHub CLI on this machine. Install it and sign in, then Open PR creates and updates PRs in one click.",
-	unauthenticated:
-		"The branch was pushed, but the GitHub CLI on this machine isn't signed in, so the PR can't be created directly. Sign in, then try again.",
-};
+function ghDescription(problem: GhSetupProblem): string {
+	return problem === "missing"
+		? t("prSetup.gh.missingDescription")
+		: t("prSetup.gh.unauthenticatedDescription");
+}
 
 const SSH_ADD_COMMAND: Record<HostPlatform, string> = {
 	darwin: "ssh-add --apple-use-keychain ~/.ssh/id_ed25519",
@@ -78,22 +80,10 @@ const SSH_ADD_COMMAND: Record<HostPlatform, string> = {
 	win32: "ssh-add $env:USERPROFILE\\.ssh\\id_ed25519",
 };
 
-const SSH_ADD_HINT: Record<HostPlatform, string> = {
-	darwin: "SSH remote: load your key into the agent once — Keychain remembers the passphrase.",
-	linux: "SSH remote: load your key into the ssh-agent once.",
-	win32: "SSH remote: load your key into the ssh-agent once (needs the OpenSSH Agent service).",
-};
-
 const GH_INSTALL_COMMAND: Record<HostPlatform, string | null> = {
 	darwin: "brew install gh",
 	linux: "sudo apt install gh",
 	win32: "winget install --id GitHub.cli",
-};
-
-const GH_INSTALL_HINT: Record<HostPlatform, string | null> = {
-	darwin: null,
-	linux: "apt is the Debian/Ubuntu route — use your distro's package manager otherwise.",
-	win32: null,
 };
 
 const HOST_KEY_PATTERN = /host key verification failed/i;
@@ -103,7 +93,16 @@ function sshAddCommand(platform: HostPlatform | null): string {
 }
 
 function sshAddHint(platform: HostPlatform | null): string {
-	return platform ? SSH_ADD_HINT[platform] : "SSH remote: load your key into the ssh-agent once.";
+	switch (platform) {
+		case "darwin":
+			return t("prSetup.ssh.hint.darwin");
+		case "linux":
+			return t("prSetup.ssh.hint.linux");
+		case "win32":
+			return t("prSetup.ssh.hint.win32");
+		default:
+			return t("prSetup.ssh.hint.generic");
+	}
 }
 
 function ghCommands(problem: GhSetupProblem, platform: HostPlatform | null): string[] {
@@ -113,8 +112,10 @@ function ghCommands(problem: GhSetupProblem, platform: HostPlatform | null): str
 
 function ghInstallHint(problem: GhSetupProblem, platform: HostPlatform | null): string | null {
 	if (problem !== "missing") return null;
-	if (!platform) return "Install the GitHub CLI first — cli.github.com — then sign in:";
-	return GH_INSTALL_HINT[platform];
+	if (!platform) return t("prSetup.gh.installHint.generic");
+	return platform === "linux"
+		? t("prSetup.gh.installHint.linux")
+		: t("prSetup.gh.installHint.generic");
 }
 
 export function PrSetupDialog({
@@ -132,6 +133,7 @@ export function PrSetupDialog({
 	onRun: (command: string) => void;
 	onCompareOpen: () => void;
 }) {
+	const t = useT();
 	return (
 		<Dialog open={state !== null} onOpenChange={(open) => !open && onClose()}>
 			<DialogContent
@@ -141,11 +143,8 @@ export function PrSetupDialog({
 				{state?.kind === "push-auth" ? (
 					<>
 						<DialogHeader>
-							<DialogTitle>Git push couldn't authenticate</DialogTitle>
-							<DialogDescription>
-								ThinkRail pushes without a terminal, so SSH passphrase and credential prompts can't
-								appear. Make your git auth non-interactive, then try again.
-							</DialogDescription>
+							<DialogTitle>{t("prSetup.pushAuth.title")}</DialogTitle>
+							<DialogDescription>{t("prSetup.pushAuth.description")}</DialogDescription>
 						</DialogHeader>
 						<pre
 							data-testid="open-pr-setup-detail"
@@ -165,17 +164,15 @@ export function PrSetupDialog({
 							) : null}
 							<p className="tr-text-ui text-text-muted">{sshAddHint(platform)}</p>
 							<CommandRow command={sshAddCommand(platform)} onRun={onRun} />
-							<p className="tr-text-ui text-text-muted">
-								HTTPS remote: sign in with the GitHub CLI instead.
-							</p>
+							<p className="tr-text-ui text-text-muted">{t("prSetup.pushAuth.https")}</p>
 							<CommandRow command="gh auth login" onRun={onRun} />
 						</div>
 					</>
 				) : state?.kind === "gh" ? (
 					<>
 						<DialogHeader>
-							<DialogTitle>{GH_TITLE[state.problem]}</DialogTitle>
-							<DialogDescription>{GH_DESCRIPTION[state.problem]}</DialogDescription>
+							<DialogTitle>{ghTitle(state.problem)}</DialogTitle>
+							<DialogDescription>{ghDescription(state.problem)}</DialogDescription>
 						</DialogHeader>
 						<div className="flex flex-col gap-8">
 							{ghInstallHint(state.problem, platform) ? (

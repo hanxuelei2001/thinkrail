@@ -8,19 +8,27 @@ import {
 	RiCloseLine as X,
 } from "@remixicon/react";
 import type { DelegationRunDetails } from "@thinkrail/contracts";
+import { type TFunction, useT } from "@/i18n";
 import { useChatActions } from "../../ChatActions";
 import { useFold } from "../../foldState";
 
 import { Markdown } from "../../Markdown";
 import { runCounters } from "./runDetails";
 
-const OUTCOME_WORD: Record<DelegationRunDetails["status"], string> = {
-	queued: "queued",
-	running: "running",
-	completed: "finished",
-	error: "failed",
-	aborted: "aborted",
-};
+function outcomeWord(status: DelegationRunDetails["status"], t: TFunction): string {
+	switch (status) {
+		case "queued":
+			return t("chat.subagent.queued");
+		case "running":
+			return t("chat.subagent.running");
+		case "completed":
+			return t("chat.subagent.finished");
+		case "error":
+			return t("chat.subagent.failed");
+		case "aborted":
+			return t("chat.subagent.aborted");
+	}
+}
 
 export function SubagentCompletionCard({
 	id,
@@ -31,9 +39,10 @@ export function SubagentCompletionCard({
 	details: DelegationRunDetails;
 	text: string;
 }) {
+	const t = useT();
 	const actions = useChatActions();
 	const [reportOpen, toggleReport, reportToggleRef] = useFold(`${id}:report`, false);
-	const role = details.roleName ?? "subagent";
+	const role = details.roleName ?? t("chat.subagent.role");
 	const counters = runCounters(details).join(" · ");
 
 	return (
@@ -53,7 +62,7 @@ export function SubagentCompletionCard({
 				)}
 				<Bot className="size-12 shrink-0 text-text-muted" />
 				<span className="shrink-0 text-text-default">
-					{role} {OUTCOME_WORD[details.status]}
+					{role} {outcomeWord(details.status, t)}
 				</span>
 				{counters ? (
 					<span className="min-w-0 truncate text-text-muted" title={counters}>
@@ -67,11 +76,11 @@ export function SubagentCompletionCard({
 						type="button"
 						data-testid="subagent-completion-transcript"
 						onClick={() => actions.openSubagentTranscript(details.childSessionId)}
-						title="Open transcript"
+						title={t("chat.subagent.openTranscript")}
 						className="ml-auto flex shrink-0 items-center gap-4 text-primary hover:underline"
 					>
 						<ScrollText className="size-12 shrink-0" />
-						Transcript
+						{t("chat.subagent.transcript")}
 					</button>
 				) : null}
 			</div>
@@ -90,7 +99,7 @@ export function SubagentCompletionCard({
 						) : (
 							<ChevronRight className="size-16 shrink-0" />
 						)}
-						Report
+						{t("chat.subagent.report")}
 					</button>
 					{reportOpen ? (
 						<div data-testid="subagent-completion-report">

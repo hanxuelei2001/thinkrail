@@ -10,6 +10,7 @@ import {
 import { type ImperativePanelGroupHandle, ResizablePanelGroup } from "@thinkrail/ui/resizable";
 import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { memo, type ReactNode, useMemo, useRef } from "react";
+import { useT } from "@/i18n";
 import { type LayoutAttention, readLayoutSelection, tupleKey } from "../../lib";
 import { AuxiliaryPaneHeader, AuxiliaryPaneHideButton } from "./AuxiliaryPaneHeader";
 import { resizeVisibleAuxiliaryGroups, visibleAuxiliaryGroups } from "./auxiliaryPresentation";
@@ -66,6 +67,7 @@ export const SideGroupView = memo(function SideGroupView({
 	renderToolBody: WorkbenchProps["renderToolBody"];
 	onFold: () => void;
 }) {
+	const t = useT();
 	const location: LayoutGroupLocation = { area: side, groupId: group.id };
 	const selected = group.tabs.find((tab) => tab.id === selectedId) ?? group.tabs[0];
 	const draggedSideTab =
@@ -95,7 +97,7 @@ export const SideGroupView = memo(function SideGroupView({
 					<DropZone
 						id={tupleKey("dnd-side-group", side, group.id, "above")}
 						target={{ kind: "auxiliary-edge", region: side, index: groupIndex }}
-						label={`Create ${side} group above`}
+						label={t("side.createAbove", { side })}
 						className="absolute inset-x-4 top-4 bottom-1/2"
 					/>
 				) : null}
@@ -103,7 +105,7 @@ export const SideGroupView = memo(function SideGroupView({
 					<DropZone
 						id={tupleKey("dnd-side-group", side, group.id, "below")}
 						target={{ kind: "auxiliary-edge", region: side, index: groupIndex + 1 }}
-						label={`Create ${side} group below`}
+						label={t("side.createBelow", { side })}
 						className="absolute inset-x-4 top-1/2 bottom-4"
 					/>
 				) : null}
@@ -113,7 +115,10 @@ export const SideGroupView = memo(function SideGroupView({
 		<section
 			id={groupDomId(location)}
 			tabIndex={-1}
-			aria-label={`${side} pane: ${selected ? layoutTabName(selected) : "Tools"}`}
+			aria-label={t("side.pane", {
+				side,
+				name: selected ? layoutTabName(selected) : t("side.tools"),
+			})}
 			data-testid={
 				group.tabs.some((tab) => tab.kind === "tool" && tab.tool === "specs")
 					? "right-panel"
@@ -175,15 +180,16 @@ export function SideGroupMenu({
 	onNewTerminal: WorkbenchProps["onNewTerminal"];
 	onRevealTool: (tool: LayoutToolId) => void;
 }) {
+	const t = useT();
 	const missing = unplacedToolsForRegion(document, side);
 	const toolPane = group.tabs.some((tab) => tab.kind === "tool");
 	const paneBelowAvailable = !toolPane || document[side].groups.length < limit;
 	return (
 		<DropdownMenu>
-			<IconTooltip label="Add to this group" wrapTrigger>
+			<IconTooltip label={t("side.addToGroup")} wrapTrigger>
 				<DropdownMenuTrigger
 					data-testid="side-group-menu"
-					aria-label="Add to this group"
+					aria-label={t("side.addToGroup")}
 					className="flex w-panel-header-row shrink-0 items-center justify-center border-border-muted border-l text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
 				>
 					<Plus className="size-16" />
@@ -196,8 +202,15 @@ export function SideGroupMenu({
 					onSelect={() => onNewTerminal(group.id, side, toolPane ? { newPaneBelow: true } : {})}
 				>
 					{toolPane
-						? `New terminal pane ${side === "bottom" ? "to the right" : "below"}${paneBelowAvailable ? "" : ` — limited to ${limit}`}`
-						: "New terminal"}
+						? paneBelowAvailable
+							? t("side.newTerminalPane", {
+									position: side === "bottom" ? t("side.right") : t("side.below"),
+								})
+							: t("side.newTerminalPaneLimited", {
+									position: side === "bottom" ? t("side.right") : t("side.below"),
+									limit,
+								})
+						: t("side.newTerminal")}
 				</DropdownMenuItem>
 				{missing.length > 0 ? <DropdownMenuSeparator /> : null}
 				{missing.map((tool) => (
@@ -229,6 +242,7 @@ export function AuxiliaryGroupHeader({
 	onFold: () => void;
 	trailing?: ReactNode;
 }) {
+	const t = useT();
 	const location: LayoutGroupLocation = { area: region, groupId: group.id };
 	const terminals = group.tabs.filter((tab): tab is LayoutTerminalTab => tab.kind === "terminal");
 	const dropEnabled =
@@ -254,11 +268,11 @@ export function AuxiliaryGroupHeader({
 			/>
 			{trailing}
 			{group.tabs.length === 0 ? (
-				<IconTooltip label={isLayoutUnavailable(removal) ? removal.reason : "Remove group"}>
+				<IconTooltip label={isLayoutUnavailable(removal) ? removal.reason : t("side.removeGroup")}>
 					<button
 						type="button"
 						data-testid="remove-layout-group"
-						aria-label="Remove group"
+						aria-label={t("side.removeGroup")}
 						disabled={isLayoutUnavailable(removal)}
 						onClick={() => {
 							if (!isLayoutUnavailable(removal)) shared.onApply(removal);
@@ -306,11 +320,17 @@ export function AuxiliaryGroupHeader({
 	return (
 		<AuxiliaryPaneHeader
 			ref={setNodeRef}
-			title={selected ? layoutTabName(selected) : region === "bottom" ? "Terminal" : "Tools"}
+			title={
+				selected
+					? layoutTabName(selected)
+					: region === "bottom"
+						? t("side.terminal")
+						: t("side.tools")
+			}
 			{...(selected?.kind === "tool" ? { dragTab: selected } : {})}
 			actions={actions}
 			data-group-id={group.id}
-			data-drop-label={dropEnabled ? `Join ${region} group` : undefined}
+			data-drop-label={dropEnabled ? t("side.joinGroup", { region }) : undefined}
 			data-drop-active={isOver || undefined}
 			data-drop-hint={(dropEnabled && !isOver) || undefined}
 			className="data-[drop-hint]:bg-primary-subtle data-[drop-active]:bg-primary-soft"

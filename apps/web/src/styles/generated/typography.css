@@ -18,9 +18,9 @@
 
 :root {
 	/* Font families */
-	--tr-font-family-interface: "ABeeZee", Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-	--tr-font-family-code: "Consolas", "JetBrains Mono", "Fira Code", "SF Mono", "Cascadia Code", monospace;
-	--tr-font-family-brand: "Consolas", Orbitron, "Geist Variable", Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+	--tr-font-family-interface: "Geist Variable", Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
+	--tr-font-family-code: "JetBrains Mono Variable", "JetBrains Mono", "Fira Code", "SF Mono", "Cascadia Code", "Sarasa Mono SC", "Noto Sans Mono CJK SC", monospace;
+	--tr-font-family-brand: "Orbitron Variable", Orbitron, "Geist Variable", Geist, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", "Source Han Sans SC", "Noto Sans CJK SC", sans-serif;
 
 	/* Font weights */
 	--tr-font-weight-light: 370;
@@ -32,11 +32,9 @@
 	/* Font sizes (px) */
 	--tr-font-size-s10: 10px;
 	--tr-font-size-s11: 11px;
-	/*--tr-font-size-s12: 12px;*/
-	--tr-font-size-s12: 16px;
+	--tr-font-size-s12: 12px;
 	--tr-font-size-s13: 13px;
-	/*--tr-font-size-s14: 14px;*/
-	--tr-font-size-s14: 16px;
+	--tr-font-size-s14: 14px;
 	--tr-font-size-s16: 16px;
 	--tr-font-size-s18: 18px;
 	--tr-font-size-s20: 20px;

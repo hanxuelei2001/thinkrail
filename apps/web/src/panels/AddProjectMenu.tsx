@@ -14,6 +14,7 @@ import {
 	DropdownMenuTrigger,
 } from "@thinkrail/ui/dropdown-menu";
 import type { ReactNode } from "react";
+import { useT } from "@/i18n";
 
 export function AddProjectMenu({
 	recentProjects,
@@ -30,26 +31,27 @@ export function AddProjectMenu({
 	align?: "start" | "center" | "end";
 	children: ReactNode;
 }) {
+	const t = useT();
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
 			<DropdownMenuContent align={align}>
 				<DropdownMenuItem data-testid="menu-open-project" onSelect={() => onOpen()}>
 					<Folder />
-					<span>Open project</span>
+					<span>{t("shell.addProject.open")}</span>
 				</DropdownMenuItem>
 				<DropdownMenuItem data-testid="menu-enter-host-path" onSelect={() => onEnterHostPath()}>
 					<Edit />
-					<span>Enter host path…</span>
+					<span>{t("shell.addProject.hostPath")}</span>
 				</DropdownMenuItem>
 				<DropdownMenuItem disabled>
 					<Globe />
-					<span>Open GitHub project</span>
+					<span>{t("shell.addProject.github")}</span>
 				</DropdownMenuItem>
 				{recentProjects.length > 0 && (
 					<>
 						<DropdownMenuSeparator />
-						<DropdownMenuLabel>Recents</DropdownMenuLabel>
+						<DropdownMenuLabel>{t("shell.addProject.recents")}</DropdownMenuLabel>
 						<DropdownMenuGroup>
 							{recentProjects.map((project) => (
 								<DropdownMenuItem

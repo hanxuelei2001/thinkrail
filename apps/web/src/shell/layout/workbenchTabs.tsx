@@ -18,6 +18,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@thinkrail/ui/popover";
 import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { cn } from "@thinkrail/ui/utils";
 import { Fragment, memo, type ReactNode, useEffect, useRef, useState } from "react";
+import { useT } from "@/i18n";
 import { DOUBLE_CLICK_SETTLE_MS, type LayoutAttention, tupleKey } from "../../lib";
 import {
 	type AuxiliaryRailControlProps,
@@ -89,6 +90,38 @@ export interface TabStripProps {
 	trailing?: ReactNode;
 }
 
+function areaLabel(
+	area: "left" | "right" | "bottom" | "center",
+	t: ReturnType<typeof useT>,
+): string {
+	switch (area) {
+		case "center":
+			return t("layout.area.center");
+		case "left":
+			return t("layout.area.left");
+		case "right":
+			return t("layout.area.right");
+		case "bottom":
+			return t("layout.area.bottom");
+	}
+}
+
+function directionLabel(
+	direction: "left" | "right" | "up" | "down",
+	t: ReturnType<typeof useT>,
+): string {
+	switch (direction) {
+		case "left":
+			return t("layout.direction.left");
+		case "right":
+			return t("layout.direction.right");
+		case "up":
+			return t("layout.direction.up");
+		case "down":
+			return t("layout.direction.down");
+	}
+}
+
 export const TabStrip = memo(function TabStrip({
 	document,
 	readAttention,
@@ -112,6 +145,7 @@ export const TabStrip = memo(function TabStrip({
 	splitGeometry,
 	trailing,
 }: TabStripProps) {
+	const t = useT();
 	const scroller = useRef<HTMLDivElement>(null);
 	const scrollOverflow = useHorizontalOverflow(scroller);
 	const tabRefs = useRef(new Map<string, HTMLElement>());
@@ -260,7 +294,7 @@ export const TabStrip = memo(function TabStrip({
 								"end",
 							)}
 							target={{ kind: "insert", location, index: tabs.length }}
-							label="Insert at end"
+							label={t("tabs.insertEnd")}
 							className="relative h-full w-20 shrink-0"
 						/>
 					) : null}
@@ -283,9 +317,9 @@ export const TabStrip = memo(function TabStrip({
 			{trailing}
 			{overflowing ? (
 				<Popover open={overflowOpen} onOpenChange={setOverflowOpen}>
-					<IconTooltip label="Search open tabs" wrapTrigger>
+					<IconTooltip label={t("tabs.search")} wrapTrigger>
 						<PopoverTrigger
-							aria-label="Search open tabs"
+							aria-label={t("tabs.search")}
 							className="flex w-panel-header-row shrink-0 items-center justify-center border-border-muted border-l text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
 						>
 							<Search className="size-14" />
@@ -303,9 +337,9 @@ export const TabStrip = memo(function TabStrip({
 						}}
 					>
 						<Command>
-							<CommandInput placeholder="Find an open tab…" />
+							<CommandInput placeholder={t("tabs.searchPlaceholder")} />
 							<CommandList>
-								<CommandEmpty>No matching tabs.</CommandEmpty>
+								<CommandEmpty>{t("tabs.noMatches")}</CommandEmpty>
 								{tabs.map((tab) => (
 									<CommandItem
 										key={tab.id}
@@ -394,6 +428,7 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 	splitGeometry,
 	onKeyDown,
 }: WorkbenchTabProps) {
+	const t = useT();
 	const {
 		setNodeRef: setDragRef,
 		isDragging,
@@ -512,16 +547,16 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 	const groups = collectAllGroups(document);
 	const missingTools = unplacedTools(document);
 	const splitReason = (direction: CenterSplitDirection): string | null => {
-		if (location.area !== "center") return "Only center tabs can split the center.";
-		if (tab.kind === "tool") return "Tools stay in a side region.";
+		if (location.area !== "center") return t("tabs.onlyCenter");
+		if (tab.kind === "tool") return t("tabs.toolsStaySide");
 		if (collectCenterGroups(document.center).length >= LAYOUT_LIMITS.maxCenterGroups) {
-			return `Center groups are limited to ${LAYOUT_LIMITS.maxCenterGroups}.`;
+			return t("tabs.centerLimit", { count: LAYOUT_LIMITS.maxCenterGroups });
 		}
 		const horizontal = direction === "left" || direction === "right";
 		if (splitGeometry && !(horizontal ? splitGeometry.horizontal : splitGeometry.vertical)) {
 			return horizontal
-				? `This group needs ${LAYOUT_LIMITS.minCenterWidth * 2}px of width to split.`
-				: `This group needs ${LAYOUT_LIMITS.minCenterHeight * 2}px of height to split.`;
+				? t("tabs.needsWidth", { px: LAYOUT_LIMITS.minCenterWidth * 2 })
+				: t("tabs.needsHeight", { px: LAYOUT_LIMITS.minCenterHeight * 2 });
 		}
 		return null;
 	};
@@ -571,7 +606,7 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 			data-layout-tab-id={tab.id}
 			tabIndex={rail ? rail.tabIndex : active ? 0 : -1}
 			{...dragListeners}
-			title={rail ? undefined : preview ? "Preview — double-click to keep" : name}
+			title={rail ? undefined : preview ? t("tabs.preview") : name}
 			onFocus={rail?.onFocus}
 			onClick={rail ? rail.onActivate : selectFromClick}
 			onDoubleClick={rail ? undefined : selectFromDoubleClick}
@@ -624,7 +659,7 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 					<div
 						ref={setBeforeRef}
 						aria-hidden="true"
-						data-drop-label={acceptsBefore ? `Insert before ${name}` : undefined}
+						data-drop-label={acceptsBefore ? t("tabs.insertBefore", { name }) : undefined}
 						data-drop-active={beforeOver || undefined}
 						className={cn(
 							"pointer-events-none absolute z-10 border-primary",
@@ -636,7 +671,7 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 					<div
 						ref={setAfterRef}
 						aria-hidden="true"
-						data-drop-label={acceptsAfter ? `Insert after ${name}` : undefined}
+						data-drop-label={acceptsAfter ? t("tabs.insertAfter", { name }) : undefined}
 						data-drop-active={afterOver || undefined}
 						className={cn(
 							"pointer-events-none absolute z-10 border-primary",
@@ -656,7 +691,7 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 								data-testid="chat-tab-name-input"
 								type="text"
 								spellCheck={false}
-								aria-label="Chat name"
+								aria-label={t("tabs.chatName")}
 								defaultValue={name}
 								onKeyDown={onNameKeyDown}
 								onBlur={commitRename}
@@ -675,7 +710,7 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 							type="button"
 							tabIndex={-1}
 							data-testid={tab.kind === "terminal" ? "terminal-tab-close" : "editor-tab-close"}
-							aria-label={`Close ${name}`}
+							aria-label={t("tabs.close", { name })}
 							onClick={onClose}
 							className="mr-4 rounded-sm p-2 opacity-0 hover:bg-control-bg-hovered group-hover:opacity-100 focus:opacity-100"
 						>
@@ -691,7 +726,7 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 					event.preventDefault();
 				}}
 			>
-				<ContextMenuItem onSelect={() => focusTab()}>Focus tab</ContextMenuItem>
+				<ContextMenuItem onSelect={() => focusTab()}>{t("tabs.focus")}</ContextMenuItem>
 				{tab.kind === "chat" && onRenameChat ? (
 					<ContextMenuItem
 						onSelect={() => {
@@ -709,19 +744,17 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 					disabled={!canFocusAdjacentGroup}
 					onSelect={() => onFocusAdjacentGroup(-1, location.groupId)}
 				>
-					{canFocusAdjacentGroup
-						? "Focus previous group"
-						: "Focus previous group — no other visible group"}
+					{canFocusAdjacentGroup ? t("tabs.focusPrev") : t("tabs.focusPrevNone")}
 				</ContextMenuItem>
 				<ContextMenuItem
 					disabled={!canFocusAdjacentGroup}
 					onSelect={() => onFocusAdjacentGroup(1, location.groupId)}
 				>
-					{canFocusAdjacentGroup ? "Focus next group" : "Focus next group — no other visible group"}
+					{canFocusAdjacentGroup ? t("tabs.focusNext") : t("tabs.focusNextNone")}
 				</ContextMenuItem>
 				{location.area === "center" ? (
 					<ContextMenuItem disabled={!preview} onSelect={() => focusTab(true)}>
-						{preview ? "Keep preview" : "Keep preview — already kept"}
+						{preview ? t("tabs.keepPreview") : t("tabs.keepPreviewKept")}
 					</ContextMenuItem>
 				) : null}
 				<ContextMenuItem
@@ -758,7 +791,12 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 										if (!isLayoutUnavailable(result)) onApply(result);
 									}}
 								>
-									{unavailable ? `Split ${direction} — ${unavailable}` : `Split ${direction}`}
+									{unavailable
+										? t("tabs.splitUnavailable", {
+												direction: directionLabel(direction, t),
+												reason: unavailable,
+											})
+										: t("tabs.split", { direction: directionLabel(direction, t) })}
 								</ContextMenuItem>
 							);
 						})}
@@ -767,7 +805,10 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 				{moveTargets.length > 0 ? <ContextMenuSeparator /> : null}
 				{moveTargets.map((group) => {
 					const separate = group.location.area !== "center" && !canJoinAuxiliaryGroup(group, tab);
-					const label = `Move to ${group.location.area} pane ${describeLayoutGroup(group.tabs)}`;
+					const label = t("tabs.moveTo", {
+						area: areaLabel(group.location.area, t),
+						group: describeLayoutGroup(group.tabs),
+					});
 					return (
 						<ContextMenuItem
 							key={tupleKey("move-target", group.location.area, group.location.groupId)}
@@ -888,7 +929,9 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 				<ContextMenuSeparator />
 				{location.area !== "center" ? (
 					<ContextMenuItem onSelect={() => onHideSide(location.area)}>
-						{location.area === "bottom" ? "Hide bottom panel" : `Hide ${location.area} side`}
+						{location.area === "bottom"
+							? t("tabs.hideBottom")
+							: t("tabs.hideSide", { area: areaLabel(location.area, t) })}
 					</ContextMenuItem>
 				) : null}
 				<ContextMenuItem
@@ -899,14 +942,14 @@ export const WorkbenchTab = memo(function WorkbenchTab({
 					}}
 				>
 					{isLayoutUnavailable(groupRemoval)
-						? `Remove group — ${groupRemoval.reason}`
-						: "Remove group"}
+						? t("tabs.removeGroupReason", { reason: groupRemoval.reason })
+						: t("tabs.removeGroup")}
 				</ContextMenuItem>
 				<ContextMenuItem
 					onSelect={onClose}
 					className="text-feedback-error focus:text-feedback-error"
 				>
-					{rail ? "Remove tool from group" : "Close"}
+					{rail ? t("tabs.removeTool") : t("tabs.closeAction")}
 				</ContextMenuItem>
 			</ContextMenuContent>
 		</ContextMenu>

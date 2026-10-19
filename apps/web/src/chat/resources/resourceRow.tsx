@@ -12,6 +12,7 @@ import {
 import type { BackgroundCommandSummary, SubagentResourceSummary } from "@thinkrail/contracts";
 import { cn } from "@thinkrail/ui/utils";
 import type { KeyboardEvent, ReactNode } from "react";
+import { t, useT } from "@/i18n";
 
 export type ResourceAction = { pending: boolean; error: string | null };
 export type ResourceActions = Record<string, ResourceAction>;
@@ -91,7 +92,7 @@ export function sortSettled(resources: readonly Resource[]): Resource[] {
 export function resourceName(resource: Resource): string {
 	return resource.kind === "command"
 		? resource.summary.name
-		: (resource.summary.roleName ?? "Subagent");
+		: (resource.summary.roleName ?? t("chat.resource.subagent"));
 }
 
 export function resourceActivity(resource: Resource): string {
@@ -101,27 +102,31 @@ export function resourceActivity(resource: Resource): string {
 export function stateLabel(state: ResourceState, kind: Resource["kind"]): string {
 	switch (state) {
 		case "working":
-			return kind === "command" ? "Running" : "Working";
+			return kind === "command"
+				? t("chat.resource.state.running")
+				: t("chat.resource.state.working");
 		case "queued":
-			return "Queued";
+			return t("chat.resource.state.queued");
 		case "stopping":
-			return "Stopping…";
+			return t("chat.resource.state.stopping");
 		case "done":
-			return "Done";
+			return t("chat.resource.state.done");
 		case "failed":
-			return "Failed";
+			return t("chat.resource.state.failed");
 		case "stopped":
-			return "Stopped";
+			return t("chat.resource.state.stopped");
 	}
 }
 
 export function formatElapsed(ms: number): string {
 	const minutes = Math.max(0, Math.floor(ms / 60_000));
-	if (minutes < 1) return "<1 min";
-	if (minutes < 60) return `${minutes} min`;
+	if (minutes < 1) return t("chat.resources.elapsed.lessThanMinute");
+	if (minutes < 60) return t("chat.resources.elapsed.minutes", { count: minutes });
 	const hours = Math.floor(minutes / 60);
 	const rest = minutes % 60;
-	return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+	return rest === 0
+		? t("chat.resources.elapsed.hours", { count: hours })
+		: t("chat.resources.elapsed.hoursMinutes", { hours, minutes: rest });
 }
 
 function runMs(resource: Resource, now: number): number | null {
@@ -200,7 +205,7 @@ export function ExitBadge({ exitCode }: { exitCode: number }) {
 					: "border-feedback-error-muted text-feedback-error",
 			)}
 		>
-			exit {exitCode}
+			{t("chat.resource.exit", { code: exitCode })}
 		</span>
 	);
 }
@@ -305,6 +310,7 @@ export function ResourceRow({
 	onSelect,
 	onStop,
 }: ResourceRowProps) {
+	const liveT = useT();
 	const state = resourceState(resource);
 	const live = isLiveState(state);
 	const id = resourceId(resource);
@@ -343,7 +349,7 @@ export function ResourceRow({
 		<span className="hidden shrink-0 items-center gap-2 group-hover:inline-flex group-focus-within:inline-flex">
 			{live ? (
 				<RowActionButton
-					label={action?.pending ? "Stopping…" : "Stop"}
+					label={action?.pending ? liveT("chat.resources.stopping") : liveT("chat.resources.stop")}
 					testId="resource-stop"
 					disabled={stopDisabled}
 					danger
@@ -414,7 +420,7 @@ export function ResourceRow({
 				<button
 					type="button"
 					data-testid="resource-inspect"
-					title={`Inspect ${name}`}
+					title={t("chat.resources.inspect", { name })}
 					onClick={onSelect}
 					className="flex min-w-0 items-baseline gap-8 rounded-xs text-left outline-none focus-visible:ring-2 focus-visible:ring-primary"
 				>

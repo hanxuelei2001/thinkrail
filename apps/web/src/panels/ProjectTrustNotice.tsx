@@ -12,11 +12,13 @@ import {
 	untrustedNoticeText,
 } from "@/chat/projectTrust";
 import { useProjectTrustSummary } from "@/chat/useProjectTrustSummary";
+import { useT } from "@/i18n";
 import { selectSupportsProjectTrust, toast, useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 export function ProjectTrustNotice({ projectId }: { projectId: string }) {
+	const t = useT();
 	const project = useAppStore((s) => s.projects.find((p) => p.id === projectId));
 	const supportsProjectTrust = useAppStore(selectSupportsProjectTrust);
 	const summary = useProjectTrustSummary(projectId);
@@ -48,20 +50,20 @@ export function ProjectTrustNotice({ projectId }: { projectId: string }) {
 				onClick={() => setConfirmingRevoke(true)}
 				className="shrink-0"
 			>
-				Stop trusting
+				{t("trust.stopButton")}
 			</Button>
 			<ConfirmDialog
 				open={confirmingRevoke}
 				onOpenChange={setConfirmingRevoke}
-				title="Stop trusting this project?"
+				title={t("trust.stopTitle")}
 				description={stopTrustingText(project, supportsProjectTrust)}
-				confirmLabel="Stop trusting"
+				confirmLabel={t("trust.stopConfirm")}
 				destructive
 				confirmTestId="project-untrust-confirm"
 				onConfirm={() =>
 					void run(
 						() => getTransport().request("project.setTrust", { id: projectId, trusted: false }),
-						"Couldn't stop trusting project",
+						t("trust.error.stop"),
 					)
 				}
 			/>
@@ -97,7 +99,7 @@ export function ProjectTrustNotice({ projectId }: { projectId: string }) {
 				<span className="flex min-w-0 flex-1 flex-col gap-2">
 					<span className="tr-text-ui text-text-default">
 						{pending
-							? `${notice.names.length} new skill${notice.names.length === 1 ? "" : "s"} appeared since you trusted this project.`
+							? `{t("trust.newSkills", { count: notice.names.length })}`
 							: untrustedNoticeText(notice)}
 					</span>
 					{enables ? (
@@ -124,11 +126,11 @@ export function ProjectTrustNotice({ projectId }: { projectId: string }) {
 										})
 								: () =>
 										getTransport().request("project.setTrust", trustGrantParams(projectId, notice)),
-							pending ? "Couldn't confirm skills" : "Couldn't trust project",
+							pending ? t("trust.error.confirm") : t("workspace.create.error.trust"),
 						)
 					}
 				>
-					{pending ? "Review & enable" : "Trust project"}
+					{pending ? t("trust.reviewEnable") : t("trust.trustButton")}
 				</Button>
 			</div>
 		</div>

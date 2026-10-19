@@ -15,11 +15,10 @@ import {
 	DialogTitle,
 } from "@thinkrail/ui/dialog";
 import { useEffect, useId, useRef, useState } from "react";
+import { useT } from "@/i18n";
 import { copyText } from "@/lib";
 import type { LoginState } from "./loginState";
 import { redirectsToLoopback, uiServedFromLoopback } from "./uiOrigin";
-
-const WAITING_FOR_BROWSER = "Waiting for you to finish signing in…";
 
 export function LoginDialog({
 	state,
@@ -34,6 +33,7 @@ export function LoginDialog({
 	onCancel: () => void;
 	onClose: () => void;
 }) {
+	const t = useT();
 	const promptRef = useRef<HTMLInputElement>(null);
 
 	const openedUrlRef = useRef<string | null>(null);
@@ -70,7 +70,7 @@ export function LoginDialog({
 		state.input?.kind === "prompt" && state.url !== undefined && redirectsToLoopback(state.url);
 	const waitingForBrowser =
 		state.url !== undefined && (state.input?.kind !== "prompt" || pasteFallback);
-	const progress = waitingForBrowser ? WAITING_FOR_BROWSER : state.progress;
+	const progress = waitingForBrowser ? t("login.waiting") : state.progress;
 
 	const submitPrompt = () => {
 		const value = promptRef.current?.value.trim() ?? "";
@@ -99,8 +99,8 @@ export function LoginDialog({
 						{state.status === "success"
 							? `${providerName} connected`
 							: state.status === "error"
-								? "Couldn't connect"
-								: `Connect ${providerName}`}
+								? t("login.connectError")
+								: t("login.connectProvider", { provider: providerName })}
 					</DialogTitle>
 					{state.instructions && state.status === "active" ? (
 						<DialogDescription>{state.instructions}</DialogDescription>
@@ -121,7 +121,7 @@ export function LoginDialog({
 						data-testid="login-error"
 					>
 						<TriangleAlert className="mt-2 size-16 shrink-0" />
-						<span className="min-w-0 break-words">{state.error ?? "Login failed."}</span>
+						<span className="min-w-0 break-words">{state.error ?? t("login.failed")}</span>
 					</p>
 				) : (
 					<div className="flex flex-col gap-12">
@@ -146,7 +146,7 @@ export function LoginDialog({
 									}}
 								>
 									{copied ? <Check className="size-16" /> : <Copy className="size-16" />}
-									{copied ? "Copied" : "Copy link"}
+									{copied ? t("login.copied") : t("login.copyLink")}
 								</Button>
 							</div>
 						) : null}

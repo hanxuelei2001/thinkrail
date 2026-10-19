@@ -15,6 +15,7 @@ import {
 } from "@thinkrail/ui/dropdown-menu";
 import { type ImperativePanelGroupHandle, ResizablePanelGroup } from "@thinkrail/ui/resizable";
 import { memo, type ReactNode, useMemo, useRef } from "react";
+import { t, useT } from "@/i18n";
 import { type LayoutAttention, readLayoutSelection, tupleKey } from "../../lib";
 import { resizeVisibleAuxiliaryGroups, visibleAuxiliaryGroups } from "./auxiliaryPresentation";
 import {
@@ -43,12 +44,25 @@ import {
 } from "./workbenchShared";
 import { AuxiliaryGroupHeader } from "./workbenchSide";
 
-export const BOTTOM_ALIGNMENT_LABELS: Record<LayoutBottomAlignment, string> = {
-	center: "Below center",
-	"center-left": "Below center and left",
-	"center-right": "Below center and right",
-	full: "Full width",
-};
+const BOTTOM_ALIGNMENTS: readonly LayoutBottomAlignment[] = [
+	"center",
+	"center-left",
+	"center-right",
+	"full",
+];
+
+function bottomAlignmentLabel(alignment: LayoutBottomAlignment): string {
+	switch (alignment) {
+		case "center":
+			return t("bottom.align.center");
+		case "center-left":
+			return t("bottom.align.centerLeft");
+		case "center-right":
+			return t("bottom.align.centerRight");
+		case "full":
+			return t("bottom.align.full");
+	}
+}
 
 export function BottomAlignmentMenu({
 	alignment,
@@ -59,11 +73,12 @@ export function BottomAlignmentMenu({
 	onChange: (alignment: LayoutBottomAlignment) => void;
 	onHide: () => void;
 }) {
+	const t = useT();
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger
-				aria-label="Bottom panel alignment"
-				title={`Bottom panel alignment: ${BOTTOM_ALIGNMENT_LABELS[alignment]}`}
+				aria-label={t("bottom.alignmentAria")}
+				title={t("bottom.alignmentTitle", { label: bottomAlignmentLabel(alignment) })}
 				className="flex w-panel-header-row shrink-0 items-center justify-center border-border-muted border-l text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
 			>
 				<MoreHorizontal className="size-16" />
@@ -73,20 +88,20 @@ export function BottomAlignmentMenu({
 					value={alignment}
 					onValueChange={(value) => onChange(value as LayoutBottomAlignment)}
 				>
-					{(Object.keys(BOTTOM_ALIGNMENT_LABELS) as LayoutBottomAlignment[]).map((value) => (
+					{BOTTOM_ALIGNMENTS.map((value) => (
 						<DropdownMenuRadioItem
 							key={value}
 							value={value}
 							data-testid={`bottom-align-${value}`}
 							className="justify-between"
 						>
-							<span>{BOTTOM_ALIGNMENT_LABELS[value]}</span>
+							<span>{bottomAlignmentLabel(value)}</span>
 							{alignment === value ? <Check className="text-primary" /> : null}
 						</DropdownMenuRadioItem>
 					))}
 				</DropdownMenuRadioGroup>
 				<DropdownMenuSeparator />
-				<DropdownMenuItem onSelect={onHide}>Hide bottom panel</DropdownMenuItem>
+				<DropdownMenuItem onSelect={onHide}>{t("bottom.hide")}</DropdownMenuItem>
 			</DropdownMenuContent>
 		</DropdownMenu>
 	);
@@ -101,6 +116,7 @@ export function BottomCreationTargets({
 	groupIndex: number;
 	shared: SharedGroupProps;
 }) {
+	const t = useT();
 	const tab =
 		shared.draggingTab?.kind === "tool" || shared.draggingTab?.kind === "terminal"
 			? shared.draggingTab
@@ -126,7 +142,7 @@ export function BottomCreationTargets({
 				<DropZone
 					id={tupleKey("dnd-bottom-group", group.id, "left")}
 					target={{ kind: "auxiliary-edge", region: "bottom", index: groupIndex }}
-					label="Create bottom group to the left"
+					label={t("bottom.createLeft")}
 					className="absolute inset-y-4 left-4 right-1/2"
 				/>
 			) : null}
@@ -134,7 +150,7 @@ export function BottomCreationTargets({
 				<DropZone
 					id={tupleKey("dnd-bottom-group", group.id, "right")}
 					target={{ kind: "auxiliary-edge", region: "bottom", index: groupIndex + 1 }}
-					label="Create bottom group to the right"
+					label={t("bottom.createRight")}
 					className="absolute inset-y-4 left-1/2 right-4"
 				/>
 			) : null}
@@ -158,6 +174,7 @@ export const BottomGroupView = memo(function BottomGroupView({
 	onFold: () => void;
 	onAlignmentChange: (alignment: LayoutBottomAlignment) => void;
 }) {
+	const t = useT();
 	const location: LayoutGroupLocation = { area: "bottom", groupId: group.id };
 	const selected = group.tabs.find((tab) => tab.id === selectedId) ?? group.tabs[0];
 	const selectedName = selected ? layoutTabName(selected) : undefined;
@@ -169,7 +186,7 @@ export const BottomGroupView = memo(function BottomGroupView({
 			data-tools={group.tabs.flatMap((tab) => (tab.kind === "tool" ? [tab.tool] : [])).join(" ")}
 			data-folded="false"
 			tabIndex={-1}
-			aria-label={selectedName ? `Bottom group: ${selectedName}` : "Empty bottom group"}
+			aria-label={selectedName ? t("bottom.group", { name: selectedName }) : t("bottom.emptyGroup")}
 			className="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-container-sidebar-bg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
 			onFocusCapture={() => shared.onFocusGroup(location, selected?.id)}
 		>
@@ -231,6 +248,7 @@ export const BottomStack = memo(function BottomStack({
 	projectionEpoch: number;
 	onCommit: WorkbenchProps["onCommit"];
 }) {
+	const t = useT();
 	const [sizeRef, size] = useElementSize();
 	const region = shared.document.bottom;
 	const alignmentMenuGroupId =
@@ -266,7 +284,7 @@ export const BottomStack = memo(function BottomStack({
 	return (
 		<aside
 			ref={sizeRef}
-			aria-label="Bottom workbench"
+			aria-label={t("bottom.workbench")}
 			data-testid="bottom-panel"
 			className="relative h-full min-h-0 min-w-0 overflow-hidden"
 		>
@@ -339,6 +357,7 @@ export function BottomDropZone({
 	targetGroupId: string | undefined;
 	targetIndex: number;
 }) {
+	const t = useT();
 	const { setNodeRef, isOver } = useDroppable({
 		id: HIDDEN_BOTTOM_DROP_ID,
 		data: {
@@ -355,9 +374,7 @@ export function BottomDropZone({
 			ref={setNodeRef}
 			data-testid="bottom-drop-zone"
 			aria-hidden="true"
-			data-drop-label={
-				targetGroupId ? "Reveal hidden bottom group" : "Create group in hidden bottom region"
-			}
+			data-drop-label={targetGroupId ? t("bottom.revealHidden") : t("bottom.createHidden")}
 			data-drop-active={isOver || undefined}
 			data-drop-hint={!isOver || undefined}
 			className="pointer-events-auto relative z-20 h-panel-header-control min-w-32 flex-1 self-center border-primary transition-colors data-[drop-hint]:border-t data-[drop-hint]:bg-primary-subtle data-[drop-active]:border-t-2 data-[drop-active]:bg-primary-soft"

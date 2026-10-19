@@ -1,6 +1,7 @@
 import type { DelegationRunStatus, TranscriptMessage } from "@thinkrail/contracts";
 import { Dialog, DialogContent, DialogTitle } from "@thinkrail/ui/dialog";
 import { useEffect, useMemo, useState } from "react";
+import { useT } from "@/i18n";
 import { isConnectedGeneration, useAppStore } from "@/store";
 import { errorText, getTransport, wsErrorCode } from "@/transport";
 import { AskStatesContext, deriveAskStates } from "./askState";
@@ -83,6 +84,7 @@ function useSubagentTranscript({ workspaceId, parentSessionId, childSessionId }:
 }
 
 export function SubagentTranscriptPane(scope: TranscriptScope) {
+	const t = useT();
 	const { messages, live, error, rows, messageActions, askContext } = useSubagentTranscript(scope);
 	return (
 		<ChatActionsContext.Provider value={null}>
@@ -97,10 +99,10 @@ export function SubagentTranscriptPane(scope: TranscriptScope) {
 							{error}
 						</span>
 					) : messages === null ? (
-						<span className="text-text-muted tr-text-metadata">Loading…</span>
+						<span className="text-text-muted tr-text-metadata">{t("common.loading")}</span>
 					) : rows.length === 0 ? (
 						<span className="text-text-muted tr-text-metadata italic">
-							Nothing in the transcript yet.
+							{t("chat.transcript.empty")}
 						</span>
 					) : (
 						rows.map((row) => (

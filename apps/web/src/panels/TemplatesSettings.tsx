@@ -12,6 +12,7 @@ import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { useEffect, useState } from "react";
 import { TemplateEditorDialog } from "@/chat/TemplateEditorDialog";
 import { SkeletonRows } from "@/components/Skeleton";
+import { type TFunction, useT } from "@/i18n";
 import { assembleTemplate } from "@/prompt";
 import { toast, useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
@@ -20,43 +21,45 @@ import { openFileInTab } from "./openTabs";
 import { SettingsPageContainer } from "./SettingsGroup";
 import { SettingsNotice } from "./SettingsNotice";
 
-const STARTER_TEMPLATES: ReadonlyArray<{
+function starterTemplates(t: TFunction): ReadonlyArray<{
 	name: string;
 	description: string;
 	argumentHint: string;
 	body: string;
-}> = [
-	{
-		name: "review",
-		description: "Code review of a file or directory",
-		argumentHint: "[path] [focus]",
-		body: `Review $1 for correctness, clarity, and maintainability, focusing on \${2:-the riskiest parts}.\nList concrete findings with \`file:line\` references, ordered by severity, and propose a fix for each.`,
-	},
-	{
-		name: "explain",
-		description: "Explain how something works in this codebase",
-		argumentHint: "[path-or-topic]",
-		body: "Explain how $1 works in this codebase: its purpose, the key control and data flow, and what depends on it.\nKeep it concise and point to the load-bearing files and `file:line` locations.",
-	},
-	{
-		name: "tests",
-		description: "Write tests for a target",
-		argumentHint: "[path]",
-		body: "Write tests for $1. Cover the main behavior, the important edge cases, and one failure path.\nMatch the project's existing test conventions and runner, then run them and report the result.",
-	},
-	{
-		name: "commit",
-		description: "Write a Conventional Commit message from the staged diff",
-		argumentHint: "[scope]",
-		body: `Read the staged changes (\`git diff --cached\`) and write a Conventional Commits message.\nUse the type that fits (feat/fix/refactor/docs/test/chore) with scope \${1:-infer it from the files},\nan imperative subject under 72 chars, and a short body explaining the why when it isn't obvious.\nReply with only the commit message.`,
-	},
-	{
-		name: "rename",
-		description: "Rename a symbol everywhere (demoes repeated-slot mirroring)",
-		argumentHint: "[old] [new]",
-		body: "Rename `$1` to `$2` across the codebase: update every definition, reference, and import of `$1`,\nplus any docs or comments that mention `$1`. Keep `$2` consistent everywhere and run the type-checker after.",
-	},
-];
+}> {
+	return [
+		{
+			name: "review",
+			description: t("settings.templates.starter.review"),
+			argumentHint: "[path] [focus]",
+			body: `Review $1 for correctness, clarity, and maintainability, focusing on \${2:-the riskiest parts}.\nList concrete findings with \`file:line\` references, ordered by severity, and propose a fix for each.`,
+		},
+		{
+			name: "explain",
+			description: t("settings.templates.starter.explain"),
+			argumentHint: "[path-or-topic]",
+			body: "Explain how $1 works in this codebase: its purpose, the key control and data flow, and what depends on it.\nKeep it concise and point to the load-bearing files and `file:line` locations.",
+		},
+		{
+			name: "tests",
+			description: t("settings.templates.starter.tests"),
+			argumentHint: "[path]",
+			body: "Write tests for $1. Cover the main behavior, the important edge cases, and one failure path.\nMatch the project's existing test conventions and runner, then run them and report the result.",
+		},
+		{
+			name: "commit",
+			description: t("settings.templates.starter.commit"),
+			argumentHint: "[scope]",
+			body: `Read the staged changes (\`git diff --cached\`) and write a Conventional Commits message.\nUse the type that fits (feat/fix/refactor/docs/test/chore) with scope \${1:-infer it from the files},\nan imperative subject under 72 chars, and a short body explaining the why when it isn't obvious.\nReply with only the commit message.`,
+		},
+		{
+			name: "rename",
+			description: t("settings.templates.starter.rename"),
+			argumentHint: "[old] [new]",
+			body: "Rename `$1` to `$2` across the codebase: update every definition, reference, and import of `$1`,\nplus any docs or comments that mention `$1`. Keep `$2` consistent everywhere and run the type-checker after.",
+		},
+	];
+}
 
 function useTemplateList(
 	workspaceId: string | undefined,
@@ -188,35 +191,35 @@ function ProjectTemplatesSection({
 	onNew: () => void;
 	onEdit: (template: TemplateInfo) => void;
 }) {
+	const t = useT();
 	const hasProject = workspaceId != null;
 
 	return (
 		<section className="flex flex-col gap-12">
 			<div className="flex items-center justify-between">
-				<h4 className="tr-text-label-pill text-text-subtle">Project templates</h4>
+				<h4 className="tr-text-label-pill text-text-subtle">{t("settings.templates.project")}</h4>
 				{hasProject ? (
 					<Button variant="soft" size="sm" data-testid="template-new-project" onClick={onNew}>
 						<Plus className="size-14" />
-						New
+						{t("settings.templates.new")}
 					</Button>
 				) : null}
 			</div>
 
 			{!hasProject ? (
 				<SettingsNotice variant="info" testId="project-templates-unavailable">
-					<p className="tr-text-ui text-text-default">Open a project to manage its templates</p>
+					<p className="tr-text-ui text-text-default">{t("settings.templates.noProject")}</p>
 					<p className="tr-text-metadata text-text-muted">
-						Project templates are stored in the project's{" "}
-						<code className="tr-code-text">.pi/prompts/</code> directory and are available in that
-						project.
+						{t("settings.templates.noProjectHint")}
 					</p>
 				</SettingsNotice>
 			) : templates && templates.length === 0 ? (
 				<SettingsNotice variant="neutral" hideIcon testId="project-templates-empty">
-					<p className="tr-text-ui text-text-default">No project templates yet</p>
+					<p className="tr-text-ui text-text-default">
+						{t("settings.templates.noProjectTemplates")}
+					</p>
 					<p className="tr-text-metadata text-text-muted">
-						Templates you create here are stored in this project's{" "}
-						<code className="tr-code-text">.pi/prompts/</code> directory.
+						{t("settings.templates.noProjectTemplatesHint")}
 					</p>
 				</SettingsNotice>
 			) : templates ? (
@@ -236,17 +239,17 @@ function ProjectTemplatesSection({
 	);
 }
 
-async function addStarterTemplates() {
+async function addStarterTemplates(t: TFunction) {
 	try {
-		for (const t of STARTER_TEMPLATES) {
+		for (const starter of starterTemplates(t)) {
 			await getTransport().request("template.save", {
 				scope: "global",
-				name: t.name,
-				content: assembleTemplate(t.description, t.argumentHint, t.body),
+				name: starter.name,
+				content: assembleTemplate(starter.description, starter.argumentHint, starter.body),
 			});
 		}
 	} catch (err) {
-		toast.error(errorText(err), "Couldn't add starter templates");
+		toast.error(errorText(err), t("settings.templates.error.addStarters"));
 	} finally {
 		useAppStore.getState().bumpTemplatesVersion();
 	}
@@ -261,18 +264,19 @@ function GlobalTemplatesSection({
 	onNew: () => void;
 	onEdit: (template: TemplateInfo) => void;
 }) {
+	const t = useT();
 	const [adding, setAdding] = useState(false);
 
 	const addStarters = () => {
 		if (adding) return;
 		setAdding(true);
-		void addStarterTemplates().then(() => setAdding(false));
+		void addStarterTemplates(t).then(() => setAdding(false));
 	};
 
 	return (
 		<section className="flex flex-col gap-12">
 			<div className="flex items-center justify-between">
-				<h4 className="tr-text-label-pill text-text-subtle">Global templates</h4>
+				<h4 className="tr-text-label-pill text-text-subtle">{t("settings.templates.global")}</h4>
 				<Button variant="soft" size="sm" data-testid="template-new-global" onClick={onNew}>
 					<Plus className="size-14" />
 					New
@@ -293,14 +297,12 @@ function GlobalTemplatesSection({
 							onClick={addStarters}
 						>
 							<MagicWand className="size-14" />
-							Add starter templates
+							{t("settings.templates.addStarters")}
 						</Button>
 					}
 				>
-					<p className="tr-text-ui text-text-default">No global templates yet</p>
-					<p className="tr-text-metadata text-text-muted">
-						Create your own templates, or try a set of starter templates to get started.
-					</p>
+					<p className="tr-text-ui text-text-default">{t("settings.templates.noGlobal")}</p>
+					<p className="tr-text-metadata text-text-muted">{t("settings.templates.noGlobalHint")}</p>
 				</SettingsNotice>
 			) : (
 				<div className="flex flex-col gap-8">
@@ -330,6 +332,7 @@ function TemplateRow({
 	showOpenAsFile: boolean;
 	onEdit: () => void;
 }) {
+	const t = useT();
 	const [confirmOpen, setConfirmOpen] = useState(false);
 
 	const del = async () => {
@@ -341,7 +344,7 @@ function TemplateRow({
 			});
 			useAppStore.getState().bumpTemplatesVersion();
 		} catch (err) {
-			toast.error(errorText(err), "Couldn't delete the template");
+			toast.error(errorText(err), t("settings.templates.error.delete"));
 		}
 	};
 
@@ -355,9 +358,9 @@ function TemplateRow({
 		<ConfirmPopover
 			open={confirmOpen}
 			onOpenChange={setConfirmOpen}
-			title={`Delete ${template.name}?`}
-			description="Removes the template file. This can't be undone."
-			confirmLabel="Delete"
+			title={t("settings.templates.deleteTitle", { name: template.name })}
+			description={t("settings.templates.deleteDescription")}
+			confirmLabel={t("settings.templates.delete")}
 			destructive
 			confirmTestId="template-confirm-delete"
 			onConfirm={() => void del()}
@@ -379,11 +382,11 @@ function TemplateRow({
 				</div>
 				<div className="flex shrink-0 items-center gap-4">
 					{showOpenAsFile ? (
-						<IconTooltip label="Open as file">
+						<IconTooltip label={t("settings.templates.openAsFile")}>
 							<button
 								type="button"
 								data-testid="template-open-file"
-								aria-label="Open as file"
+								aria-label={t("settings.templates.openAsFile")}
 								onClick={openAsFile}
 								className="flex size-24 items-center justify-center rounded-sm text-text-muted transition hover:bg-control-bg-hovered hover:text-text-default"
 							>
@@ -391,23 +394,23 @@ function TemplateRow({
 							</button>
 						</IconTooltip>
 					) : null}
-					<IconTooltip label="Edit">
+					<IconTooltip label={t("settings.templates.edit")}>
 						<button
 							type="button"
 							data-testid="template-edit"
-							aria-label="Edit"
+							aria-label={t("settings.templates.edit")}
 							onClick={onEdit}
 							className="flex size-24 items-center justify-center rounded-sm text-text-muted transition hover:bg-control-bg-hovered hover:text-text-default"
 						>
 							<Pencil className="size-14" />
 						</button>
 					</IconTooltip>
-					<IconTooltip label="Delete" wrapTrigger>
+					<IconTooltip label={t("settings.templates.delete")} wrapTrigger>
 						<PopoverTrigger asChild>
 							<button
 								type="button"
 								data-testid="template-delete"
-								aria-label="Delete"
+								aria-label={t("settings.templates.delete")}
 								className="flex size-24 items-center justify-center rounded-sm text-text-muted transition hover:bg-control-bg-hovered hover:text-feedback-error"
 							>
 								<Trash2 className="size-14" />

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import { useT } from "@/i18n";
 import type { ResourceDiffProps, ReviewThread, SurfaceReview } from "@/resources";
 import { ReviewComposer } from "../../ReviewComposer";
 import { ReviewThreadCard } from "../../ReviewThreadCard";
@@ -35,6 +36,7 @@ export default function JsonDiff({
 	review,
 	onPlacedThreadIds,
 }: ResourceDiffProps) {
+	const t = useT();
 	const originalText = original.kind === "text" ? original.text : null;
 	const modifiedText = modified.kind === "text" ? modified.text : null;
 	const originalDocument = useMemo(
@@ -194,7 +196,7 @@ export default function JsonDiff({
 			) : null}
 			{layout.removedNodes.length > 0 ? (
 				<section className="mt-12 border-border-default border-t pt-8">
-					<h2 className="mb-4 tr-text-eyebrow text-feedback-error">Removed</h2>
+					<h2 className="mb-4 tr-text-eyebrow text-feedback-error">{t("json.removed")}</h2>
 					{layout.removedNodes.map((node) => (
 						<JsonTree
 							key={node.pointer}

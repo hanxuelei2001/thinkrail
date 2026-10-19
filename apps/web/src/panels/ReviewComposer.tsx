@@ -1,5 +1,6 @@
 import { cn } from "@thinkrail/ui/utils";
 import { useEffect, useRef, useState } from "react";
+import { useT } from "@/i18n";
 import type { AnchorDraft, SurfaceReview } from "@/resources";
 import {
 	type ReviewTextBinding,
@@ -31,6 +32,7 @@ export function ReviewComposer({
 	onClose: () => void;
 	className?: string;
 }) {
+	const t = useT();
 	const [initial] = useState(() => ({
 		value: input?.value ?? reviewTextState(initialText),
 		restored: input?.restored === true || input?.value !== undefined,
@@ -79,7 +81,7 @@ export function ReviewComposer({
 				ref={inputRef}
 				data-testid="review-composer-input"
 				className="review-composer-input tr-text-ui"
-				placeholder="Leave a review comment…"
+				placeholder={t("review.composerPlaceholder")}
 				value={text}
 				disabled={busy}
 				onChange={(event) => {

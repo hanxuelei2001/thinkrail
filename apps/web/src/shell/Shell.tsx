@@ -5,6 +5,7 @@ import {
 } from "@remixicon/react";
 import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { useEffect, useState } from "react";
+import { type TFunction, useT } from "@/i18n";
 import { NotificationPermissionPrompt, useAttentionNotifications } from "../notifications";
 import { AnalyticsConsentDialog } from "../panels/AnalyticsConsentDialog";
 import { InterviewPromptDialog } from "../panels/InterviewPromptDialog";
@@ -42,11 +43,13 @@ import { useGlobalHotkeys } from "./useGlobalHotkeys";
 import { useNativeWindowControls } from "./useNativeWindowControls";
 import { WorkspaceWorkbench } from "./WorkspaceWorkbench";
 
-const STATUS_LABEL: Record<ConnectionStatus, string> = {
-	connected: "Connected",
-	connecting: "Connecting…",
-	disconnected: "Disconnected",
-};
+function statusLabel(status: ConnectionStatus, t: TFunction): string {
+	return status === "connected"
+		? t("shell.status.connected")
+		: status === "connecting"
+			? t("shell.status.connecting")
+			: t("shell.status.disconnected");
+}
 
 const STATUS_DOT: Record<ConnectionStatus, string> = {
 	connected: "text-feedback-success",
@@ -55,6 +58,7 @@ const STATUS_DOT: Record<ConnectionStatus, string> = {
 };
 
 export function Shell() {
+	const t = useT();
 	useLocalLayoutState();
 	useAttentionNotifications();
 	const status = useAppStore((s) => s.status);
@@ -163,7 +167,7 @@ export function Shell() {
 						data-testid="connection-status"
 						data-status={status}
 						role="status"
-						aria-label={STATUS_LABEL[status]}
+						aria-label={statusLabel(status, t)}
 						className="inline-flex items-center gap-8 tr-text-ui text-text-muted"
 					>
 						<StatusDot
@@ -171,14 +175,20 @@ export function Shell() {
 							className={`size-8 shrink-0 fill-current ${STATUS_DOT[status]}`}
 						/>
 						<span aria-hidden="true" className="hidden sm:inline">
-							{STATUS_LABEL[status]}
+							{statusLabel(status, t)}
 						</span>
 					</span>
-					<IconTooltip label={settingsShortcut ? `Settings (${settingsShortcut})` : "Settings"}>
+					<IconTooltip
+						label={
+							settingsShortcut
+								? t("shell.settingsWithShortcut", { shortcut: settingsShortcut })
+								: t("shell.settings")
+						}
+					>
 						<button
 							type="button"
 							data-testid="open-settings"
-							aria-label="Settings"
+							aria-label={t("shell.settings")}
 							onClick={() => useAppStore.getState().openSettings()}
 							className="flex size-28 items-center justify-center rounded-sm text-text-muted outline-none transition-colors hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
 						>

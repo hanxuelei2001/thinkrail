@@ -11,18 +11,22 @@ import {
 import { Button } from "@thinkrail/ui/button";
 import { cn } from "@thinkrail/ui/utils";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { formatNumber, type TFunction, t, useLocale } from "@/i18n";
 import { toast, useAppStore } from "@/store";
 import { getTransport } from "@/transport";
 import { SettingsGroup } from "./SettingsGroup";
 
-const PRESETS = [
-	{ id: "default", label: "Default", override: null },
-	{ id: "1m", label: "1M", override: MODEL_CONTEXT_WINDOW_LIMITS.max },
-	{ id: "custom", label: "Custom", override: undefined },
-] as const;
-
-const tokens = (value: number) => value.toLocaleString("en-US");
-const RANGE = `${tokens(MODEL_CONTEXT_WINDOW_LIMITS.min)}–${tokens(MODEL_CONTEXT_WINDOW_LIMITS.max)}`;
+function contextPresets(t: TFunction) {
+	return [
+		{ id: "default", label: t("settings.modelContext.preset.default"), override: null },
+		{
+			id: "1m",
+			label: t("settings.modelContext.preset.oneM"),
+			override: MODEL_CONTEXT_WINDOW_LIMITS.max,
+		},
+		{ id: "custom", label: t("settings.modelContext.preset.custom"), override: undefined },
+	] as const;
+}
 
 function supported(protocolVersion: number | null): boolean {
 	return protocolVersion !== null && protocolVersion >= CONTEXT_WINDOW_SETTINGS_PROTOCOL_VERSION;
@@ -51,6 +55,9 @@ function ContextLimitControl({
 	revision: string;
 	onChange: (override: number | null) => void;
 }) {
+	useLocale();
+	const presets = contextPresets(t);
+	const range = `${formatNumber(MODEL_CONTEXT_WINDOW_LIMITS.min)}–${formatNumber(MODEL_CONTEXT_WINDOW_LIMITS.max)}`;
 	const id = useId();
 	const inputRef = useRef<HTMLInputElement>(null);
 	const restoreFocus = useRef<HTMLElement | null>(null);
@@ -75,7 +82,7 @@ function ContextLimitControl({
 		? "custom"
 		: override === undefined
 			? null
-			: (PRESETS.find((preset) => preset.override === override)?.id ?? "custom");
+			: (presets.find((preset) => preset.override === override)?.id ?? "custom");
 	const isCustomActive = selected === "custom";
 	const text = draft.text.trim();
 	const showError = text !== "" && !isCustomText(text);
@@ -103,53 +110,58 @@ function ContextLimitControl({
 
 				<div
 					role="radiogroup"
-					aria-label={`Context window for ${controlLabel}`}
+					aria-label={t("settings.modelContext.aria.contextWindow", { label: controlLabel })}
 					className={cn(
 						"inline-flex h-32 shrink-0 overflow-hidden rounded-sm bg-control-bg",
 						showError && "ring-1 ring-feedback-error",
 					)}
 				>
-					{PRESETS.filter((p) => p.id !== "custom").map((preset) => (
-						<label
-							key={preset.id}
-							data-testid={`${testId}-${preset.id}`}
-							onPointerDown={() => {
-								if (document.activeElement === inputRef.current) skipBlurCommit.current = true;
-							}}
-							className={cn(
-								"relative cursor-pointer transition-colors",
-								disabled && "cursor-default",
-							)}
-						>
-							<input
-								type="radio"
-								name={id}
-								value={preset.id}
-								checked={selected === preset.id}
-								disabled={disabled}
-								aria-label={`${preset.label} for ${controlLabel}`}
-								className="peer sr-only inset-0"
-								onChange={(event) => {
-									if (disabled) return;
-									restoreFocus.current = event.currentTarget;
-									setDraft(initialDraft);
-									onChange(preset.override);
+					{presets
+						.filter((p) => p.id !== "custom")
+						.map((preset) => (
+							<label
+								key={preset.id}
+								data-testid={`${testId}-${preset.id}`}
+								onPointerDown={() => {
+									if (document.activeElement === inputRef.current) skipBlurCommit.current = true;
 								}}
-							/>
-							<span
 								className={cn(
-									"flex h-32 items-center px-12 tr-text-ui transition-colors",
-									selected === preset.id
-										? "rounded-sm bg-control-bg-selected text-text-default"
-										: "text-text-muted hover:text-text-default",
-									"peer-focus-visible:ring-2 peer-focus-visible:ring-inset peer-focus-visible:ring-primary",
-									"peer-disabled:text-control-disabled-text peer-disabled:hover:text-control-disabled-text",
+									"relative cursor-pointer transition-colors",
+									disabled && "cursor-default",
 								)}
 							>
-								{preset.label}
-							</span>
-						</label>
-					))}
+								<input
+									type="radio"
+									name={id}
+									value={preset.id}
+									checked={selected === preset.id}
+									disabled={disabled}
+									aria-label={t("settings.modelContext.aria.preset", {
+										preset: preset.label,
+										label: controlLabel,
+									})}
+									className="peer sr-only inset-0"
+									onChange={(event) => {
+										if (disabled) return;
+										restoreFocus.current = event.currentTarget;
+										setDraft(initialDraft);
+										onChange(preset.override);
+									}}
+								/>
+								<span
+									className={cn(
+										"flex h-32 items-center px-12 tr-text-ui transition-colors",
+										selected === preset.id
+											? "rounded-sm bg-control-bg-selected text-text-default"
+											: "text-text-muted hover:text-text-default",
+										"peer-focus-visible:ring-2 peer-focus-visible:ring-inset peer-focus-visible:ring-primary",
+										"peer-disabled:text-control-disabled-text peer-disabled:hover:text-control-disabled-text",
+									)}
+								>
+									{preset.label}
+								</span>
+							</label>
+						))}
 
 					<div
 						className={cn(
@@ -170,7 +182,7 @@ function ContextLimitControl({
 								value="custom"
 								checked={isCustomActive}
 								disabled={disabled}
-								aria-label={`Custom for ${controlLabel}`}
+								aria-label={t("settings.modelContext.aria.custom", { label: controlLabel })}
 								className="peer sr-only inset-0"
 								onChange={() => {
 									if (disabled) return;
@@ -199,8 +211,8 @@ function ContextLimitControl({
 								inputMode="numeric"
 								value={draft.text}
 								disabled={disabled}
-								placeholder={RANGE}
-								aria-label={`Context tokens for ${controlLabel}`}
+								placeholder={range}
+								aria-label={t("settings.modelContext.aria.tokens", { label: controlLabel })}
 								aria-invalid={showError}
 								aria-describedby={showError ? `${id}-error` : undefined}
 								data-testid={`${testId}-input`}
@@ -232,7 +244,7 @@ function ContextLimitControl({
 			</div>
 			{showError ? (
 				<p id={`${id}-error`} className="text-right tr-text-metadata text-feedback-error">
-					Enter a number within {RANGE} tokens.
+					{t("settings.modelContext.error.range", { range })}
 				</p>
 			) : null}
 		</div>
@@ -254,8 +266,10 @@ export function ModelContextControls({
 	onChange: (target: ModelContextTarget, override: number | null) => void;
 	onRetry: () => void;
 }) {
+	useLocale();
 	const [expanded, setExpanded] = useState(false);
 	const rowsId = useId();
+	const range = `${formatNumber(MODEL_CONTEXT_WINDOW_LIMITS.min)}–${formatNumber(MODEL_CONTEXT_WINDOW_LIMITS.max)}`;
 	if (!supported(protocolVersion)) return null;
 	const shared = settings?.filter(isSharedModelContextTarget) ?? [];
 	const external = (settings?.length ?? 0) - shared.length;
@@ -266,29 +280,31 @@ export function ModelContextControls({
 	);
 	const sharedDescription = [
 		sharedOverride === undefined
-			? "Customized by model"
-			: `${shared.length} available model${shared.length === 1 ? "" : "s"}`,
-		...(external > 0 ? [`${external} kept at a limit set outside the ${RANGE} range`] : []),
+			? t("settings.modelContext.customizedByModel")
+			: t("settings.modelContext.availableModels", { count: shared.length }),
+		...(external > 0 ? [t("settings.modelContext.outsideRange", { count: external, range })] : []),
 	].join(" · ");
 
 	return (
-		<SettingsGroup title="GPT context window" testId="settings-model-context">
+		<SettingsGroup title={t("settings.modelContext.group")} testId="settings-model-context">
 			{failed ? (
 				<div className="flex items-center gap-8 border-border-muted border-b py-12" role="alert">
-					<p className="tr-text-ui text-text-muted">Couldn't load pi context settings.</p>
+					<p className="tr-text-ui text-text-muted">{t("settings.modelContext.failed")}</p>
 					<Button variant="ghost" size="sm" disabled={pending} onClick={onRetry}>
-						Retry
+						{t("common.retry")}
 					</Button>
 				</div>
 			) : settings === null ? (
 				<div className="flex items-center justify-between gap-12 border-border-muted border-b py-12">
-					<span className="tr-text-ui text-text-default">Global</span>
-					<span className="tr-text-metadata text-text-muted">Loading…</span>
+					<span className="tr-text-ui text-text-default">{t("settings.modelContext.global")}</span>
+					<span className="tr-text-metadata text-text-muted">{t("common.loading")}</span>
 				</div>
 			) : settings.length === 0 ? (
 				<div className="flex items-center justify-between gap-12 border-border-muted border-b py-12">
-					<span className="tr-text-ui text-text-default">Global</span>
-					<span className="tr-text-metadata text-text-muted">No eligible models</span>
+					<span className="tr-text-ui text-text-default">{t("settings.modelContext.global")}</span>
+					<span className="tr-text-metadata text-text-muted">
+						{t("settings.modelContext.noEligible")}
+					</span>
 				</div>
 			) : (
 				<>
@@ -296,7 +312,7 @@ export function ModelContextControls({
 						{shared.length > 0 ? (
 							<ContextLimitControl
 								revision={revision}
-								label="Global"
+								label={t("settings.modelContext.global")}
 								description={sharedDescription}
 								override={sharedOverride}
 								disabled={pending}
@@ -305,9 +321,7 @@ export function ModelContextControls({
 							/>
 						) : null}
 						<p className="rounded-sm bg-control-bg px-12 py-8 tr-text-metadata text-text-muted">
-							Default uses the model's catalog limit. Larger contexts may increase cost or quota
-							usage. Settings sync with pi CLI via models.json. New chats use updated limits;
-							existing chats may need a host restart.
+							{t("settings.modelContext.explanation")}
 						</p>
 					</div>
 
@@ -320,7 +334,9 @@ export function ModelContextControls({
 							data-testid="model-context-customize"
 							className="flex w-full items-start gap-8 py-12 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-primary"
 						>
-							<span className="flex-1 tr-text-ui text-text-default">By each model</span>
+							<span className="flex-1 tr-text-ui text-text-default">
+								{t("settings.modelContext.byModel")}
+							</span>
 							<span className="mt-2 shrink-0">
 								{expanded ? (
 									<RiArrowDownSLine className="size-20 text-text-muted" aria-hidden="true" />
@@ -337,7 +353,15 @@ export function ModelContextControls({
 										revision={String(model.override)}
 										label={model.name}
 										controlLabel={`${model.name} (${model.provider})`}
-										description={`${model.provider} · ${tokens(model.contextWindow)} tokens${model.override === null ? " (pi default)" : ""}`}
+										description={t(
+											model.override === null
+												? "settings.modelContext.modelDescriptionDefault"
+												: "settings.modelContext.modelDescription",
+											{
+												provider: model.provider,
+												tokens: formatNumber(model.contextWindow),
+											},
+										)}
 										override={model.override}
 										disabled={pending}
 										testId={`context-limit-${model.provider}-${model.id}`}
@@ -356,6 +380,7 @@ export function ModelContextControls({
 }
 
 export function ModelContextSettings() {
+	useLocale();
 	const protocolVersion = useAppStore((state) => state.protocolVersion);
 	const providerVersion = useAppStore((state) => state.providerVersion);
 	const models = useAppStore((state) => state.models);
@@ -376,8 +401,7 @@ export function ModelContextSettings() {
 			try {
 				next = await request();
 			} catch {}
-			if (next === undefined && change)
-				toast.error("Couldn't update pi context settings. Retry to check the saved configuration.");
+			if (next === undefined && change) toast.error(t("settings.modelContext.error.update"));
 			if (current !== sequence.current) return;
 			if (next === undefined) setFailed(true);
 			else if (providerVersion === useAppStore.getState().providerVersion) {

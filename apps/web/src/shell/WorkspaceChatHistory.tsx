@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@thinkrail/ui/popover";
 import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { cn } from "@thinkrail/ui/utils";
 import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { useT } from "@/i18n";
 import { useNow } from "../components/useNow";
 import { relativeTime } from "../lib";
 import { openChatInTab } from "../panels/openChat";
@@ -25,6 +26,7 @@ export function WorkspaceChatHistory({
 	targetGroupId: string;
 	onRenameChat?: (sessionId: string, titleInput: string, currentTitle: string) => void;
 }) {
+	const t = useT();
 	const closed = useAppStore((state) => state.closedChatsByWorkspace[workspaceId] ?? EMPTY_CHATS);
 	const chatStarting = useAppStore((state) => (state.chatStartsByWorkspace[workspaceId] ?? 0) > 0);
 	const [open, setOpen] = useState(false);
@@ -32,10 +34,10 @@ export function WorkspaceChatHistory({
 	if (closed.length === 0) return null;
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
-			<IconTooltip label="View chat history" wrapTrigger>
+			<IconTooltip label={t("shell.history.view")} wrapTrigger>
 				<PopoverTrigger
 					data-testid="chat-history"
-					aria-label="Reopen a closed chat"
+					aria-label={t("shell.history.reopen")}
 					className="flex w-panel-header-row shrink-0 items-center justify-center border-border-default border-l text-text-muted outline-none hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
 				>
 					{chatStarting ? (
@@ -60,7 +62,7 @@ export function WorkspaceChatHistory({
 				className="max-h-[min(60vh,var(--radix-popover-content-available-height))] min-w-[16rem] overflow-y-auto p-4"
 			>
 				<div id={headingId} className="px-8 py-4 tr-text-eyebrow text-text-muted">
-					Recently closed
+					{t("shell.history.recentlyClosed")}
 				</div>
 				{closed.map((chat) => (
 					<ClosedChatRow
@@ -90,6 +92,7 @@ function ClosedChatRow({
 	onDismiss: () => void;
 	onRenameChat?: (sessionId: string, titleInput: string, currentTitle: string) => void;
 }) {
+	const t = useT();
 	const now = useNow();
 	const inputRef = useRef<HTMLInputElement>(null);
 	const reopenButtonRef = useRef<HTMLButtonElement>(null);
@@ -154,7 +157,7 @@ function ClosedChatRow({
 						data-testid="closed-chat-name-input"
 						type="text"
 						spellCheck={false}
-						aria-label="Chat name"
+						aria-label={t("shell.history.chatName")}
 						defaultValue={chat.title}
 						onKeyDown={onNameKeyDown}
 						onBlur={commitRename}
@@ -186,11 +189,11 @@ function ClosedChatRow({
 				editing ? (
 					<span aria-hidden className="w-24 shrink-0" />
 				) : (
-					<IconTooltip label="Rename chat">
+					<IconTooltip label={t("shell.history.rename")}>
 						<button
 							type="button"
 							data-testid="closed-chat-rename"
-							aria-label={`Rename ${chat.title}`}
+							aria-label={t("shell.history.renameAria", { title: chat.title })}
 							onClick={() => {
 								editStartTitleRef.current = chat.title;
 								cancelNextBlurRef.current = false;
@@ -204,11 +207,11 @@ function ClosedChatRow({
 					</IconTooltip>
 				)
 			) : null}
-			<IconTooltip label="Move chat to trash">
+			<IconTooltip label={t("shell.history.moveToTrash")}>
 				<button
 					type="button"
 					data-testid="closed-chat-delete"
-					aria-label={`Move ${chat.title} to trash`}
+					aria-label={t("shell.history.moveAria", { title: chat.title })}
 					onClick={() => {
 						onDismiss();
 						void getTransport()
@@ -220,7 +223,7 @@ function ClosedChatRow({
 									!state.removedWorkspaceIds[workspaceId] &&
 									!state.deletedSessionsByWorkspace[workspaceId]?.[chat.sessionId]
 								) {
-									toast.error(errorText(error), "Couldn't delete the chat");
+									toast.error(errorText(error), t("chat.error.delete"));
 								}
 							});
 					}}

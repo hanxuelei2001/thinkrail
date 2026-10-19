@@ -6,6 +6,7 @@ import {
 	RiFileList3Line as ScrollText,
 } from "@remixicon/react";
 import { resultText, strArg, type ToolRenderProps } from "@thinkrail/extension-api/web";
+import { useT } from "@/i18n";
 import { useChatActions } from "../../ChatActions";
 import { useFold } from "../../foldState";
 import { Markdown } from "../../Markdown";
@@ -13,6 +14,7 @@ import { Collapsible, countLines } from "../Collapsible";
 import { isTerminalRunStatus, readRunDetails, runCounters } from "./runDetails";
 
 export function AgentCard({ toolCallId, args, result, status }: ToolRenderProps) {
+	const t = useT();
 	const actions = useChatActions();
 	const details = readRunDetails(result);
 	const role = details?.roleName ?? strArg(args, "subagent_type");
@@ -27,7 +29,7 @@ export function AgentCard({ toolCallId, args, result, status }: ToolRenderProps)
 		<div data-testid="tool-agent" data-chat-fold-root className="flex flex-col gap-4">
 			<div className="flex items-center gap-4 tr-text-metadata">
 				<Bot className="size-12 shrink-0 text-text-muted" />
-				<span className="shrink-0 text-primary">{role || "subagent"}</span>
+				<span className="shrink-0 text-primary">{role || t("chat.subagent.role")}</span>
 				{details?.childSessionId ? (
 					<span className="min-w-0 truncate text-text-muted" title={details.childSessionId}>
 						{details.childSessionId}
@@ -44,7 +46,7 @@ export function AgentCard({ toolCallId, args, result, status }: ToolRenderProps)
 			{status === "running" ? (
 				details?.status === "queued" ? (
 					<span className="text-text-muted tr-text-metadata">
-						Queued — waiting for a delegation slot…
+						{t("chat.subagent.queuedWaiting")}
 					</span>
 				) : (
 					<span
@@ -52,7 +54,9 @@ export function AgentCard({ toolCallId, args, result, status }: ToolRenderProps)
 						className="flex items-center gap-4 text-text-muted tr-text-metadata"
 					>
 						<Loader2 className="size-12 shrink-0 animate-spin motion-reduce:animate-none" />
-						<span className="min-w-0 truncate">{details?.activity ?? "Working…"}</span>
+						<span className="min-w-0 truncate">
+							{details?.activity ?? t("chat.subagent.working")}
+						</span>
 					</span>
 				)
 			) : null}
@@ -65,8 +69,7 @@ export function AgentCard({ toolCallId, args, result, status }: ToolRenderProps)
 				</pre>
 			) : backgroundAck ? (
 				<span className="text-text-muted tr-text-metadata italic">
-					Running in the background — a completion message lands in this chat when it finishes; the
-					transcript below follows it live.
+					{t("chat.subagent.background")}
 				</span>
 			) : status === "done" && !terminal ? (
 				<span className="whitespace-pre-wrap text-text-muted tr-text-metadata">{output}</span>
@@ -85,7 +88,7 @@ export function AgentCard({ toolCallId, args, result, status }: ToolRenderProps)
 						) : (
 							<ChevronRight className="size-16 shrink-0" />
 						)}
-						Report
+						{t("chat.subagent.report")}
 					</button>
 					{reportOpen ? (
 						<div data-testid="agent-report">
@@ -102,7 +105,7 @@ export function AgentCard({ toolCallId, args, result, status }: ToolRenderProps)
 					className="flex items-center gap-4 self-start text-primary tr-text-metadata hover:underline"
 				>
 					<ScrollText className="size-12 shrink-0" />
-					Open transcript
+					{t("chat.subagent.openTranscript")}
 				</button>
 			) : null}
 		</div>

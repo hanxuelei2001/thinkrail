@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import type { OpenBranchReview, Project, Workspace } from "@thinkrail/contracts";
 import { TooltipProvider } from "@thinkrail/ui/tooltip";
 import { renderToStaticMarkup } from "react-dom/server";
+import { type TFunction, translate } from "@/i18n/translate";
 import { LocationBar } from "./LocationBar";
 import {
 	pluralCommits,
@@ -12,6 +13,8 @@ import {
 	reviewTone,
 } from "./locationModel";
 import { chipClass, pillClass } from "./Segment";
+
+const enT: TFunction = (key, params) => translate("en", key, params);
 
 const project: Project = { id: "p1", name: "thinkrail-copy", path: "/repo" } as Project;
 const worktree: Workspace = {
@@ -89,7 +92,7 @@ test("an open PR adds the Remote chips and the Pull request chip link", () => {
 		]),
 	);
 	expect(ids).not.toContain("scope-remote-behind");
-	expect(html).toContain(">2 to push");
+	expect(html).toContain("2 commits to push");
 	expect(html).toMatch(
 		/<a data-testid="scope-review" data-kind="pull-request" href="https:\/\/github.com\/acme\/repo\/pull\/648" target="_blank" rel="noreferrer"/,
 	);
@@ -101,7 +104,7 @@ test("a user-owned workspace shows a plain Branch caption; a URL-less review sta
 	expect(html).not.toContain("scope-base");
 	expect(html).not.toContain("· from");
 	expect(testids(html)).toContain("scope-remote-behind");
-	expect(html).toContain(">3 behind");
+	expect(html).toContain("3 commits behind origin");
 	expect(html).toMatch(/<span data-testid="scope-review" data-kind="pull-request"/);
 });
 
@@ -192,9 +195,11 @@ test("a merged review turns the Pull request chip info and drops the Remote segm
 	expect(html).toMatch(/data-testid="scope-review"[^>]*data-state-tone="info"/);
 	expect(testids(html)).not.toContain("scope-remote-segment");
 	expect(reviewTone({ ...review, state: "closed" })).toBe("neutral");
-	expect(reviewChipLabel({ ...review, state: "closed" })).toBe("Closed #648");
-	expect(reviewChipLabel({ kind: "merge-request", number: 7, state: "merged" })).toBe("Merged !7");
-	expect(reviewChipLabel({ kind: "merge-request", number: 7 })).toBe("MR !7");
+	expect(reviewChipLabel({ ...review, state: "closed" }, enT)).toBe("Closed #648");
+	expect(reviewChipLabel({ kind: "merge-request", number: 7, state: "merged" }, enT)).toBe(
+		"Merged !7",
+	);
+	expect(reviewChipLabel({ kind: "merge-request", number: 7 }, enT)).toBe("MR !7");
 	expect(remoteCounts(merged)).toBeNull();
 });
 
@@ -235,6 +240,6 @@ test("project initials and commit plurals", () => {
 	expect(projectInitial("thinkrail-copy")).toBe("T");
 	expect(projectInitial("  émile")).toBe("É");
 	expect(projectInitial("")).toBe("?");
-	expect(pluralCommits(1)).toBe("1 commit");
-	expect(pluralCommits(2)).toBe("2 commits");
+	expect(pluralCommits(1, enT)).toBe("1 commit");
+	expect(pluralCommits(2, enT)).toBe("2 commits");
 });

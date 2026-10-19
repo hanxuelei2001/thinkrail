@@ -11,6 +11,7 @@ import { Textarea } from "@thinkrail/ui/textarea";
 import { cn } from "@thinkrail/ui/utils";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { useT } from "@/i18n";
 import { assembleTemplate, stripFrontmatter } from "@/prompt";
 import { useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
@@ -41,6 +42,7 @@ export function TemplateEditorDialog({
 	initialScope?: TemplateScope;
 	initialBody?: string;
 }) {
+	const t = useT();
 	const [name, setName] = useState("");
 	const [scope, setScope] = useState<TemplateScope>("global");
 	const [description, setDescription] = useState("");
@@ -97,11 +99,11 @@ export function TemplateEditorDialog({
 		if (saving) return;
 		const finalName = template ? template.name : name.trim();
 		if (!isValidTemplateName(finalName)) {
-			setError('Name can\'t be empty, start with ".", or contain "/", "\\", or a null byte.');
+			setError(t("chat.template.error.name"));
 			return;
 		}
 		if (scope === "project" && !workspaceId) {
-			setError("Open a workspace first — a project-scoped template needs one.");
+			setError(t("chat.template.error.workspace"));
 			return;
 		}
 		setSaving(true);
@@ -126,11 +128,13 @@ export function TemplateEditorDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent data-testid="template-editor-dialog" className="max-w-[36rem] gap-12">
 				<DialogHeader>
-					<DialogTitle>{editing ? `Edit ${template.name}` : "New template"}</DialogTitle>
+					<DialogTitle>
+						{editing ? t("chat.template.edit", { name: template.name }) : t("chat.template.new")}
+					</DialogTitle>
 				</DialogHeader>
 
 				<div className="flex max-h-[60vh] flex-col gap-12 overflow-y-auto">
-					<Field id="template-name" label="Name">
+					<Field id="template-name" label={t("chat.template.name")}>
 						<input
 							id="template-name"
 							data-testid="template-name-input"
@@ -144,44 +148,42 @@ export function TemplateEditorDialog({
 					</Field>
 
 					<div className="flex flex-col gap-4">
-						<span className="tr-title-compact text-text-default">Scope</span>
+						<span className="tr-title-compact text-text-default">{t("chat.template.scope")}</span>
 						<div className="flex gap-8">
 							<ScopeOption
 								id="global"
-								label="Global"
+								label={t("chat.template.global")}
 								active={scope === "global"}
 								disabled={editing}
 								onSelect={() => setScope("global")}
 							/>
 							<ScopeOption
 								id="project"
-								label="This project"
+								label={t("chat.template.thisProject")}
 								active={scope === "project"}
 								disabled={editing || !workspaceId}
 								onSelect={() => setScope("project")}
 							/>
 						</div>
 						{!workspaceId && !editing ? (
-							<p className="text-text-muted tr-text-metadata">
-								Open a workspace to save a project-scoped template.
-							</p>
+							<p className="text-text-muted tr-text-metadata">{t("chat.template.needWorkspace")}</p>
 						) : null}
 					</div>
 
-					<Field id="template-description" label="Description">
+					<Field id="template-description" label={t("chat.template.description")}>
 						<input
 							id="template-description"
 							data-testid="template-description-input"
 							disabled={loading}
 							value={description}
 							onChange={(e) => setDescription(e.target.value)}
-							placeholder="What this template is for"
+							placeholder={t("chat.template.descriptionPlaceholder")}
 							spellCheck={false}
 							className={INPUT_CLASS}
 						/>
 					</Field>
 
-					<Field id="template-argument-hint" label="Argument hint">
+					<Field id="template-argument-hint" label={t("chat.template.argumentHint")}>
 						<input
 							id="template-argument-hint"
 							data-testid="template-argument-hint-input"
@@ -194,14 +196,14 @@ export function TemplateEditorDialog({
 						/>
 					</Field>
 
-					<Field id="template-body" label="Body">
+					<Field id="template-body" label={t("chat.template.body")}>
 						<Textarea
 							id="template-body"
 							data-testid="template-body-input"
 							disabled={loading}
 							value={body}
 							onChange={(e) => setBody(e.target.value)}
-							placeholder="Prompt body…"
+							placeholder={t("chat.template.bodyPlaceholder")}
 							spellCheck={false}
 							rows={8}
 						/>
@@ -221,14 +223,14 @@ export function TemplateEditorDialog({
 						variant="outline"
 						onClick={() => onOpenChange(false)}
 					>
-						Cancel
+						{t("common.cancel")}
 					</Button>
 					<Button
 						data-testid="template-save"
 						disabled={saving || loading || (!editing && !name.trim())}
 						onClick={() => void save()}
 					>
-						Save
+						{t("common.save")}
 					</Button>
 				</DialogFooter>
 			</DialogContent>

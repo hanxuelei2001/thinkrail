@@ -45,6 +45,7 @@ import { cn } from "@thinkrail/ui/utils";
 import { type MouseEvent, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { AttentionDot } from "@/components/AttentionDot";
 import { RunningIcon } from "@/components/RunningIcon";
+import { useT } from "@/i18n";
 import { copyText, platformShortcutLabel } from "@/lib";
 import { LoadingRegion } from "../components/Skeleton";
 import { useNow } from "../components/useNow";
@@ -93,11 +94,11 @@ import {
 	useInlineRename,
 } from "./workspaceActions";
 
-const CREATE_WORKSPACE_LABEL = `Create workspace (${platformShortcutLabel("N")} or ${platformShortcutLabel("N", { alt: true })})`;
 const HOVER_CONTROL_CLASS =
 	"flex size-20 shrink-0 items-center justify-center rounded-sm text-text-muted opacity-100 outline-none transition hover:bg-container-elevated-bg hover:text-text-default [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary data-[state=open]:opacity-100 disabled:pointer-events-none disabled:opacity-0";
 
 export function ProjectTree() {
+	const t = useT();
 	const projects = useAppStore((s) => s.projects);
 	const recentProjects = useAppStore((s) => s.recentProjects);
 	const selectedProjectId = useAppStore((s) => s.selectedProjectId);
@@ -241,7 +242,7 @@ export function ProjectTree() {
 					pendingCloseFocusProjectIdRef.current = null;
 				}
 				focusProjectNameOrAdd(project.id);
-				toast.error(errorText(err, `Couldn't close ${project.name}`));
+				toast.error(errorText(err, t("shell.projects.closeFailed", { project: project.name })));
 			});
 	};
 
@@ -258,7 +259,7 @@ export function ProjectTree() {
 	return (
 		<nav data-testid="project-tree" className="flex flex-col gap-4">
 			<header className="flex h-panel-row items-center justify-between pr-4 pl-8">
-				<span className="tr-text-eyebrow text-text-muted">Projects</span>
+				<span className="tr-text-eyebrow text-text-muted">{t("shell.projects.heading")}</span>
 				<AddProjectMenu
 					recentProjects={recentProjects}
 					onOpen={() => void pickAndOpen()}
@@ -271,7 +272,7 @@ export function ProjectTree() {
 						size="icon"
 						className="size-panel-row"
 						data-testid="add-project-menu"
-						aria-label="Add project"
+						aria-label={t("shell.projects.addProject")}
 					>
 						<Plus className="size-14" />
 					</Button>
@@ -401,6 +402,7 @@ function SettledPartition({
 	shelfShown: number;
 	renderRow: (workspace: Workspace, settled: SettledReason | null) => ReactNode;
 }) {
+	const t = useT();
 	if (!enabled) {
 		return (
 			<ul className="mt-2 flex flex-col gap-2 motion-safe:animate-reveal">
@@ -433,13 +435,15 @@ function SettledPartition({
 						<ChevronRight className="size-14 shrink-0" />
 					)}
 					<RiCheckboxCircleLine className="size-14 shrink-0" />
-					<span className="truncate">Settled · {settledCount}</span>
+					<span className="truncate">{t("shell.projects.settled", { count: settledCount })}</span>
 				</button>
 			</div>
 			{shelfExpanded ? (
 				<ul className="flex flex-col gap-2" data-testid="settled-shelf-rows">
 					{settledCount === 0 ? (
-						<li className="py-4 pr-4 pl-24 text-text-subtle tr-text-metadata">Nothing settled</li>
+						<li className="py-4 pr-4 pl-24 text-text-subtle tr-text-metadata">
+							{t("shell.projects.nothingSettled")}
+						</li>
 					) : (
 						shown.map((row) => renderRow(row.workspace, row.reason))
 					)}
@@ -498,6 +502,7 @@ function ProjectRow({
 	onRegisterNameButton: (element: HTMLButtonElement | null) => void;
 	onRestoreFocus: () => void;
 }) {
+	const t = useT();
 	const Chevron = isExpanded ? ChevronDown : ChevronRight;
 	const Folder = isSelected ? RiFolderFill : RiFolderLine;
 	const [menuOpen, setMenuOpen] = useState(false);
@@ -520,6 +525,10 @@ function ProjectRow({
 		<Folder className={`size-14 shrink-0 ${isSelected ? "text-primary" : "text-text-muted"}`} />
 	);
 	const nameClass = `truncate tr-text-ui ${isSelected ? "text-text-default" : "text-text-muted"}`;
+	const createWorkspaceLabel = t("shell.projects.createWorkspace", {
+		shortcut: platformShortcutLabel("N"),
+		altShortcut: platformShortcutLabel("N", { alt: true }),
+	});
 	const openDialogAfterMenu = (openDialog: () => void) => {
 		openingDialogRef.current = true;
 		setMenuOpen(false);
@@ -538,7 +547,7 @@ function ProjectRow({
 			<button
 				type="button"
 				data-testid="project-expand"
-				aria-label={isExpanded ? "Collapse project" : "Expand project"}
+				aria-label={isExpanded ? t("shell.projects.collapse") : t("shell.projects.expand")}
 				onClick={onToggle}
 				className="flex size-16 shrink-0 items-center justify-center rounded-sm text-text-muted transition-colors hover:text-text-default focus-visible:text-text-default"
 				data-expanded={isExpanded}
@@ -553,7 +562,7 @@ function ProjectRow({
 						data-testid="project-name-input"
 						type="text"
 						spellCheck={false}
-						aria-label="Project name"
+						aria-label={t("shell.projects.projectName")}
 						defaultValue={project.name}
 						{...renameInputProps}
 						className={cn("w-full min-w-0 border-0 bg-transparent p-0 outline-none", nameClass)}
@@ -580,13 +589,13 @@ function ProjectRow({
 					{workspaceCount}
 				</span>
 			)}
-			<IconTooltip label={CREATE_WORKSPACE_LABEL}>
+			<IconTooltip label={createWorkspaceLabel}>
 				<Button
 					variant="ghost"
 					size="icon"
 					className="size-panel-row shrink-0"
 					data-testid="add-workspace"
-					aria-label={CREATE_WORKSPACE_LABEL}
+					aria-label={createWorkspaceLabel}
 					onClick={onAddWorkspace}
 				>
 					<Plus className="size-14" />
@@ -670,9 +679,9 @@ function ProjectRow({
 			<ConfirmDialog
 				open={confirmOpen}
 				onOpenChange={setConfirmOpen}
-				title={`Close ${project.name}?`}
-				description="Removes this project from the open projects list. Its repository, workspaces, chats, and running activity are kept. Reopen it from Add project → Recents."
-				confirmLabel="Close project"
+				title={t("shell.projects.closeTitle", { project: project.name })}
+				description={t("shell.projects.closeDescription")}
+				confirmLabel={t("shell.projects.closeProject")}
 				confirmTestId="confirm-close-project"
 				onConfirm={() => {
 					closeConfirmedRef.current = true;
@@ -722,6 +731,7 @@ function WorkspaceRow({
 	onSettle: () => void;
 	onKeepActive: () => void;
 }) {
+	const t = useT();
 	const isDefault = isDefaultWorkspace(workspace);
 	const isExternal = isExternalWorkspace(workspace);
 	const isSettled = settled !== null;
@@ -793,11 +803,11 @@ function WorkspaceRow({
 		</span>
 	) : null;
 	const hoverAction = isSettled ? (
-		<IconTooltip label="Keep active">
+		<IconTooltip label={t("shell.projects.keepActive")}>
 			<button
 				type="button"
 				data-testid="workspace-keep-active"
-				aria-label={`Keep ${workspace.name} active`}
+				aria-label={t("shell.projects.keepActiveAria", { name: workspace.name })}
 				onClick={onKeepActive}
 				className={HOVER_CONTROL_CLASS}
 			>
@@ -805,11 +815,13 @@ function WorkspaceRow({
 			</button>
 		</IconTooltip>
 	) : canSettle ? (
-		<IconTooltip label={settleBlocked ? "Finish or read the result first" : "Settle"}>
+		<IconTooltip
+			label={settleBlocked ? t("shell.projects.settleBlocked") : t("shell.projects.settle")}
+		>
 			<button
 				type="button"
 				data-testid="workspace-settle"
-				aria-label={`Settle ${workspace.name}`}
+				aria-label={t("shell.projects.settleAria", { name: workspace.name })}
 				disabled={settleBlocked}
 				onClick={onSettle}
 				className={HOVER_CONTROL_CLASS}
@@ -845,7 +857,7 @@ function WorkspaceRow({
 								data-editing
 								type="text"
 								spellCheck={false}
-								aria-label="Workspace name"
+								aria-label={t("shell.projects.workspaceName")}
 								defaultValue={workspace.name}
 								{...renameInputProps}
 								className={`w-full min-w-0 truncate border-0 bg-transparent p-0 tr-text-ui leading-tight outline-none ${isActive ? "text-primary" : "text-text-muted"}`}
@@ -884,7 +896,7 @@ function WorkspaceRow({
 					<DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
 						<DropdownMenuTrigger
 							data-testid="workspace-menu"
-							aria-label={`Actions for ${workspace.name}`}
+							aria-label={t("shell.projects.actionsFor", { name: workspace.name })}
 							className={HOVER_CONTROL_CLASS}
 						>
 							<MoreVertical className="size-14" />
@@ -945,7 +957,7 @@ function WorkspaceRow({
 											onSelect={onSettle}
 										>
 											<Check />
-											Settle
+											{t("shell.projects.settle")}
 										</DropdownMenuItem>
 									)}
 								</>
@@ -962,7 +974,9 @@ function WorkspaceRow({
 										}}
 									>
 										<Trash2 />
-										{isExternal ? "Remove from ThinkRail" : "Remove workspace"}
+										{isExternal
+											? t("shell.location.removeFromThinkRail")
+											: t("shell.location.removeWorkspace")}
 									</DropdownMenuItem>
 								</>
 							)}

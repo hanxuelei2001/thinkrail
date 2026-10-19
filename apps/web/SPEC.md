@@ -33,6 +33,11 @@ surface). `panels`/`chat` are imported **per-file by design** — barreling them
 the lazily-loaded Monaco/shiki/xterm chunks into the eager bundle and break the shadcn per-primitive
 convention; their boundary is held by convention + spec. Sibling edges live here, not in the leaves.
 
+**User-visible copy is owned by `i18n`.** The English sentences quoted in these specs describe the
+source-language intent; components name message keys and render `useT()`, so the catalog is the only copy
+to update when wording changes. A runtime language switch must re-render consumers rather than leave a
+captured module constant behind.
+
 | module | owns | barrel | spec |
 | --- | --- | --- | --- |
 | `navigation` | backend-relative location model + fragment driver/validated restore | yes | [navigation/SPEC.md](src/navigation/SPEC.md) |
@@ -49,6 +54,7 @@ convention; their boundary is held by convention + spec. Sibling edges live here
 | `components` | dependency-light app primitives: error isolation, status icons, custom icons, quiet scroll frames | no | [components/SPEC.md](src/components/SPEC.md) |
 | `extensions` | ordered composition of web extension descriptors into the chat registry | yes | [extensions/SPEC.md](src/extensions/SPEC.md) |
 | `themes` | validated single-file manifests, bundled catalog + atomic token application | yes | [themes/SPEC.md](src/themes/SPEC.md) |
+| `i18n` | typed en/zh-CN catalogs, client locale preference, React subscription, locale-aware formatting | yes | [i18n/SPEC.md](src/i18n/SPEC.md) |
 | `lib` | shared path/array primitives + highlighting | yes | [lib/SPEC.md](src/lib/SPEC.md) |
 
 Leaf utilities without their own spec: `constants/` (branding — the product name, storage/event prefixes, and the one
@@ -64,9 +70,9 @@ marks into `chat/generated/`).
 `index.html` names the product and links the local, symbol-only SVG favicon derived from the same
 ThinkRail artwork as the shell logo (compact enough for browser-tab sizes and light/dark browser chrome).
 `main.tsx` is the entry/composition root — it synchronously builds the bundled theme catalog, resolves and
-applies the versioned first-paint theme-preference hint (including the current system color scheme) pre-React,
-initializes transport, the client-local preference seams (chat presentation, hidden models, project
-expansion) and navigation, then wraps `<Shell />` in
+applies the versioned first-paint theme-preference hint (including the current system color scheme) and the
+client-local display-language preference pre-React, initializes transport, the client-local preference seams
+(chat presentation, hidden models, project expansion) and navigation, then wraps `<Shell />` in
 `components/ErrorBoundary` as the last-resort boundary (a crash escaping every region shows a reload
 screen, not a blank root) plus the app's single `TooltipProvider`.
 
@@ -161,6 +167,7 @@ change. `dist/` therefore has no profiler timers (`actualStartTime` is absent fr
 - `resources` → `contracts` (types only), `lib`; it owns no store, transport, shell, or renderer implementation
 - `lib` → `themes` (the lazy highlighter uses the one generic CSS-variable Shiki registration), React (the phone-viewport hook only), and `contracts` (types only, e.g. the MCP state vocabulary's `McpServerState`)
 - `themes` → `constants` (the branding storage prefix scopes the first-paint hint), `clientPreferences` (native-stable hint storage)
+- `i18n` → `constants` (the branding storage prefix scopes the locale preference), `clientPreferences` (native-stable locale preference), React (subscription hooks), and `Intl`; every feature module may consume its barrel, but it imports no feature module itself
 - leaves (`clientPreferences`, `constants`, `utils`, `styles`) → none internal
 
 Rules: a panel never imports another panel sideways; nothing imports `shell` (it's the composition root).

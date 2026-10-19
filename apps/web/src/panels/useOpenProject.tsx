@@ -1,5 +1,6 @@
 import type { Project } from "@thinkrail/contracts";
 import { type ReactNode, useState } from "react";
+import { useT } from "@/i18n";
 import { useAppStore } from "../store";
 import { errorText, getTransport } from "../transport";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -16,6 +17,7 @@ export function useOpenProject(onOpened: (project: Project) => void | Promise<vo
 	enterHostPath: () => void;
 	dialogs: ReactNode;
 } {
+	const t = useT();
 	const [initTarget, setInitTarget] = useState<string | null>(null);
 	const [openError, setOpenError] = useState<string | null>(null);
 	const [pathEntry, setPathEntry] = useState<{ reason: string | null } | null>(null);
@@ -81,7 +83,7 @@ export function useOpenProject(onOpened: (project: Project) => void | Promise<vo
 			));
 		} catch (err) {
 			if (!isCurrent()) return;
-			setPathEntry({ reason: errorText(err, "Couldn't open the folder picker on the host.") });
+			setPathEntry({ reason: errorText(err, t("project.error.folderPicker")) });
 			return;
 		}
 		if (!isCurrent()) return;
@@ -95,7 +97,7 @@ export function useOpenProject(onOpened: (project: Project) => void | Promise<vo
 				onOpenChange={(o) => {
 					if (!o) setInitTarget(null);
 				}}
-				title="Initialize a git repository?"
+				title={t("project.initTitle")}
 				description={
 					<>
 						<span className="tr-text-emphasis text-text-default">{initTarget}</span> isn't a git
@@ -103,7 +105,7 @@ export function useOpenProject(onOpened: (project: Project) => void | Promise<vo
 						and commit the folder's current contents?
 					</>
 				}
-				confirmLabel="Initialize & open"
+				confirmLabel={t("project.initConfirm")}
 				confirmTestId="confirm-init-repo"
 				onConfirm={() => {
 					if (initTarget) void initProject(initTarget);
@@ -122,7 +124,7 @@ export function useOpenProject(onOpened: (project: Project) => void | Promise<vo
 				onOpenChange={(o) => {
 					if (!o) setOpenError(null);
 				}}
-				title="Couldn't open project"
+				title={t("project.error.open")}
 				description={<span className="whitespace-pre-line">{openError}</span>}
 				testId="open-error-dialog"
 			/>

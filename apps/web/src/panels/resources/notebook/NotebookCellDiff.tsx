@@ -1,6 +1,7 @@
 import { parseDiffFromFile } from "@pierre/diffs";
 import { FileDiff } from "@pierre/diffs/react";
 import { useEffect, useMemo, useState } from "react";
+import { useT } from "@/i18n";
 import type { Size } from "../regionReview";
 import { svgIntrinsicSize } from "../svg/svgDocument";
 import { VisualDiff, type VisualDiffSide } from "../VisualDiff";
@@ -93,6 +94,7 @@ function NotebookImageOutputDiff({
 	modified: Extract<NotebookOutput, { kind: "image" }> | null;
 	stamp: string;
 }) {
+	const t = useT();
 	const [originalSize, setOriginalSize] = useState<Size | null>(() => imageSize(original));
 	const [modifiedSize, setModifiedSize] = useState<Size | null>(() => imageSize(modified));
 	useEffect(() => setOriginalSize(imageSize(original)), [original]);
@@ -100,24 +102,32 @@ function NotebookImageOutputDiff({
 	const originalSide: VisualDiffSide = {
 		present: original !== null,
 		content: original ? (
-			<OutputImage output={original} onSize={setOriginalSize} title="Original notebook output" />
+			<OutputImage
+				output={original}
+				onSize={setOriginalSize}
+				title={t("notebook.originalOutput")}
+			/>
 		) : null,
-		caption: original ? `Old: ${original.mime}` : "Old: No output",
+		caption: original ? t("notebook.oldMime", { mime: original.mime }) : t("notebook.oldNoOutput"),
 		intrinsicSize: originalSize,
 	};
 	const modifiedSide: VisualDiffSide = {
 		present: modified !== null,
 		content: modified ? (
-			<OutputImage output={modified} onSize={setModifiedSize} title="Modified notebook output" />
+			<OutputImage
+				output={modified}
+				onSize={setModifiedSize}
+				title={t("notebook.modifiedOutput")}
+			/>
 		) : null,
-		caption: modified ? `New: ${modified.mime}` : "New: No output",
+		caption: modified ? t("notebook.newMime", { mime: modified.mime }) : t("notebook.newNoOutput"),
 		intrinsicSize: modifiedSize,
 	};
 	return (
 		<VisualDiff
 			prefix="image"
-			noun="output"
-			regionLabel="output region"
+			noun={t("notebook.outputNoun")}
+			regionLabel={t("notebook.outputRegion")}
 			original={originalSide}
 			modified={modifiedSide}
 			contentStamp={stamp}
@@ -158,6 +168,7 @@ export function NotebookOutputsDiff({
 	ignoreWhitespace: boolean;
 	stamp: string;
 }) {
+	const t = useT();
 	if (JSON.stringify(original.outputs) === JSON.stringify(modified.outputs)) {
 		return modified.outputs.length > 0 ? <NotebookOutputs cell={modified} /> : null;
 	}
@@ -184,8 +195,8 @@ export function NotebookOutputsDiff({
 				if (outputNeedsSideBySide(before) || outputNeedsSideBySide(after)) {
 					return (
 						<div key={`rich:${index}`} className="grid grid-cols-1 gap-8 md:grid-cols-2">
-							<OutputSide output={before} title="Old" />
-							<OutputSide output={after} title="New" />
+							<OutputSide output={before} title={t("visual.old")} />
+							<OutputSide output={after} title={t("visual.new")} />
 						</div>
 					);
 				}

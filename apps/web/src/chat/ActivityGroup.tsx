@@ -9,6 +9,7 @@ import {
 import type { ToolRenderProps, ToolStatus } from "@thinkrail/extension-api/web";
 import { cn } from "@thinkrail/ui/utils";
 import { useContext } from "react";
+import { useT } from "@/i18n";
 import type { ActivityBreadcrumbKind } from "./activityBreadcrumbs";
 import { PendingExtUiContext, ToolPromptSlot } from "./ExtUiPrompt";
 import { useFold } from "./foldState";
@@ -111,6 +112,7 @@ export function ThinkingGroup({
 	workspaceRoot?: string | undefined;
 	onOpenFile?: ((path: string) => void) | undefined;
 }) {
+	const t = useT();
 	const summary =
 		tools.length > 0
 			? live
@@ -126,9 +128,9 @@ export function ThinkingGroup({
 			live={live}
 			stepCount={tools.length}
 			icon={<Brain className="size-12 shrink-0" />}
-			label="Thinking"
+			label={t("chat.thinking")}
 			headline={extractThinkingHeading(thought.text)}
-			breadcrumbLabel="Thinking"
+			breadcrumbLabel={t("chat.thinking")}
 			breadcrumbMeta={summary}
 			summary={summary}
 			awaiting={

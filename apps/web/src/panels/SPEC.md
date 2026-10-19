@@ -14,6 +14,11 @@ tags: [ui]
 The layout-agnostic, store-driven feature views. A panel fills its container and never knows its
 arrangement (so the mobile shell is an additive layer, not a rewrite).
 
+**User-visible copy is owned by [`i18n`](../i18n/SPEC.md), not by a panel.** Panels name message keys and
+render `useT()`; the English sentences quoted in this spec describe the source-language intent and are not
+a second copy to keep in sync. The locale is client-local and can change at runtime, so a panel must not
+capture a translated string in a module constant or a selector result.
+
 Changes and Review keep their fixed toolbars outside a panel-owned `components/QuietScrollArea`; Projects,
 Files, and Specs expose content for the shell-owned scroll wrapper described in `shell/SPEC.md`.
 `TerminalInstance` wraps xterm with `QuietScrollFrame`, which skins xterm's descendant custom scroll control
@@ -1277,7 +1282,7 @@ own section. The kebab menu (`plan-menu`, a
   state renders content-shaped skeleton rows, never a bare "Loading…" line), `@thinkrail/ui/*` (incl. `popover`/`command`/`textarea` for the
   dialog), `chat` (`ModelEffortPicker` + the `useModelCatalog`/`useModelPreferences` hooks that feed it,
   reused by `NewWorkspaceDialog`; `ModelSelector`/`ThinkingSelector`, still mounted by
-  `ModelsSettings`; `modelPicker`'s `AUTH_KIND_LABEL`, the one connection-kind vocabulary
+  `ModelsSettings`; `modelPicker`'s `authKindLabel`, the one connection-kind vocabulary
   `ProvidersSettings` shares with the picker, and its `formatContext` plus `ProviderGlyph`, reused by
   `VisibleModelsSettings`' rows; `Markdown`,
   reused by `MarkdownPreview`; `TemplateEditorDialog`, reused by `TemplatesSettings`), `auth` (`LoginDialog`, mounted by

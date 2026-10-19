@@ -72,7 +72,7 @@ import { useHistorySearch } from "./useHistorySearch";
 
 registerWebExtensions();
 
-const TRY_AGAIN_PROMPT = "Try again.";
+import { t, useLocale } from "@/i18n";
 
 export default function ChatView({
 	sessionId,
@@ -83,6 +83,7 @@ export default function ChatView({
 	workspaceId: string;
 	onOpenFile?: ((path: string) => void) | undefined;
 }) {
+	useLocale();
 	const sessionExists = useAppStore((s) => s.sessions[sessionId] !== undefined);
 	const isStreaming = useAppStore((s) => s.sessions[sessionId]?.isStreaming ?? false);
 	const draft = useAppStore((s) => s.sessions[sessionId]?.draft ?? "");
@@ -389,7 +390,7 @@ export default function ChatView({
 					if (useAppStore.getState().sessions[sessionId]?.thinkingLevel === level) {
 						useAppStore.getState().setThinkingLevel(sessionId, previous);
 					}
-					toast.error(errorText(error), "Couldn't change the effort level");
+					toast.error(errorText(error), t("chat.error.changeEffort"));
 				}),
 		[sessionId],
 	);
@@ -443,7 +444,7 @@ export default function ChatView({
 							useAppStore.getState().setThinkingLevel(sessionId, previous.level);
 						}
 					}
-					toast.error(errorText(error), `Couldn't switch to ${model.name}`);
+					toast.error(errorText(error), t("chat.error.switchModel", { model: model.name }));
 				},
 			)
 			.then(() => refreshStats());
@@ -620,7 +621,7 @@ export default function ChatView({
 			closeHistory();
 			useAppStore.getState().deleteChat(targetWorkspaceId, targetSessionId);
 		} catch (err) {
-			toast.error(errorText(err), "Couldn't delete the chat");
+			toast.error(errorText(err), t("chat.error.delete"));
 		}
 	};
 
@@ -657,7 +658,10 @@ export default function ChatView({
 	useInsertionEffect(() => {
 		performSendRef.current = performSend;
 	});
-	const onTryAgain = useCallback(() => performSendRef.current(TRY_AGAIN_PROMPT, [], "send"), []);
+	const onTryAgain = useCallback(
+		() => performSendRef.current(t("chat.retryPrompt"), [], "send"),
+		[t],
+	);
 
 	return (
 		<div
@@ -824,14 +828,15 @@ export default function ChatView({
 			/>
 			<Dialog open={stopAllOpen} onOpenChange={setStopAllOpen}>
 				<DialogContent onCloseAutoFocus={returnToResources}>
-					<DialogTitle>Stop all subagents?</DialogTitle>
+					<DialogTitle>{t("chat.stopAll.title")}</DialogTitle>
 					<DialogDescription>
-						Stop {resources.groups.subagents.length} active subagents in this chat? The main chat
-						and future delegation are unaffected.
+						{t("chat.stopAll.description", {
+							count: resources.groups.subagents.length,
+						})}
 					</DialogDescription>
 					<DialogFooter>
 						<Button variant="ghost" onClick={() => setStopAllOpen(false)}>
-							Cancel
+							{t("common.cancel")}
 						</Button>
 						<Button
 							data-testid="resources-stop-all-confirm"
@@ -845,7 +850,7 @@ export default function ChatView({
 								setStopAllOpen(false);
 							}}
 						>
-							Stop {resources.groups.subagents.length} subagents
+							{t("chat.stopAll.confirm", { count: resources.groups.subagents.length })}
 						</Button>
 					</DialogFooter>
 				</DialogContent>

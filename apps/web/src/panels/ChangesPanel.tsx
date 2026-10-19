@@ -1,6 +1,7 @@
 import type { GitStatus } from "@thinkrail/contracts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { QuietScrollArea } from "@/components/QuietScrollArea";
+import { useT } from "@/i18n";
 import { LoadingRegion } from "../components/Skeleton";
 import {
 	type CenterNavigationStamp,
@@ -41,6 +42,7 @@ function selectReviewTab(
 }
 
 export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
+	const t = useT();
 	const [status, setStatus] = useState<GitStatus | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const warnedRef = useRef(false);
@@ -82,14 +84,14 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 					setDiffScope(workspaceId, { kind: "branch" });
 					toast.info(
 						scope.kind === "turn"
-							? "That agent turn's snapshot is no longer in this repository — showing all changes."
-							: "That commit is no longer in this branch — showing all changes.",
+							? t("changes.error.unknownTurn")
+							: t("changes.error.unknownCommit"),
 					);
 					return;
 				}
 				if (status && !warnedRef.current) {
 					warnedRef.current = true;
-					toast.error(`Could not refresh the changes: ${errorText(failure)}`);
+					toast.error(t("changes.error.refresh", { error: errorText(failure) }));
 				}
 				setError(errorText(failure));
 			},
@@ -113,7 +115,7 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 		try {
 			await getTransport().request("workspace.setDiffBase", { id: workspaceId, ref });
 		} catch (error) {
-			toast.error(`Could not change the target branch: ${errorText(error)}`);
+			toast.error(t("changes.error.target", { error: errorText(error) }));
 		}
 	};
 
@@ -172,7 +174,7 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 			<div
 				data-testid="changes-view-toggle"
 				role="toolbar"
-				aria-label="Changes scope and view"
+				aria-label={t("changes.scopeAria")}
 				className="flex h-panel-header-row shrink-0 items-center gap-4 overflow-clip border-border-default border-b px-12"
 			>
 				<div className="mr-auto flex min-w-0 items-center gap-4">
@@ -187,7 +189,7 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 							branches={branches}
 							selected={baseRef}
 							refreshing={branchesRefreshing}
-							label="vs"
+							label={t("changes.vs")}
 							testid="changes-target-picker"
 							triggerClassName="flex h-24 min-w-0 max-w-[200px] items-center gap-4 rounded-sm px-4 outline-none transition-colors hover:bg-control-bg-hovered focus-visible:ring-2 focus-visible:ring-primary data-[open=true]:bg-control-bg-selected"
 							onSelect={(ref) => void pointAt(ref)}
@@ -197,13 +199,13 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 				</div>
 				<ToggleSegment
 					testid="changes-toggle-list"
-					label="List"
+					label={t("changes.view.list")}
 					active={changesView === "list"}
 					onClick={() => setChangesView("list")}
 				/>
 				<ToggleSegment
 					testid="changes-toggle-tree"
-					label="Tree"
+					label={t("changes.view.tree")}
 					active={changesView === "tree"}
 					onClick={() => setChangesView("tree")}
 				/>
@@ -212,7 +214,7 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 				{status === null && error !== null ? (
 					<div data-testid="changes-error" className="flex flex-col items-start gap-4 px-8 py-4">
 						<p className="tr-text-metadata text-feedback-error">
-							Could not read the changes: {error}
+							{t("changes.readError", { error })}
 						</p>
 						<button
 							type="button"
@@ -220,7 +222,7 @@ export function ChangesPanel({ workspaceId }: { workspaceId: string }) {
 							onClick={reload}
 							className="rounded-sm px-4 py-2 tr-text-metadata text-text-muted transition-colors hover:bg-control-bg-hovered hover:text-text-default"
 						>
-							Retry
+							{t("changes.retry")}
 						</button>
 					</div>
 				) : status === null ? (

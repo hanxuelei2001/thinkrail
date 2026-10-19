@@ -1,4 +1,5 @@
 import type { ProviderAuthKind, ThinkingLevel, WireModel } from "@thinkrail/contracts";
+import { t } from "@/i18n";
 
 export function formatContext(tokens: number): string {
 	if (tokens >= 1_000_000) return `${Math.round(tokens / 100_000) / 10}M`.replace(".0", "");
@@ -17,13 +18,20 @@ export function billsPerToken(kind: ProviderAuthKind | undefined): boolean {
 }
 
 /** The one vocabulary for how a provider is connected, shared with Settings → Providers. */
-export const AUTH_KIND_LABEL: Record<ProviderAuthKind, string> = {
-	oauth: "subscription",
-	"api-key": "API key",
-	env: "environment key",
-	central: "JetBrains AI",
-	other: "configured",
-};
+export function authKindLabel(kind: ProviderAuthKind): string {
+	switch (kind) {
+		case "oauth":
+			return t("model.auth.oauth");
+		case "api-key":
+			return t("model.auth.apiKey");
+		case "env":
+			return t("model.auth.env");
+		case "central":
+			return t("model.auth.central");
+		default:
+			return t("model.auth.other");
+	}
+}
 
 /** The tag models routed through JetBrains AI (the Central proxy) wear where other kinds show a glyph. */
 export const CENTRAL_KIND_TAG = "JCP";
@@ -41,13 +49,13 @@ export function kindLabel(model: WireModel): string | null {
 	if (!auth) return null;
 	switch (auth.kind) {
 		case "oauth":
-			return auth.detail ?? "plan";
+			return auth.detail ?? t("model.kind.plan");
 		case "central":
-			return "quota";
+			return t("model.kind.quota");
 		case "env":
-			return auth.detail ?? "env";
+			return auth.detail ?? t("model.kind.env");
 		case "api-key":
-			return auth.detail ?? "API key";
+			return auth.detail ?? t("model.kind.apiKey");
 		default:
 			return null;
 	}
@@ -56,19 +64,28 @@ export function kindLabel(model: WireModel): string | null {
 /** The full sentence for tooltips and group headings: kind word plus pi's detail. */
 export function describeAuth(model: WireModel): string | null {
 	if (!model.auth) return null;
-	const label = AUTH_KIND_LABEL[model.auth.kind];
+	const label = authKindLabel(model.auth.kind);
 	return model.auth.detail ? `${label} · ${model.auth.detail}` : label;
 }
 
-export const LEVEL_HINT: Record<ThinkingLevel, string> = {
-	off: "No reasoning — fastest, cheapest",
-	minimal: "Briefest reasoning",
-	low: "Light reasoning — fastest",
-	medium: "Balanced reasoning",
-	high: "Deep reasoning",
-	xhigh: "Extra-deep reasoning",
-	max: "Maximum reasoning",
-};
+export function levelHint(level: ThinkingLevel): string {
+	switch (level) {
+		case "off":
+			return t("model.level.off");
+		case "minimal":
+			return t("model.level.minimal");
+		case "low":
+			return t("model.level.low");
+		case "medium":
+			return t("model.level.medium");
+		case "high":
+			return t("model.level.high");
+		case "xhigh":
+			return t("model.level.xhigh");
+		case "max":
+			return t("model.level.max");
+	}
+}
 
 /** Levels whose cost deserves a warning beside the hint (what Codex and Claude.ai flag). */
 export const COSTLY_LEVELS: ReadonlySet<ThinkingLevel> = new Set<ThinkingLevel>(["xhigh", "max"]);

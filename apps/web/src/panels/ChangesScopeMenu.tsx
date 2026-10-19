@@ -17,6 +17,7 @@ import {
 import { useRef, useState } from "react";
 import { LoadingRegion } from "@/components/Skeleton";
 import { useNow } from "@/components/useNow";
+import { useT } from "@/i18n";
 import { relativeTime } from "@/lib";
 import { getTransport } from "../transport";
 import { scopeLabel, scopeTitle, turnScope, turnTimeLabel } from "./changesModel";
@@ -31,6 +32,7 @@ export function ChangesScopeMenu({
 	scope: GitDiffScope;
 	onSelectScope: (scope: GitDiffScope) => void;
 }) {
+	const t = useT();
 	const now = useNow();
 	const [open, setOpen] = useState(false);
 	const [commits, setCommits] = useState<GitCommit[] | null>(null);
@@ -72,7 +74,7 @@ export function ChangesScopeMenu({
 			<DropdownMenuTrigger
 				data-testid="changes-scope-trigger"
 				data-open={open}
-				aria-label="Diff scope"
+				aria-label={t("changes.scope.diffAria")}
 				title={scopeTitle(scope, commits ?? [], turns)}
 				className="flex h-panel-header-control min-w-0 items-center gap-4 rounded-sm px-4 tr-text-metadata text-text-muted outline-none transition-colors hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary data-[open=true]:bg-control-bg-selected data-[open=true]:text-text-default"
 			>
@@ -89,7 +91,7 @@ export function ChangesScopeMenu({
 					onSelect={() => onSelectScope({ kind: "branch" })}
 				>
 					<Check className={scope.kind === "branch" ? "" : "invisible"} />
-					All changes
+					{t("changes.all")}
 				</DropdownMenuItem>
 				<DropdownMenuItem
 					data-testid="changes-scope-uncommitted"
@@ -98,7 +100,9 @@ export function ChangesScopeMenu({
 					onSelect={() => onSelectScope({ kind: "uncommitted" })}
 				>
 					<Check className={scope.kind === "uncommitted" ? "" : "invisible"} />
-					{hasUncommitted === false ? "No uncommitted changes" : "Uncommitted changes"}
+					{hasUncommitted === false
+						? t("changes.scope.noUncommitted")
+						: t("changes.scope.uncommitted")}
 				</DropdownMenuItem>
 				<DropdownMenuItem
 					data-testid="changes-scope-last-turn"
@@ -113,13 +117,13 @@ export function ChangesScopeMenu({
 					/>
 					<Robot />
 					{latestTurn
-						? `Last turn · ${latestTurn.changes.length} ${latestTurn.changes.length === 1 ? "file" : "files"}`
-						: "No agent turn changed files yet"}
+						? t("changes.scope.lastTurn", { count: latestTurn.changes.length })
+						: t("changes.scope.noTurn")}
 				</DropdownMenuItem>
 				{turns.length > 1 ? (
 					<>
 						<DropdownMenuSeparator />
-						<DropdownMenuLabel>Agent turns</DropdownMenuLabel>
+						<DropdownMenuLabel>{t("changes.scope.agentTurns")}</DropdownMenuLabel>
 						{[...turns]
 							.reverse()
 							.slice(0, 10)
@@ -138,11 +142,11 @@ export function ChangesScopeMenu({
 										<span className="flex min-w-0 flex-col">
 											<span className="truncate">
 												{turn.id === latestTurn?.id
-													? "Last turn"
-													: `Turn ${turnTimeLabel(turn.startedAt)}`}
+													? t("changes.scope.lastTurnLabel")
+													: t("changes.scope.turn", { time: turnTimeLabel(turn.startedAt) })}
 											</span>
 											<span className="truncate tr-text-metadata text-text-muted">
-												{turn.changes.length} {turn.changes.length === 1 ? "file" : "files"} ·{" "}
+												{t("changes.scope.files", { count: turn.changes.length })} ·{" "}
 												{relativeTime(turn.settledAt, now)}
 											</span>
 										</span>
@@ -152,11 +156,11 @@ export function ChangesScopeMenu({
 					</>
 				) : null}
 				<DropdownMenuSeparator />
-				<DropdownMenuLabel>Commits</DropdownMenuLabel>
+				<DropdownMenuLabel>{t("changes.scope.commits")}</DropdownMenuLabel>
 				{commits === null ? (
-					<LoadingRegion rows={3} label="Loading commits" className="px-8 py-4" />
+					<LoadingRegion rows={3} label={t("changes.scope.loadingCommits")} className="px-8 py-4" />
 				) : commits.length === 0 ? (
-					<DropdownMenuItem disabled>No commits on this branch</DropdownMenuItem>
+					<DropdownMenuItem disabled>{t("changes.scope.noCommits")}</DropdownMenuItem>
 				) : (
 					commits.map((commit) => {
 						const active = scope.kind === "commit" && scope.sha === commit.sha;

@@ -13,6 +13,7 @@ import {
 } from "@remixicon/react";
 import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useT } from "@/i18n";
 import type {
 	ResourceContent,
 	ResourceDiffProps,
@@ -131,6 +132,7 @@ function HunkToolbar({
 	actions: NonNullable<ResourceDiffProps["hunkActions"]>;
 	onAskAgent: (block: ChangeBlock) => void;
 }) {
+	const t = useT();
 	const [reverting, setReverting] = useState(false);
 	const revert = () => {
 		setReverting(true);
@@ -151,11 +153,11 @@ function HunkToolbar({
 			onPointerDown={(event) => event.stopPropagation()}
 		>
 			{triage ? (
-				<IconTooltip label={kept ? "Kept — click to undo" : "Keep this hunk"}>
+				<IconTooltip label={kept ? t("code.keptTooltip") : t("code.keepTooltip")}>
 					<button
 						type="button"
 						data-testid="hunk-keep"
-						aria-label={kept ? "Undo keep" : "Keep hunk"}
+						aria-label={kept ? t("code.undoKeep") : t("code.keepHunk")}
 						aria-pressed={kept}
 						onClick={() => triage.setKept(contentKey, !kept)}
 						className={`flex h-24 items-center gap-4 rounded-sm px-8 tr-text-metadata outline-none focus-visible:ring-2 focus-visible:ring-primary ${
@@ -163,15 +165,15 @@ function HunkToolbar({
 						}`}
 					>
 						<Check className="size-14" />
-						{kept ? "Kept" : "Keep"}
+						{kept ? t("code.kept") : t("code.keep")}
 					</button>
 				</IconTooltip>
 			) : null}
-			<IconTooltip label="Revert hunk">
+			<IconTooltip label={t("code.revertHunk")}>
 				<button
 					type="button"
 					data-testid="hunk-revert"
-					aria-label="Revert hunk"
+					aria-label={t("code.revertHunk")}
 					disabled={reverting}
 					onClick={revert}
 					className="flex size-24 items-center justify-center rounded-sm outline-none hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary disabled:text-control-disabled-text"
@@ -179,11 +181,11 @@ function HunkToolbar({
 					<Revert className="size-14" />
 				</button>
 			</IconTooltip>
-			<IconTooltip label="Ask agent about this hunk">
+			<IconTooltip label={t("code.askAgent")}>
 				<button
 					type="button"
 					data-testid="hunk-ask-agent"
-					aria-label="Ask agent about this hunk"
+					aria-label={t("code.askAgent")}
 					onClick={() => onAskAgent(block)}
 					className="flex size-24 items-center justify-center rounded-sm outline-none hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
 				>
@@ -191,9 +193,7 @@ function HunkToolbar({
 				</button>
 			</IconTooltip>
 			{actions.agentWorking ? (
-				<span className="tr-text-metadata text-text-subtle">
-					the agent is working in this workspace
-				</span>
+				<span className="tr-text-metadata text-text-subtle">{t("code.agentWorking")}</span>
 			) : null}
 		</div>
 	);
@@ -212,6 +212,7 @@ function PierreDiffSurface({
 	onViewState,
 	virtualize = false,
 }: ResourceDiffProps) {
+	const t = useT();
 	const originalText = textSide(original);
 	const modifiedText = textSide(modified);
 	const originalHash = contentHash(original);
@@ -424,7 +425,7 @@ function PierreDiffSurface({
 			<VirtualizerContext.Provider value={virtualize ? virtualizer : undefined}>
 				{fileDiff.hunks.length === 0 ? (
 					<p data-testid="diff-empty" className="px-12 py-8 tr-text-ui text-text-muted">
-						No differences between the two sides.
+						{t("code.noDifferences")}
 					</p>
 				) : null}
 				<FileDiff<DiffAnnotationMetadata>
@@ -435,11 +436,11 @@ function PierreDiffSurface({
 					selectedLines={selectedLines}
 					className="flex-1"
 					renderGutterUtility={(getHoveredLine) => (
-						<IconTooltip label="Comment on this line">
+						<IconTooltip label={t("code.commentLine")}>
 							<button
 								type="button"
 								data-testid="review-add-icon"
-								aria-label="Comment on this line"
+								aria-label={t("code.commentLine")}
 								onPointerDown={(event) => {
 									event.preventDefault();
 									event.stopPropagation();

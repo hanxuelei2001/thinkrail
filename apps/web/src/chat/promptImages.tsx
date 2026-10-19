@@ -9,6 +9,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useT } from "@/i18n";
 import { FileChip } from "./FileChip";
 import { type AttachedImage, fileToAttachedImage } from "./imageAttachment";
 import type { ChatAttachment } from "./types";
@@ -166,6 +167,7 @@ export function PromptImageChips({
 	testId?: string;
 	className?: string;
 }) {
+	const t = useT();
 	const { images, pending, errors, removeImage, dismissError } = controller;
 	if (!leading && images.length === 0 && pending === 0 && errors.length === 0) return null;
 	return (
@@ -177,13 +179,13 @@ export function PromptImageChips({
 					data-testid="composer-image-error"
 					tone="error"
 					icon={false}
-					title={`Couldn't attach ${err.name} — ${err.reason}`}
-					label={`Couldn't attach ${err.name}`}
+					title={t("prompt.attachErrorTitle", { name: err.name, reason: err.reason })}
+					label={t("prompt.attachError", { name: err.name })}
 					meta={`— ${err.reason}`}
 					trailing={
 						<button
 							type="button"
-							aria-label="Dismiss"
+							aria-label={t("chat.dismiss")}
 							onClick={() => dismissError(err.id)}
 							className="hover:opacity-80"
 						>
@@ -205,7 +207,7 @@ export function PromptImageChips({
 					trailing={
 						<button
 							type="button"
-							aria-label="Remove image"
+							aria-label={t("chat.removeImage")}
 							onClick={() => removeImage(img.id)}
 							className="text-text-muted hover:text-text-default"
 						>
@@ -219,7 +221,9 @@ export function PromptImageChips({
 					data-testid="composer-image-pending"
 					label={
 						<span className="text-text-muted">
-							{pending === 1 ? "Attaching…" : `Attaching ${pending}…`}
+							{pending === 1
+								? t("prompt.attaching")
+								: t("prompt.attachingCount", { count: pending })}
 						</span>
 					}
 				/>

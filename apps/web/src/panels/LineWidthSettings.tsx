@@ -1,23 +1,13 @@
 import { type AppConfigUpdate, isLineWidth, LINE_WIDTH_COLUMNS } from "@thinkrail/contracts";
 import { cn } from "@thinkrail/ui/utils";
 import { useEffect, useState } from "react";
+import { useT } from "@/i18n";
 import { toast, useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
 import { SETTINGS_ROWS_CONTAINER, SettingsRow } from "./SettingsRow";
 import { SettingsSwitch } from "./SettingsSwitch";
 
 type LineWidthKind = "chat" | "file";
-
-const COPY: Record<LineWidthKind, { description: string; failure: string }> = {
-	chat: {
-		description: "Maximum characters per line in chat.",
-		failure: "Couldn't change the chat line width",
-	},
-	file: {
-		description: "Maximum characters per line in files and diffs.",
-		failure: "Couldn't change the file line width",
-	},
-};
 
 function parsedWidth(draft: string): number | null {
 	if (!/^\d+$/.test(draft)) return null;
@@ -46,6 +36,7 @@ function boundedConfig(kind: LineWidthKind, bounded: boolean): AppConfigUpdate {
 }
 
 export function LineWidthControl({ kind }: { kind: LineWidthKind }) {
+	const t = useT();
 	const value = useAppStore((state) =>
 		kind === "chat" ? state.chatLineWidth : state.fileLineWidth,
 	);
@@ -61,12 +52,17 @@ export function LineWidthControl({ kind }: { kind: LineWidthKind }) {
 	const parsed = parsedWidth(draft);
 	const invalid = parsed === null;
 	const errorId = `${kind}-line-width-error`;
-	const copy = COPY[kind];
+	const description =
+		kind === "chat"
+			? t("settings.lineWidth.chatDescription")
+			: t("settings.lineWidth.fileDescription");
+	const failure =
+		kind === "chat" ? t("settings.lineWidth.error.chat") : t("settings.lineWidth.error.file");
 
 	const commit = () => {
 		if (parsed === null || parsed === value || parsed === submitted) return;
 		setSubmitted(parsed);
-		void updateLineWidth(widthConfig(kind, parsed), copy.failure).then((saved) => {
+		void updateLineWidth(widthConfig(kind, parsed), failure).then((saved) => {
 			if (!saved) setSubmitted(null);
 		});
 	};
@@ -77,17 +73,20 @@ export function LineWidthControl({ kind }: { kind: LineWidthKind }) {
 			className={cn(SETTINGS_ROWS_CONTAINER, "border-border-muted border-b")}
 		>
 			<SettingsRow
-				label="Line width"
+				label={t("settings.lineWidth.label")}
 				description={
 					<>
-						{copy.description}
+						{description}
 						{invalid ? (
 							<span
 								id={errorId}
 								data-testid={errorId}
 								className="block text-feedback-error tr-text-metadata"
 							>
-								Enter a whole number from {LINE_WIDTH_COLUMNS.min} to {LINE_WIDTH_COLUMNS.max}.
+								{t("settings.lineWidth.range", {
+									min: LINE_WIDTH_COLUMNS.min,
+									max: LINE_WIDTH_COLUMNS.max,
+								})}
 							</span>
 						) : null}
 					</>
@@ -100,7 +99,9 @@ export function LineWidthControl({ kind }: { kind: LineWidthKind }) {
 						step={1}
 						inputMode="numeric"
 						value={draft}
-						aria-label={`${kind === "chat" ? "Chat" : "File"} line width`}
+						aria-label={
+							kind === "chat" ? t("settings.lineWidth.chatAria") : t("settings.lineWidth.fileAria")
+						}
 						aria-invalid={invalid}
 						aria-describedby={invalid ? errorId : undefined}
 						data-testid={`${kind}-line-width-input`}
@@ -120,15 +121,19 @@ export function LineWidthControl({ kind }: { kind: LineWidthKind }) {
 				}
 			/>
 			<SettingsRow
-				label="Fit to pane"
-				description="Wrap lines shorter when the pane is narrow."
+				label={t("settings.lineWidth.fit")}
+				description={t("settings.lineWidth.fitDescription")}
 				control={
 					<SettingsSwitch
 						checked={bounded}
-						label={`Fit ${kind} line width to pane`}
+						label={
+							kind === "chat"
+								? t("settings.lineWidth.fitChatAria")
+								: t("settings.lineWidth.fitFileAria")
+						}
 						testId={`${kind}-line-width-bounded`}
 						onChange={(next) => {
-							void updateLineWidth(boundedConfig(kind, next), copy.failure);
+							void updateLineWidth(boundedConfig(kind, next), failure);
 						}}
 					/>
 				}

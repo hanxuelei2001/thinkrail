@@ -27,6 +27,7 @@ import {
 } from "@thinkrail/ui/dropdown-menu";
 import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useT } from "@/i18n";
 import { AskStatesContext, deriveAskStates } from "../chat/askState";
 import { type ChatActions, ChatActionsContext } from "../chat/ChatActions";
 import { Markdown } from "../chat/Markdown";
@@ -89,6 +90,7 @@ function ChangeSetBlock({
 	workspaceId: string;
 	onOpenCommit: (sha: string) => void;
 }) {
+	const t = useT();
 	const [expanded, setExpanded] = useState(false);
 	const set = itemChangeSet(item);
 	if (!set) return null;
@@ -102,7 +104,7 @@ function ChangeSetBlock({
 			data-expanded={expanded}
 		>
 			<div className="flex items-center gap-8 px-4">
-				<IconTooltip label={expanded ? "Hide changed files" : "Show changed files"}>
+				<IconTooltip label={expanded ? t("plan.changedFiles.hide") : t("plan.changedFiles.show")}>
 					<button
 						type="button"
 						data-testid="plan-change-set-toggle"
@@ -118,7 +120,7 @@ function ChangeSetBlock({
 				</IconTooltip>
 				{set.kind === "commit" ? (
 					<>
-						<IconTooltip label="Open this step's commit in the Changes panel">
+						<IconTooltip label={t("plan.openCommit")}>
 							<button
 								type="button"
 								data-testid="plan-commit-chip"
@@ -198,12 +200,13 @@ function RevisionsBlock({
 	item: TodoItem;
 	onOpenCommit: (sha: string) => void;
 }) {
+	const t = useT();
 	const revisions = itemRevisions(item);
 	if (revisions.length < 2) return null;
 	const unreviewed = new Set(item.review?.unreviewedShas ?? []);
 	return (
 		<div data-testid="plan-revisions">
-			<span className="px-4 tr-text-eyebrow text-text-subtle">Revisions</span>
+			<span className="px-4 tr-text-eyebrow text-text-subtle">{t("plan.revisions")}</span>
 			<ol className="flex flex-col">
 				{revisions.map((rev, index) => {
 					const stat = rev.files ? changeSetStat(rev.files) : null;
@@ -221,7 +224,7 @@ function RevisionsBlock({
 							<button
 								type="button"
 								onClick={() => onOpenCommit(rev.sha)}
-								title="Open this revision's commit in the Changes panel"
+								title={t("plan.openRevisionCommit")}
 								className="flex min-h-8 shrink-0 items-center gap-4 rounded-sm px-4 py-2 tr-code-text text-text-subtle hover:bg-control-bg-hovered hover:text-text-default"
 							>
 								<GitCommitHorizontal className="size-14" />
@@ -263,6 +266,7 @@ function ItemBlock({
 	startDisabled: boolean;
 	focusRequest: { id: string; tick: number } | null;
 }) {
+	const t = useT();
 	const reviewed = reviewSettled(item);
 	const reviewing = item.review?.reviewing === true;
 	const changesRequested = reviewChangesRequested(item) && !reviewing;
@@ -302,13 +306,7 @@ function ItemBlock({
 			<div className="flex items-start gap-8 rounded-sm p-4 transition-colors group-hover:bg-control-bg-hovered">
 				<span
 					className="flex min-h-24 shrink-0 items-center"
-					title={
-						reviewing
-							? "Checking — the reviewer agent is reading this step"
-							: changesRequested
-								? "Needs a fix"
-								: undefined
-					}
+					title={reviewing ? t("plan.checking") : changesRequested ? t("plan.needsFix") : undefined}
 				>
 					{hideStatusGlyph ? (
 						<span className="size-12 shrink-0" aria-hidden="true" />
@@ -330,7 +328,7 @@ function ItemBlock({
 								data-testid="plan-item-toggle"
 								aria-expanded={expanded}
 								onClick={() => setExpanded((v) => !v)}
-								title={expanded ? "Hide this step's details" : "Show this step's details"}
+								title={expanded ? t("plan.hideDetails") : t("plan.showDetails")}
 								className="flex min-w-0 flex-1 items-center gap-8 rounded-sm text-left"
 							>
 								<ChevronRight className="size-14 shrink-0 text-text-muted transition-transform group-data-[expanded=true]:rotate-90" />
@@ -358,7 +356,7 @@ function ItemBlock({
 							<button
 								type="button"
 								data-testid="plan-item-changes-requested"
-								title="The review demanded changes — open the Review tab for the findings"
+								title={t("plan.reviewChanges")}
 								onClick={onOpenReview}
 								className="flex min-h-8 shrink-0 items-center gap-2 tr-text-metadata text-feedback-warning underline-offset-2 hover:underline"
 							>
@@ -371,11 +369,7 @@ function ItemBlock({
 								type="button"
 								data-testid="plan-start-review"
 								disabled={startDisabled}
-								title={
-									startDisabled
-										? "Another step is being reviewed — one review at a time"
-										: undefined
-								}
+								title={startDisabled ? t("plan.anotherReview") : undefined}
 								onClick={() => onStartReview(item.id)}
 								className="flex h-24 shrink-0 items-center rounded-sm bg-control-primary-bg px-8 text-control-primary-text tr-text-action opacity-100 transition hover:bg-control-primary-bg-hovered focus-visible:opacity-100 disabled:bg-control-primary-disabled-bg disabled:text-control-primary-disabled-text [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
 							>
@@ -384,7 +378,7 @@ function ItemBlock({
 						) : reviewed ? (
 							<span
 								data-testid="plan-item-verified"
-								title="This step's changes were reviewed and approved"
+								title={t("plan.reviewedApproved")}
 								className="flex min-h-8 shrink-0 items-center gap-2 tr-text-metadata text-feedback-success"
 							>
 								<CircleCheck className="size-14" />
@@ -477,18 +471,19 @@ const SUMMARY_PROSE = [
 ].join(" ");
 
 function PlanSummary({ summary, stale = false }: { summary: string; stale?: boolean }) {
+	const t = useT();
 	return (
 		<div className={`${PLAN_CARD_CLASS} flex flex-col gap-8`}>
 			<div className="flex flex-wrap items-center gap-x-8 gap-y-2">
-				<span className="tr-text-eyebrow text-text-subtle">Summary</span>
+				<span className="tr-text-eyebrow text-text-subtle">{t("plan.summary")}</span>
 				{stale ? (
 					<span
 						data-testid="plan-summary-stale"
-						title="Showing the last completed recap until the plan finishes again"
+						title={t("plan.recapNote")}
 						className="flex items-center gap-4 tr-text-metadata text-text-muted"
 					>
 						<Loader2 className="size-14 shrink-0 animate-spin text-text-muted" />
-						Updating…
+						{t("chat.model.updating")}
 					</span>
 				) : null}
 			</div>
@@ -652,6 +647,7 @@ function PlanCardSection({
 
 // Keep the session's live slot isolated from the heavy PlanPane.
 function PlanSessionLive({ sessionId }: { workspaceId: string; sessionId: string }) {
+	const t = useT();
 	const runtime = useAppStore((s) => s.sessions[sessionId]);
 	const [focusScope] = useState<object>(() => ({}));
 	const actions = useMemo<ChatActions>(
@@ -696,7 +692,7 @@ function PlanSessionLive({ sessionId }: { workspaceId: string; sessionId: string
 		<div data-testid="plan-agent-message" className="mb-8 flex items-start gap-8 px-4">
 			<MessageSquare className="mt-2 size-14 shrink-0 text-text-muted" />
 			<div className="min-w-0 flex-1">
-				<div className="tr-text-eyebrow text-text-muted">Agent</div>
+				<div className="tr-text-eyebrow text-text-muted">{t("plan.agent")}</div>
 				<div className="max-h-[12rem] overflow-y-auto">
 					<Markdown text={message} className={`tr-text-metadata ${SUMMARY_PROSE}`} />
 				</div>
@@ -732,6 +728,7 @@ function SessionBlock({
 	renderGroup: (group: TodoGroupItem) => ReactNode;
 	renderItem: (item: TodoItem) => ReactNode;
 }) {
+	const t = useT();
 	const [adding, setAdding] = useState(false);
 	const hasActive = activeGroups.length > 0 || activeLoose.length > 0;
 	const hasPending = pendingGroups.length > 0 || pendingLoose.length > 0;
@@ -740,18 +737,18 @@ function SessionBlock({
 		<section data-testid="plan-now-executing" className={PLAN_CARD_CLASS}>
 			<div className="mb-8 flex items-center gap-8">
 				<CircleDot className="size-14 shrink-0 text-primary" />
-				<h2 className="shrink-0 tr-title-dialog text-text-default">Now</h2>
+				<h2 className="shrink-0 tr-title-dialog text-text-default">{t("plan.now")}</h2>
 				{glance === "working" ? (
 					<button
 						type="button"
 						data-testid="plan-now-status"
 						data-glance="working"
 						onClick={onOpenChat}
-						title="Open the chat"
+						title={t("plan.openChat")}
 						className="flex min-w-0 items-center gap-4 tr-text-metadata text-text-subtle underline-offset-2 hover:text-text-default hover:underline"
 					>
 						<Loader2 className="size-14 shrink-0 animate-spin text-primary" />
-						Working on this
+						{t("chat.todo.inProgress")}
 					</button>
 				) : glance === "waiting_question" ? (
 					<button
@@ -759,22 +756,22 @@ function SessionBlock({
 						data-testid="plan-now-status"
 						data-glance="waiting_question"
 						onClick={onOpenChat}
-						title="Open the chat"
+						title={t("plan.openChat")}
 						className="flex min-w-0 items-center gap-4 tr-text-metadata text-primary underline-offset-2 hover:underline"
 					>
 						<MessageCircleQuestion className="size-14 shrink-0" />
-						Question
+						{t("chat.ask.questions")}
 					</button>
 				) : null}
 				<button
 					type="button"
 					data-testid="plan-add-task"
 					onClick={() => setAdding((v) => !v)}
-					title="Add a task to the plan"
+					title={t("plan.addTaskToPlan")}
 					className="ml-auto flex h-24 shrink-0 items-center gap-4 rounded-sm px-8 tr-text-action text-text-muted transition-colors hover:bg-control-bg-hovered hover:text-text-default"
 				>
 					<Plus className="size-14" />
-					Task
+					{t("plan.task")}
 				</button>
 			</div>
 			{renderLive()}
@@ -788,7 +785,7 @@ function SessionBlock({
 			) : null}
 			{hasPending ? (
 				<>
-					{hasActive ? <SectionLabel label="Up next" /> : null}
+					{hasActive ? <SectionLabel label={t("chat.todo.pending")} /> : null}
 					{pendingGroups.map(renderGroup)}
 					{pendingLoose.length > 0 ? (
 						<ul className="flex flex-col">{pendingLoose.map(renderItem)}</ul>
@@ -802,13 +799,13 @@ function SessionBlock({
 						data-testid="plan-now-idle"
 						data-glance="waiting"
 						onClick={() => setAdding(true)}
-						title="Add a task"
+						title={t("plan.addTask")}
 						className="group flex w-full items-center gap-8 rounded-sm px-4 py-2 text-left tr-text-ui text-text-subtle transition-colors hover:bg-control-bg-hovered hover:text-text-default"
 					>
-						<span className="min-w-0 flex-1">No steps yet — add one to get started.</span>
+						<span className="min-w-0 flex-1">{t("plan.noSteps")}</span>
 						<span className="flex shrink-0 items-center gap-4 text-text-muted opacity-0 transition-opacity group-hover:opacity-100">
 							<Plus className="size-14" />
-							Add a task
+							{t("plan.addTask")}
 						</span>
 					</button>
 				) : null
@@ -817,9 +814,7 @@ function SessionBlock({
 					icon={MessageSquare}
 					testId="plan-session-chat"
 					placeholder={
-						glance === "working"
-							? "Steer the agent…  (Enter to send, Shift+Enter for a new line)"
-							: "Message the agent…  (Enter to send, Shift+Enter for a new line)"
+						glance === "working" ? t("plan.steerPlaceholder") : t("plan.messagePlaceholder")
 					}
 					onSubmit={onSend}
 				/>
@@ -828,7 +823,7 @@ function SessionBlock({
 				<PlanComposer
 					icon={Plus}
 					testId="plan-add-input"
-					placeholder="Add a task…  (Enter to add, Shift+Enter for a new line)"
+					placeholder={t("plan.addTaskPlaceholder")}
 					autoFocus
 					onSubmit={onAdd}
 					onClose={() => setAdding(false)}
@@ -845,6 +840,7 @@ export default function PlanPane({
 	workspaceId: string;
 	sessionId: string;
 }) {
+	const t = useT();
 	const plan = useChatTodos(workspaceId, sessionId);
 	const title = useAppStore((s) => selectChatTitle(s, workspaceId, sessionId));
 	const pushToast = useAppStore((s) => s.pushToast);
@@ -954,15 +950,15 @@ export default function PlanPane({
 			.then(() =>
 				pushToast({
 					variant: "success",
-					title: "Command copied",
-					message: "Run it in a terminal to integrate the remote changes, then push.",
+					title: t("plan.toast.commandCopied"),
+					message: t("plan.toast.commandCopiedMessage"),
 				}),
 			)
 			.catch(() =>
 				pushToast({
 					variant: "error",
-					title: "Copy failed",
-					message: "Couldn't write to the clipboard.",
+					title: t("plan.toast.copyFailed"),
+					message: t("plan.toast.clipboardFailed"),
 				}),
 			);
 	};
@@ -991,7 +987,11 @@ export default function PlanPane({
 			const preview = await getTransport().request("pr.preview", { workspaceId, sessionId, title });
 			setPrCompose({ draft, ...preview });
 		} catch (err) {
-			pushToast({ variant: "error", title: "Couldn't prepare the PR", message: errorText(err) });
+			pushToast({
+				variant: "error",
+				title: t("plan.toast.preparePrFailed"),
+				message: errorText(err),
+			});
 		} finally {
 			setPrBusy(false);
 		}
@@ -1029,9 +1029,14 @@ export default function PlanPane({
 			refreshOpenReview();
 			const dirty =
 				result.dirtyFiles > 0
-					? `${result.dirtyFiles} uncommitted ${result.dirtyFiles === 1 ? "file" : "files"} stayed local.`
+					? t("plan.toast.uncommittedMessage", { count: result.dirtyFiles })
 					: "";
-			if (dirty) pushToast({ variant: "info", title: "Uncommitted changes", message: dirty });
+			if (dirty)
+				pushToast({
+					variant: "info",
+					title: t("plan.toast.uncommittedChanges"),
+					message: dirty,
+				});
 			if (result.action === "compare" && result.ghProblem) {
 				setPrSetup({
 					kind: "gh",
@@ -1046,22 +1051,25 @@ export default function PlanPane({
 			}
 			const toastByAction = {
 				created: {
-					title: "PR opened",
-					message: `${result.review ? openReviewLabel(result.review) : "The PR"} is open — its description came from this plan.`,
+					title: t("plan.toast.prOpened"),
+					message: result.review
+						? t("plan.toast.prOpenedMessageReview", { review: openReviewLabel(result.review) })
+						: t("plan.toast.prOpenedMessage"),
 				},
 				updated: {
-					title: "PR updated",
-					message: `Pushed new commits to ${result.review ? openReviewLabel(result.review) : "the open PR"}${result.bodyRefreshed === false ? " — refreshing its description failed." : " and refreshed its description."}`,
+					title: t("plan.toast.prUpdated"),
+					message:
+						result.bodyRefreshed === false
+							? t("plan.toast.prUpdatedMessageFailed")
+							: t("plan.toast.prUpdatedMessage"),
 				},
 				pushed: {
-					title: "Branch pushed",
-					message:
-						"The branch is on origin. The remote isn't GitHub — open the review on your forge.",
+					title: t("plan.toast.branchPushed"),
+					message: t("plan.toast.branchOnOrigin"),
 				},
 				compare: {
-					title: "Branch pushed",
-					message:
-						"GitHub's compare page opened with the plan prefilled — finish creating the PR there.",
+					title: t("plan.toast.branchPushed"),
+					message: t("plan.toast.compareOpened"),
 				},
 			} as const;
 			pushToast({ variant: "success", ...toastByAction[result.action] });
@@ -1070,7 +1078,11 @@ export default function PlanPane({
 				setPrCompose(null);
 				setPrSetup({ kind: "push-auth", detail: errorText(err) });
 			} else {
-				pushToast({ variant: "error", title: "Open PR failed", message: errorText(err) });
+				pushToast({
+					variant: "error",
+					title: t("plan.toast.openPrFailed"),
+					message: errorText(err),
+				});
 			}
 		} finally {
 			setPrBusy(false);
@@ -1090,14 +1102,14 @@ export default function PlanPane({
 			() => {
 				pushToast({
 					variant: "success",
-					title: "Review started",
-					message: "The reviewer agent is reading this step — findings land in the Review tab.",
+					title: t("plan.toast.reviewStarted"),
+					message: t("plan.toast.reviewStartedMessage"),
 				});
 			},
 			(err) => {
 				pushToast({
 					variant: "error",
-					title: "Review didn't start",
+					title: t("plan.toast.reviewDidntStart"),
 					message: errorText(err),
 				});
 			},
@@ -1109,24 +1121,28 @@ export default function PlanPane({
 					alreadyRunning
 						? {
 								variant: "info",
-								title: "Check All is already running",
-								message: "The current pass continues — the per-row Checking… pulses track it.",
+								title: t("plan.toast.checkAllRunning"),
+								message: t("plan.toast.checkAllRunningMessage"),
 							}
 						: total > 0
 							? {
 									variant: "success",
-									title: "Check All started",
-									message: `Checking ${total} step${total === 1 ? "" : "s"} one at a time — findings land in the Review tab.`,
+									title: t("plan.toast.checkAllStarted"),
+									message: t("plan.toast.checkAllStartedMessage", { count: total }),
 								}
 							: {
 									variant: "info",
-									title: "Nothing to review",
-									message: "Every reviewable step is already reviewed.",
+									title: t("plan.toast.nothingToReview"),
+									message: t("plan.toast.nothingToReviewMessage"),
 								},
 				);
 			},
 			(err) => {
-				pushToast({ variant: "error", title: "Check All didn't start", message: errorText(err) });
+				pushToast({
+					variant: "error",
+					title: t("plan.toast.checkAllDidntStart"),
+					message: errorText(err),
+				});
 			},
 		);
 	const copyMarkdown = () => {
@@ -1135,15 +1151,15 @@ export default function PlanPane({
 			.then(() =>
 				pushToast({
 					variant: "success",
-					title: "Plan copied",
-					message: "Markdown is in your clipboard.",
+					title: t("plan.toast.planCopied"),
+					message: t("plan.toast.planCopiedMessage"),
 				}),
 			)
 			.catch(() =>
 				pushToast({
 					variant: "error",
-					title: "Copy failed",
-					message: "Couldn't write to the clipboard.",
+					title: t("plan.toast.copyFailed"),
+					message: t("plan.toast.clipboardFailed"),
 				}),
 			);
 	};
@@ -1209,7 +1225,9 @@ export default function PlanPane({
 			<div className="mx-auto max-w-[52rem] px-16 py-16">
 				<header className="mb-16 flex items-center gap-12">
 					<div className="min-w-0 flex-1">
-						<h1 className="truncate tr-heading-sm text-text-default">Plan · {title}</h1>
+						<h1 className="truncate tr-heading-sm text-text-default">
+							{t("plan.title", { title })}
+						</h1>
 						<div
 							data-testid="plan-progress"
 							className="flex flex-wrap items-center gap-4 tr-text-metadata text-text-subtle"
@@ -1234,7 +1252,7 @@ export default function PlanPane({
 								className="flex items-center gap-4"
 							>
 								<StageGlyph state={stages.pr} />
-								{openReview ? openReviewLabel(openReview) : "PR"}
+								{openReview ? openReviewLabel(openReview) : t("plan.prFallback")}
 							</span>
 						</div>
 						{workspace ? (
@@ -1267,7 +1285,7 @@ export default function PlanPane({
 							type="button"
 							data-testid="plan-review-comments"
 							onClick={onOpenReview}
-							title="Open the Review tab — the reviewer's findings"
+							title={t("plan.openReviewTab")}
 							className="flex h-32 shrink-0 items-center gap-4 rounded-sm px-8 tr-text-ui text-text-muted transition-colors hover:bg-control-bg-hovered hover:text-text-default"
 						>
 							<MessageSquare className="size-14" />
@@ -1302,14 +1320,14 @@ export default function PlanPane({
 						onClick={openReview && diverged ? copyIntegrateCommand : () => void openPrFlow(false)}
 						title={
 							sameBranch
-								? "This workspace's branch is its base branch — there's nothing to open a PR against."
+								? t("plan.noPrBase")
 								: openReview && diverged
 									? integrateCommand
-										? `The branch and origin diverged — integrate the remote changes first. Copy: ${integrateCommand}`
-										: `The branch and origin diverged — integrate origin/${branch} in a terminal first.`
+										? t("plan.divergedCommand", { command: integrateCommand })
+										: t("plan.divergedHint", { branch })
 									: openReview
-										? "Push new commits to the open PR and refresh its description from the plan"
-										: "Push the branch and open a PR whose description comes from this plan"
+										? t("plan.pushOpenPr")
+										: t("plan.pushCreatePr")
 						}
 						className={`flex h-32 shrink-0 items-center gap-4 rounded-sm px-8 tr-text-ui transition-colors ${
 							(planReady && !openReview) || unpushed > 0 || (openReview && diverged)
@@ -1323,19 +1341,19 @@ export default function PlanPane({
 							<GitPullRequestArrow className="size-14" />
 						)}
 						{prBusy && (prCompose || openReview)
-							? "Pushing…"
+							? t("plan.pushing")
 							: openReview
 								? diverged
-									? "Branch diverged"
+									? t("plan.diverged")
 									: unpushed > 0
-										? `Push updates (${unpushed})`
-										: "Push updates"
-								: "Open PR"}
+										? t("plan.pushUpdatesCount", { count: unpushed })
+										: t("plan.pushUpdates")
+								: t("plan.openPr")}
 					</button>
 					<DropdownMenu>
 						<DropdownMenuTrigger
 							data-testid="plan-menu"
-							aria-label="Plan actions"
+							aria-label={t("plan.actionsAria")}
 							className="flex size-32 shrink-0 items-center justify-center rounded-sm text-text-muted outline-none hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary data-[state=open]:bg-control-bg-hovered"
 						>
 							<MoreVertical className="size-16" />
@@ -1423,8 +1441,8 @@ export default function PlanPane({
 								don't have. Integrate them before pushing (a plain push can't land; force-pushing
 								would drop them).{" "}
 								{integrateCommand
-									? "Run in a terminal:"
-									: `Integrate origin/${branch} in a terminal — its name has shell-special characters, so no command is offered.`}
+									? t("plan.runInTerminal")
+									: t("plan.integrateShellSpecial", { branch })}
 							</span>
 							{integrateCommand ? (
 								<code
@@ -1510,7 +1528,11 @@ export default function PlanPane({
 									);
 							}
 						} catch (err) {
-							pushToast({ variant: "error", title: "Couldn't send", message: errorText(err) });
+							pushToast({
+								variant: "error",
+								title: t("plan.sendError"),
+								message: errorText(err),
+							});
 							throw err;
 						}
 					}}
@@ -1520,7 +1542,7 @@ export default function PlanPane({
 				{sections.doneGroups.length > 0 || sections.doneLoose.length > 0 ? (
 					<PlanCardSection
 						testId="plan-done-section"
-						label="Done"
+						label={t("common.done")}
 						Icon={CircleCheck}
 						iconClass="text-feedback-success"
 					>
@@ -1533,7 +1555,7 @@ export default function PlanPane({
 				{adopted.length > 0 ? (
 					<section className="mb-16" data-testid="plan-adopted-commits">
 						<h2 className="mb-4 flex items-baseline gap-8 border-border-default border-b pb-4 tr-title-dialog text-text-default">
-							<span className="min-w-0 flex-1 truncate">Committed outside the plan</span>
+							<span className="min-w-0 flex-1 truncate">{t("plan.committedOutside")}</span>
 							<span className="shrink-0 tr-text-eyebrow text-text-subtle">
 								{adopted.length} {adopted.length === 1 ? "commit" : "commits"}
 							</span>
@@ -1562,7 +1584,7 @@ export default function PlanPane({
 				{data.unattributed && data.unattributed.length > 0 ? (
 					<section className="mb-16" data-testid="plan-unattributed">
 						<h2 className="mb-4 flex items-baseline gap-8 border-border-default border-b pb-4 tr-title-dialog text-text-default">
-							<span className="min-w-0 flex-1 truncate">Outside the plan</span>
+							<span className="min-w-0 flex-1 truncate">{t("plan.outsidePlan")}</span>
 							<span className="shrink-0 tr-text-eyebrow text-text-subtle">
 								{data.unattributed.length} {data.unattributed.length === 1 ? "file" : "files"}
 							</span>

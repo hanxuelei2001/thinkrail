@@ -1,4 +1,5 @@
 import type { McpServerState } from "@thinkrail/contracts";
+import { t } from "@/i18n";
 
 export type McpStateTone = "success" | "working" | "warning" | "error" | "info" | "neutral";
 
@@ -49,11 +50,44 @@ export function isMcpActiveState(state: McpServerState): boolean {
 }
 
 export function mcpToolCountLabel(count: number): string {
-	return `${count} tool${count === 1 ? "" : "s"}`;
+	return t("mcp.tools", { count });
+}
+
+export function mcpStateLabel(state: McpServerState): string {
+	switch (state) {
+		case "starting":
+			return t("mcp.state.starting");
+		case "connected":
+			return t("mcp.state.connected");
+		case "needs-sign-in":
+			return t("mcp.state.needsSignIn");
+		case "failed":
+			return t("mcp.state.failed");
+		case "disconnected":
+			return t("mcp.state.disconnected");
+		case "disabled":
+			return t("mcp.state.disabled");
+		case "disabled-in-project":
+			return t("mcp.state.disabledInProject");
+		case "disabled-in-chat":
+			return t("mcp.state.disabledInChat");
+		case "pending-approval":
+			return t("mcp.state.pendingApproval");
+		case "invalid-config":
+			return t("mcp.state.invalidConfig");
+		case "pending-reload":
+			return t("mcp.state.pendingReload");
+		case "not-running":
+			return t("mcp.state.notRunning");
+		case "handled-elsewhere":
+			return t("mcp.state.handledElsewhere");
+		default:
+			return t("mcp.state.unknown");
+	}
 }
 
 export function mcpStatusLabel(state: McpServerState, toolCount?: number): string {
 	return state === "connected" && toolCount !== undefined
-		? `${MCP_STATE_LABEL.connected} · ${mcpToolCountLabel(toolCount)}`
-		: MCP_STATE_LABEL[state];
+		? `${mcpStateLabel(state)} · ${mcpToolCountLabel(toolCount)}`
+		: mcpStateLabel(state);
 }

@@ -1,5 +1,6 @@
 import { RiDownloadCloud2Line as DownloadCloud } from "@remixicon/react";
 import { Button } from "@thinkrail/ui/button";
+import { useT } from "@/i18n";
 import type { UpdatesController } from "./useUpdates";
 
 export function UpdateReadyButton({
@@ -9,6 +10,7 @@ export function UpdateReadyButton({
 	updates: UpdatesController;
 	onOpen(): void;
 }) {
+	const t = useT();
 	const hostUpdate = updates.source === "host";
 	const hostStatus = updates.source === "host" ? updates.state.status : undefined;
 	const hostRequestFailed = updates.source === "host" && updates.requestFailed;
@@ -25,57 +27,59 @@ export function UpdateReadyButton({
 	if (!nativeActionable && !hostUpdate) return null;
 
 	const availableVersion = updates.state.availableVersion;
-	let label = "Update needs attention";
+	let label = t("updates.readyButton.attention");
 	let ariaLabel = availableVersion
-		? `ThinkRail ${availableVersion} update needs attention`
-		: "A ThinkRail update needs attention";
+		? t("updates.readyButton.attentionVersion", { version: availableVersion })
+		: t("updates.readyButton.attentionGeneric");
 	if (hostUpdate) {
 		if (hostRequestFailed || hostStatus === "failed") {
-			label = "Update failed";
-			ariaLabel = "The ThinkRail host update failed";
+			label = t("updates.readyButton.failed");
+			ariaLabel = t("updates.readyButton.failedAria");
 		} else if (hostStatus === "running") {
-			label = "Updating host";
+			label = t("updates.readyButton.updatingHost");
 			ariaLabel = availableVersion
-				? `Updating the ThinkRail host to ${availableVersion}`
-				: "Updating the ThinkRail host";
+				? t("updates.readyButton.updatingHostVersion", { version: availableVersion })
+				: t("updates.readyButton.updatingHostGeneric");
 		} else if (hostStatus === "succeeded") {
-			label = "Restart host";
+			label = t("updates.readyButton.restartHost");
 			ariaLabel = availableVersion
-				? `Restart the ThinkRail host to use ${availableVersion}`
-				: "Restart the ThinkRail host to use the update";
+				? t("updates.readyButton.restartHostVersion", { version: availableVersion })
+				: t("updates.readyButton.restartHostGeneric");
 		} else {
-			label = "Update available";
+			label = t("updates.readyButton.available");
 			ariaLabel = availableVersion
-				? `ThinkRail ${availableVersion} is available`
-				: "A ThinkRail update is available";
+				? t("updates.readyButton.availableVersion", { version: availableVersion })
+				: t("updates.readyButton.availableGeneric");
 		}
 	} else if (!nativeNeedsAttention && nativeState) {
 		switch (nativeState.status) {
 			case "available":
-				label = "Update available";
+				label = t("updates.readyButton.available");
 				ariaLabel = availableVersion
-					? `ThinkRail ${availableVersion} is available to download`
-					: "A ThinkRail update is available to download";
+					? t("updates.readyButton.availableDownloadVersion", { version: availableVersion })
+					: t("updates.readyButton.availableDownloadGeneric");
 				break;
 			case "downloading":
 				label =
 					typeof nativeState.progress === "number"
-						? `Downloading ${Math.round(nativeState.progress)}%`
-						: "Downloading update";
+						? t("updates.readyButton.downloadingPercent", {
+								percent: Math.round(nativeState.progress),
+							})
+						: t("updates.readyButton.downloading");
 				ariaLabel = label;
 				break;
 			case "preparing":
-				label = "Preparing update";
+				label = t("updates.readyButton.preparing");
 				ariaLabel = label;
 				break;
 			case "ready":
-				label = "Update ready";
+				label = t("updates.readyButton.ready");
 				ariaLabel = availableVersion
-					? `ThinkRail ${availableVersion} is ready to install`
-					: "An update is ready to install";
+					? t("updates.readyButton.readyVersion", { version: availableVersion })
+					: t("updates.readyButton.readyGeneric");
 				break;
 			case "installing":
-				label = "Installing update";
+				label = t("updates.readyButton.installing");
 				ariaLabel = label;
 				break;
 		}

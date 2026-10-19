@@ -5,6 +5,7 @@ import {
 	RiZoomOutLine as ZoomOut,
 } from "@remixicon/react";
 import { Button } from "@thinkrail/ui/button";
+import { useT } from "@/i18n";
 
 export function PdfToolbar({
 	page,
@@ -19,12 +20,13 @@ export function PdfToolbar({
 	onPage: (page: number) => void;
 	onZoom: (zoom: number) => void;
 }) {
+	const t = useT();
 	return (
 		<div className="flex h-32 shrink-0 items-center gap-4 border-border-default border-b bg-container-header-bg px-8">
 			<Button
 				variant="ghost"
 				size="icon"
-				aria-label="Previous PDF page"
+				aria-label={t("pdf.previousPage")}
 				disabled={page <= 1}
 				onClick={() => onPage(page - 1)}
 			>
@@ -36,7 +38,7 @@ export function PdfToolbar({
 			<Button
 				variant="ghost"
 				size="icon"
-				aria-label="Next PDF page"
+				aria-label={t("pdf.nextPage")}
 				disabled={page >= pageCount}
 				onClick={() => onPage(page + 1)}
 			>
@@ -45,7 +47,7 @@ export function PdfToolbar({
 			<Button
 				variant="ghost"
 				size="icon"
-				aria-label="Zoom PDF out"
+				aria-label={t("pdf.zoomOut")}
 				onClick={() => onZoom(zoom / 1.2)}
 			>
 				<ZoomOut className="size-14" />
@@ -56,7 +58,7 @@ export function PdfToolbar({
 			<Button
 				variant="ghost"
 				size="icon"
-				aria-label="Zoom PDF in"
+				aria-label={t("pdf.zoomIn")}
 				onClick={() => onZoom(zoom * 1.2)}
 			>
 				<ZoomIn className="size-14" />

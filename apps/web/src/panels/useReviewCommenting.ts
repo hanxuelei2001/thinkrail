@@ -1,5 +1,6 @@
 import type { GitDiffScope, ReviewAnchor } from "@thinkrail/contracts";
 import { useMemo } from "react";
+import { t } from "@/i18n";
 import type { AnchorDraft, ReviewThread, ReviewThreadActions, SurfaceReview } from "@/resources";
 import { toast, useAppStore } from "../store";
 import { errorText, getTransport, supportsRichAnchors } from "../transport";
@@ -43,7 +44,7 @@ export function useFileReview(
 				try {
 					await getTransport().request("review.commentDelete", { workspaceId, id });
 				} catch (error) {
-					toast.error(errorText(error), "Couldn't delete the draft");
+					toast.error(errorText(error), t("review.error.deleteDraft"));
 					throw error;
 				}
 			},
@@ -51,7 +52,7 @@ export function useFileReview(
 				try {
 					await getTransport().request("review.commentUpdate", { workspaceId, id, body });
 				} catch (error) {
-					toast.error(errorText(error), "Couldn't update the comment");
+					toast.error(errorText(error), t("review.error.updateComment"));
 					throw error;
 				}
 			},
@@ -114,8 +115,7 @@ export function commentKindForDraft(
 		: "file";
 }
 
-export const RICH_ANCHOR_HOST_TOO_OLD =
-	"This host is older than the review surface: it would not keep a region or cell comment. Update the host, or comment on the source instead.";
+export const RICH_ANCHOR_HOST_TOO_OLD = t("review.error.regionUnsupported");
 
 export function draftNeedsRichAnchors(draft: AnchorDraft): boolean {
 	return draft.selectors.some(
@@ -150,7 +150,7 @@ function sideCommenting(
 			try {
 				await add(draft, text);
 			} catch (error) {
-				toast.error(errorText(error), "Couldn't save the comment");
+				toast.error(errorText(error), t("review.error.saveComment"));
 				throw error;
 			}
 		},
@@ -159,7 +159,7 @@ function sideCommenting(
 			try {
 				comment = await add(draft, text);
 			} catch (error) {
-				toast.error(errorText(error), "Couldn't save the comment");
+				toast.error(errorText(error), t("review.error.saveComment"));
 				throw error;
 			}
 			await sendReviewComment(workspaceId, comment.id);

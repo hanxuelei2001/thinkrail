@@ -1,6 +1,7 @@
 import { Button } from "@thinkrail/ui/button";
 import { cn } from "@thinkrail/ui/utils";
 import { createContext, useContext, useEffect, useId, useRef, useState } from "react";
+import { useT } from "@/i18n";
 import { AttentionLine } from "./AttentionLine";
 import { ACTIVITY_BREADCRUMB_HEIGHT } from "./activityBreadcrumbs";
 import { useChatActions } from "./ChatActions";
@@ -30,6 +31,7 @@ export function ExtUiPrompt({
 	claimReveal?: (() => boolean) | undefined;
 	className?: string;
 }) {
+	const t = useT();
 	const [text, setTextState] = useState(
 		draft ?? (request.kind === "editor" ? (request.prefill ?? "") : ""),
 	);
@@ -116,7 +118,7 @@ export function ExtUiPrompt({
 					{toolArgs.length > 0 ? (
 						<ToolArgList
 							data-testid="ext-ui-tool-input"
-							aria-label="Arguments"
+							aria-label={t("chat.arguments")}
 							tabIndex={0}
 							entries={toolArgs}
 							className="max-h-[40vh] shrink-0 overflow-y-auto rounded-sm bg-container-header-bg px-8 py-4 outline-none focus-visible:ring-2 focus-visible:ring-primary"

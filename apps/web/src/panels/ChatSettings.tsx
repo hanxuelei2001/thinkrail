@@ -6,6 +6,7 @@ import {
 	STREAMING_RESPONSE_MOVEMENT_LIMITS,
 	type StreamingResponseMovement,
 } from "@/chat/chatPreferences";
+import { useT } from "@/i18n";
 import { selectActiveWorkspace, toast, useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
 import { LineWidthControl } from "./LineWidthSettings";
@@ -13,17 +14,6 @@ import { SegmentedControl, type SegmentedControlOption } from "./SegmentedContro
 import { SettingsGroup, SettingsPageContainer } from "./SettingsGroup";
 import { SettingsRow } from "./SettingsRow";
 import { SubagentSettings } from "./SubagentSettings";
-
-const MESSAGE_ORDER_OPTIONS: SegmentedControlOption<ChatMessageOrder>[] = [
-	{ id: "oldest-first", label: "Oldest first", testId: "chat-order-oldest-first" },
-	{ id: "newest-first", label: "Newest first", testId: "chat-order-newest-first" },
-];
-
-const GROWTH_OPTIONS: SegmentedControlOption<ComposerGrowthLimit>[] = [
-	{ id: "compact", label: "Compact", testId: "composer-growth-compact" },
-	{ id: "roomy", label: "Roomy", testId: "composer-growth-roomy" },
-	{ id: "half-chat", label: "Half chat", testId: "composer-growth-half-chat" },
-];
 
 const MOVEMENT_TRACK_SEGMENTS = Array.from({ length: 20 }, (_, index) => index * 5);
 
@@ -37,6 +27,7 @@ function StreamingResponseMovementControl({
 	value: StreamingResponseMovement;
 	onChange: (value: StreamingResponseMovement) => void;
 }) {
+	const t = useT();
 	const update = (handle: "settle" | "trigger", rawValue: string) => {
 		onChange(moveStreamingResponseHandle(value, handle, Number(rawValue)));
 	};
@@ -47,14 +38,14 @@ function StreamingResponseMovementControl({
 			className="flex flex-col gap-8 border-border-muted border-b py-12"
 		>
 			<div className="flex flex-col gap-2">
-				<span className="tr-text-ui text-text-default">Streaming response movement</span>
+				<span className="tr-text-ui text-text-default">{t("settings.chat.streamingMovement")}</span>
 				<span className="tr-text-metadata text-text-muted">
-					When the chat moves while an answer grows, and where its newest edge lands.
+					{t("settings.chat.streamingMovement.description")}
 				</span>
 			</div>
 			<div className="flex items-center justify-between text-text-muted tr-text-metadata">
-				<span>Top</span>
-				<span>Message box</span>
+				<span>{t("settings.chat.streamingMovement.top")}</span>
+				<span>{t("settings.chat.streamingMovement.messageBox")}</span>
 			</div>
 			<div className="relative h-24">
 				<div className="absolute inset-x-0 top-1/2 flex h-4 -translate-y-1/2 overflow-hidden rounded-full bg-control-bg">
@@ -71,13 +62,15 @@ function StreamingResponseMovementControl({
 				<input
 					type="range"
 					data-testid="streaming-movement-settle"
-					aria-label="Settle position"
+					aria-label={t("settings.chat.streamingMovement.settlePosition")}
 					aria-valuemin={STREAMING_RESPONSE_MOVEMENT_LIMITS.settleMin}
 					aria-valuemax={Math.min(
 						STREAMING_RESPONSE_MOVEMENT_LIMITS.settleMax,
 						value.trigger - STREAMING_RESPONSE_MOVEMENT_LIMITS.minimumGap,
 					)}
-					aria-valuetext={`${value.settle}% from the top`}
+					aria-valuetext={t("settings.chat.streamingMovement.percentFromTop", {
+						value: value.settle,
+					})}
 					min={0}
 					max={100}
 					step={STREAMING_RESPONSE_MOVEMENT_LIMITS.step}
@@ -88,13 +81,15 @@ function StreamingResponseMovementControl({
 				<input
 					type="range"
 					data-testid="streaming-movement-trigger"
-					aria-label="Trigger position"
+					aria-label={t("settings.chat.streamingMovement.triggerPosition")}
 					aria-valuemin={Math.max(
 						STREAMING_RESPONSE_MOVEMENT_LIMITS.triggerMin,
 						value.settle + STREAMING_RESPONSE_MOVEMENT_LIMITS.minimumGap,
 					)}
 					aria-valuemax={STREAMING_RESPONSE_MOVEMENT_LIMITS.triggerMax}
-					aria-valuetext={`${value.trigger}% from the top`}
+					aria-valuetext={t("settings.chat.streamingMovement.percentFromTop", {
+						value: value.trigger,
+					})}
 					min={0}
 					max={100}
 					step={STREAMING_RESPONSE_MOVEMENT_LIMITS.step}
@@ -105,10 +100,12 @@ function StreamingResponseMovementControl({
 			</div>
 			<div className="flex items-center justify-between gap-8 text-text-muted tr-text-metadata">
 				<span>
-					Settle <span className="text-text-default">{value.settle}%</span>
+					{t("settings.chat.streamingMovement.settle")}{" "}
+					<span className="text-text-default">{value.settle}%</span>
 				</span>
 				<span>
-					Trigger <span className="text-text-default">{value.trigger}%</span>
+					{t("settings.chat.streamingMovement.trigger")}{" "}
+					<span className="text-text-default">{value.trigger}%</span>
 				</span>
 			</div>
 		</div>
@@ -122,6 +119,7 @@ function saveSetting(config: AppConfigUpdate, failure: string): void {
 }
 
 export function ChatSettings() {
+	const t = useT();
 	const messageOrder = useAppStore((state) => state.chatMessageOrder);
 	const growthLimit = useAppStore((state) => state.composerGrowthLimit);
 	const streamingResponseMovement = useAppStore((state) => state.streamingResponseMovement);
@@ -131,6 +129,31 @@ export function ChatSettings() {
 	const activeWorkspace = useAppStore(selectActiveWorkspace);
 	const setChatMessageOrder = useAppStore((state) => state.setChatMessageOrder);
 	const setStreamingResponseMovement = useAppStore((state) => state.setStreamingResponseMovement);
+	const messageOrderOptions: SegmentedControlOption<ChatMessageOrder>[] = [
+		{
+			id: "oldest-first",
+			label: t("settings.chat.messageOrder.oldest"),
+			testId: "chat-order-oldest-first",
+		},
+		{
+			id: "newest-first",
+			label: t("settings.chat.messageOrder.newest"),
+			testId: "chat-order-newest-first",
+		},
+	];
+	const growthOptions: SegmentedControlOption<ComposerGrowthLimit>[] = [
+		{
+			id: "compact",
+			label: t("settings.chat.composerSize.compact"),
+			testId: "composer-growth-compact",
+		},
+		{ id: "roomy", label: t("settings.chat.composerSize.roomy"), testId: "composer-growth-roomy" },
+		{
+			id: "half-chat",
+			label: t("settings.chat.composerSize.halfChat"),
+			testId: "composer-growth-half-chat",
+		},
+	];
 
 	const selectMessageOrder = (chatMessageOrder: ChatMessageOrder) => {
 		if (chatMessageOrder === messageOrder) return;
@@ -139,7 +162,7 @@ export function ChatSettings() {
 
 	const selectGrowthLimit = (composerGrowthLimit: ComposerGrowthLimit) => {
 		if (composerGrowthLimit === growthLimit) return;
-		saveSetting({ composerGrowthLimit }, "Couldn't change message box growth");
+		saveSetting({ composerGrowthLimit }, t("settings.chat.error.changeGrowth"));
 	};
 
 	const setWorkspaceSubagents = (override: SubagentOverride | null) => {
@@ -147,7 +170,7 @@ export function ChatSettings() {
 		getTransport()
 			.request("workspace.setSubagentsOverride", { id: activeWorkspace.id, override })
 			.catch((err: unknown) =>
-				toast.error(errorText(err), "Couldn't change subagents for this workspace"),
+				toast.error(errorText(err), t("settings.chat.error.changeWorkspaceSubagents")),
 			);
 	};
 
@@ -156,21 +179,21 @@ export function ChatSettings() {
 		getTransport()
 			.request("workspace.setSubagentMaxConcurrent", { id: activeWorkspace.id, value })
 			.catch((err: unknown) =>
-				toast.error(errorText(err), "Couldn't change the subagent limit for this workspace"),
+				toast.error(errorText(err), t("settings.chat.error.changeWorkspaceSubagentLimit")),
 			);
 	};
 
 	return (
 		<SettingsPageContainer testId="settings-chat">
-			<SettingsGroup title="Appearance and behavior">
+			<SettingsGroup title={t("settings.chat.group")}>
 				<SettingsRow
-					label="Message order"
-					description="Oldest first shows early messages at top."
+					label={t("settings.chat.messageOrder")}
+					description={t("settings.chat.messageOrder.description")}
 					control={
 						<SegmentedControl
 							name="chat-message-order"
-							label="Message order"
-							options={MESSAGE_ORDER_OPTIONS}
+							label={t("settings.chat.messageOrder")}
+							options={messageOrderOptions}
 							value={messageOrder}
 							onSelect={selectMessageOrder}
 							testId="chat-message-order-control"
@@ -178,13 +201,13 @@ export function ChatSettings() {
 					}
 				/>
 				<SettingsRow
-					label="Composer size"
-					description="How tall the message box can grow before scrolling."
+					label={t("settings.chat.composerSize")}
+					description={t("settings.chat.composerSize.description")}
 					control={
 						<SegmentedControl
 							name="composer-growth-limit"
-							label="Composer size"
-							options={GROWTH_OPTIONS}
+							label={t("settings.chat.composerSize")}
+							options={growthOptions}
 							value={growthLimit}
 							onSelect={selectGrowthLimit}
 							testId="composer-growth-control"
@@ -204,11 +227,17 @@ export function ChatSettings() {
 				globalLimit={subagentMaxConcurrent}
 				workspace={activeWorkspace}
 				onGlobalEnabledChange={(enabled) =>
-					saveSetting({ subagentsEnabled: enabled }, "Couldn't change the global subagent default")
+					saveSetting(
+						{ subagentsEnabled: enabled },
+						t("settings.chat.error.changeGlobalSubagentDefault"),
+					)
 				}
 				onWorkspaceEnabledChange={setWorkspaceSubagents}
 				onGlobalLimitChange={(value) =>
-					saveSetting({ subagentMaxConcurrent: value }, "Couldn't change the subagent limit")
+					saveSetting(
+						{ subagentMaxConcurrent: value },
+						t("settings.chat.error.changeSubagentLimit"),
+					)
 				}
 				onWorkspaceLimitChange={setWorkspaceSubagentLimit}
 			/>

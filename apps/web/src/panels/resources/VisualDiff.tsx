@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useT } from "@/i18n";
 import type { AnchorDraft, SurfaceReview } from "@/resources";
 import { ToggleSegment } from "../ToggleSegment";
 import { RegionReviewSurface } from "./RegionReviewSurface";
@@ -15,6 +16,19 @@ const MODES: readonly { mode: VisualDiffMode; label: string }[] = [
 	{ mode: "difference", label: "Difference" },
 ];
 const ALL_MODES = MODES.map(({ mode }) => mode);
+
+function modeLabel(mode: VisualDiffMode, t: ReturnType<typeof useT>): string {
+	switch (mode) {
+		case "swipe":
+			return t("visual.swipe");
+		case "onion":
+			return t("visual.onion");
+		case "difference":
+			return t("visual.difference");
+		default:
+			return "2-up";
+	}
+}
 
 export interface VisualDiffSide {
 	present: boolean;
@@ -100,7 +114,7 @@ export function VisualDiff({
 	initialMode,
 	onViewState,
 	modes = ALL_MODES,
-	emptyLabel = "No image",
+	emptyLabel,
 }: {
 	prefix: "image" | "svg" | "html";
 	noun: string;
@@ -114,6 +128,8 @@ export function VisualDiff({
 	modes?: readonly VisualDiffMode[] | undefined;
 	emptyLabel?: string | undefined;
 }) {
+	const t = useT();
+	const empty = emptyLabel ?? t("visual.noImage");
 	const [mode, setMode] = useState<VisualDiffMode>(initialMode);
 	const [activeSide, setActiveSide] = useState<"base" | "worktree">("worktree");
 	const [divider, setDivider] = useState(50);
@@ -171,7 +187,7 @@ export function VisualDiff({
 							<ToggleSegment
 								key={candidate.mode}
 								testid={`${prefix}-diff-${candidate.mode}`}
-								label={candidate.label}
+								label={modeLabel(candidate.mode, t)}
 								active={mode === candidate.mode}
 								onClick={() => selectMode(candidate.mode)}
 							/>
@@ -181,13 +197,13 @@ export function VisualDiff({
 						<div data-testid={`${prefix}-diff-side`} className="ml-auto flex items-center gap-2">
 							<ToggleSegment
 								testid={`${prefix}-diff-side-base`}
-								label="Comment on old"
+								label={t("visual.commentOld")}
 								active={activeSide === "base"}
 								onClick={() => setActiveSide("base")}
 							/>
 							<ToggleSegment
 								testid={`${prefix}-diff-side-worktree`}
-								label="Comment on new"
+								label={t("visual.commentNew")}
 								active={activeSide === "worktree"}
 								onClick={() => setActiveSide("worktree")}
 							/>
@@ -199,20 +215,20 @@ export function VisualDiff({
 				{mode === "2-up" ? (
 					<div className="grid min-h-full grid-cols-1 gap-12 md:grid-cols-2">
 						<SideSurface
-							label="Old"
+							label={t("visual.old")}
 							selectionKey={`${regionLabel}:base`}
 							side={original}
 							regionLabel={regionLabel}
 							contentStamp={contentStamp}
-							emptyLabel={emptyLabel}
+							emptyLabel={empty}
 						/>
 						<SideSurface
-							label="New"
+							label={t("visual.new")}
 							selectionKey={`${regionLabel}:worktree`}
 							side={modified}
 							regionLabel={regionLabel}
 							contentStamp={contentStamp}
-							emptyLabel={emptyLabel}
+							emptyLabel={empty}
 						/>
 					</div>
 				) : (
@@ -239,7 +255,7 @@ export function VisualDiff({
 							{...(active.draftForRegion ? { draftForRegion: active.draftForRegion } : {})}
 						>
 							<div ref={layeredRef} className="relative h-full w-full">
-								{original.present ? original.content : <EmptyFrame label={emptyLabel} />}
+								{original.present ? original.content : <EmptyFrame label={empty} />}
 								<div
 									className={`absolute inset-0 ${mode === "difference" ? "mix-blend-difference" : ""}`}
 									style={
@@ -250,12 +266,12 @@ export function VisualDiff({
 												: undefined
 									}
 								>
-									{modified.present ? modified.content : <EmptyFrame label={emptyLabel} />}
+									{modified.present ? modified.content : <EmptyFrame label={empty} />}
 								</div>
 								{mode === "swipe" ? (
 									<button
 										type="button"
-										aria-label={`Move ${noun} comparison divider`}
+										aria-label={t("visual.moveDivider", { noun })}
 										className="absolute inset-y-0 z-20 w-4 -translate-x-1/2 cursor-col-resize bg-primary outline-none focus-visible:ring-2 focus-visible:ring-primary"
 										style={{ left: `${divider}%` }}
 										onPointerDown={(event) => {

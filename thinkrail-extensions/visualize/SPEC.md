@@ -58,3 +58,7 @@ pan/zoom controls. The fullscreen canvas owns modifier-wheel zoom and WebKit ges
 local gesture-start baseline so desktop page zoom does not claim the gesture. Renderer failure shows
 the error and a plain source block matching the app CodeBlock's unhighlighted branch; it never imports
 the app's shiki highlighter. `args` and pan/zoom math retain focused unit coverage.
+
+User-facing web copy lives in the web half's own `i18n.ts`, keyed off the document's `<html lang>`
+and observed for locale changes. The web half cannot import the app's `@/i18n`; keeping this small
+catalog local preserves the extension boundary while following the runtime language switch.

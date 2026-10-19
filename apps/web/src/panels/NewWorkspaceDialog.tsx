@@ -57,6 +57,7 @@ import { SkillsDialog } from "@/chat/SkillsDialog";
 import { useModelCatalog } from "@/chat/useModelCatalog";
 import { useModelPreferences } from "@/chat/useModelPreferences";
 import { useProjectTrustSummary } from "@/chat/useProjectTrustSummary";
+import { useT } from "@/i18n";
 import {
 	applyTemplateSlotEdit,
 	beginTemplateSlotSession,
@@ -115,6 +116,7 @@ export function NewWorkspaceDialog({
 	promptNote?: string;
 	onOpenChange: (open: boolean) => void;
 }) {
+	const t = useT();
 	const projects = useAppStore((s) => s.projects);
 	const protocolVersion = useAppStore((s) => s.protocolVersion);
 
@@ -215,7 +217,7 @@ export function NewWorkspaceDialog({
 		if (!open) return;
 		if (projects.some((p) => p.id === selectedProjectId)) return;
 		onOpenChange(false);
-		toast.info("That project was closed");
+		toast.info(t("workspace.create.error.closed"));
 	}, [open, projects, selectedProjectId, onOpenChange]);
 
 	useEffect(() => {
@@ -380,7 +382,7 @@ export function NewWorkspaceDialog({
 					...(baseRef ? { baseRef } : {}),
 				});
 			} catch (err) {
-				toast.error(errorText(err), "Couldn't create workspace");
+				toast.error(errorText(err), t("workspace.create.error.create"));
 				setCreating(false);
 				return;
 			} finally {
@@ -422,7 +424,7 @@ export function NewWorkspaceDialog({
 				})
 				.catch((err) => store.appendErrorTurn(session.sessionId, errorText(err)));
 		} catch (err) {
-			toast.error(errorText(err), "Couldn't start the chat");
+			toast.error(errorText(err), t("workspace.create.error.startChat"));
 		} finally {
 			useAppStore.getState().endChatStart(workspace.id);
 		}
@@ -442,7 +444,7 @@ export function NewWorkspaceDialog({
 			);
 			setSkillCommands(commands);
 		} catch (err) {
-			toast.error(errorText(err), "Couldn't trust project");
+			toast.error(errorText(err), t("workspace.create.error.trust"));
 		} finally {
 			setTrusting(false);
 		}
@@ -476,11 +478,11 @@ export function NewWorkspaceDialog({
 				}}
 			>
 				<DialogHeader>
-					<DialogTitle>{isolated ? "Create workspace" : "Work in project folder"}</DialogTitle>
+					<DialogTitle>
+						{isolated ? t("workspace.create.title") : t("workspace.create.workInFolder")}
+					</DialogTitle>
 					<DialogDescription>
-						{isolated
-							? "A separate checkout on its own new branch. Files, chats, changes, and terminals stay scoped to it."
-							: "Runs directly in your project folder — no isolation. Changes land on the current branch."}
+						{isolated ? t("workspace.create.description") : t("workspace.create.folderDescription")}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -488,10 +490,10 @@ export function NewWorkspaceDialog({
 					data-testid="ws-target"
 					className="flex w-fit items-center gap-2 rounded-md border border-control-border-default bg-control-bg p-2"
 				>
-					<legend className="sr-only">Where the work runs</legend>
+					<legend className="sr-only">{t("workspace.create.whereRuns")}</legend>
 					<TargetOption
 						icon={GitBranch}
-						label="Isolated workspace"
+						label={t("workspace.create.isolated")}
 						name={targetGroupName}
 						active={isolated}
 						testid="ws-target-worktree"
@@ -499,7 +501,7 @@ export function NewWorkspaceDialog({
 					/>
 					<TargetOption
 						icon={House}
-						label="Project folder"
+						label={t("workspace.create.projectFolder")}
 						name={targetGroupName}
 						active={!isolated}
 						testid="ws-target-default"
@@ -510,7 +512,7 @@ export function NewWorkspaceDialog({
 				<div className="flex flex-wrap items-center gap-8">
 					<ProjectPicker
 						projects={projects}
-						current={selectedProject?.name ?? "Project"}
+						current={selectedProject?.name ?? t("workspace.create.project")}
 						container={dialogEl}
 						onSelect={setSelectedProjectId}
 					/>
@@ -518,7 +520,7 @@ export function NewWorkspaceDialog({
 						<BranchPicker
 							branches={branches}
 							selected={baseRef}
-							label="From"
+							label={t("workspace.create.from")}
 							testid="ws-branch-picker"
 							triggerClassName={`${PILL} max-w-[220px]`}
 							refreshing={refreshing}
@@ -543,8 +545,7 @@ export function NewWorkspaceDialog({
 							<TriangleAlert className="mt-2 size-14 shrink-0 text-feedback-warning" aria-hidden />
 							<span className="flex min-w-0 flex-1 flex-col gap-2">
 								<span className="tr-text-ui text-text-default">
-									{untrustedNoticeText(trustNotice)} Your personal and ThinkRail's built-in skills
-									are unaffected.
+									{untrustedNoticeText(trustNotice)} {t("workspace.create.trustSuffix")}
 								</span>
 								{trustEnables ? (
 									<span className="text-text-muted tr-text-metadata">{trustEnables}</span>
@@ -559,7 +560,7 @@ export function NewWorkspaceDialog({
 								disabled={trusting}
 								onClick={() => void trustProject(trustNotice)}
 							>
-								Trust project
+								{t("workspace.create.trustProject")}
 							</Button>
 						</div>
 					</div>
@@ -593,7 +594,7 @@ export function NewWorkspaceDialog({
 								: null;
 							updatePromptDraft(next, nextSlotSession);
 						}}
-						placeholder="What do you want to work on?"
+						placeholder={t("workspace.create.promptPlaceholder")}
 						spellCheck={false}
 						rows={6}
 						className="min-h-[160px]"
@@ -639,12 +640,12 @@ export function NewWorkspaceDialog({
 							data-testid="workspace-naming-hint"
 							className="px-4 text-text-muted tr-text-metadata"
 						>
-							ThinkRail will name the workspace and branch from your request.
+							{t("workspace.create.nameHint")}
 						</p>
 					) : (
 						<p className="mt-4 text-text-muted tr-text-metadata">
-							Type <span className="tr-code-text">/</span> for skills and prompt templates —
-							previewed from the current checkout; the created workspace's session is authoritative.
+							{t("workspace.create.slashHintBefore")} <span className="tr-code-text">/</span>{" "}
+							{t("workspace.create.slashHintAfter")}
 						</p>
 					)}
 				</div>
@@ -682,11 +683,11 @@ export function NewWorkspaceDialog({
 						{creating ? (
 							<>
 								<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-								{isolated ? "Creating…" : "Starting…"}
+								{isolated ? t("workspace.create.creating") : t("workspace.create.starting")}
 							</>
 						) : (
 							<>
-								{isolated ? "Create" : "Start"}
+								{isolated ? t("workspace.create.create") : t("workspace.create.start")}
 								<span className="inline-flex h-16 min-w-16 items-center justify-center rounded-sm bg-on-primary-soft px-4 tr-code-text">
 									↵
 								</span>
@@ -746,6 +747,7 @@ function ProjectPicker({
 	container: HTMLElement | null;
 	onSelect: (projectId: string) => void;
 }) {
+	const t = useT();
 	const [open, setOpen] = useState(false);
 	return (
 		<Popover open={open} onOpenChange={setOpen}>
@@ -762,9 +764,9 @@ function ProjectPicker({
 			</PopoverTrigger>
 			<PopoverContent align="start" container={container} className="w-[280px] p-0">
 				<Command>
-					<CommandInput placeholder="Search projects…" />
+					<CommandInput placeholder={t("workspace.create.searchProjects")} />
 					<CommandList>
-						<CommandEmpty>No projects.</CommandEmpty>
+						<CommandEmpty>{t("workspace.create.noProjects")}</CommandEmpty>
 						<CommandGroup>
 							{projects.map((p) => (
 								<CommandItem

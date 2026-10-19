@@ -54,6 +54,7 @@ import {
 	sameModel,
 } from "@thinkrail/contracts";
 import { create } from "zustand";
+import { t } from "@/i18n";
 import type { LoginState } from "../auth";
 import { assistantFailureText } from "../chat/assistantFailure";
 import type { ChatMessageOrder } from "../chat/chatPreferences";
@@ -361,6 +362,7 @@ export const SettingsSection = {
 	Mcp: "mcp",
 	Github: "github",
 	Appearance: "appearance",
+	Language: "language",
 	LineWidth: "line-width",
 	Chat: "chat",
 	Layout: "layout",
@@ -3312,7 +3314,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 				kind: "chat",
 				id: chatTabId(workspaceId, sessionId),
 				workspaceId,
-				name: "Chat",
+				name: t("chat.defaultName"),
 				sessionId,
 			};
 			const id = existing?.id ?? availableEditorTabId(tabs, preferred);
@@ -3859,7 +3861,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 			let sessions = s.sessions;
 			for (const { event, sessionId } of payloads) {
 				if (event.type === "session_info_changed") {
-					const title = event.name?.trim() || "Chat";
+					const title = event.name?.trim() || t("chat.defaultName");
 					const renamed = renameChat(state, sessionId, title);
 					if (renamed && Object.keys(renamed).length > 0) state = { ...state, ...renamed };
 				}
@@ -4070,7 +4072,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 					kind: "chat",
 					id: target.tabId,
 					workspaceId: target.workspaceId,
-					name: "Chat",
+					name: t("chat.defaultName"),
 					sessionId: target.sessionId,
 				} satisfies ChatTab);
 			const resourcePlacement = selectLayoutResourcePlacement(s, target.workspaceId, resource);

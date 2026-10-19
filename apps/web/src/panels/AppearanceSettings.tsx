@@ -22,6 +22,7 @@ import {
 } from "@thinkrail/ui/dropdown-menu";
 import { cn } from "@thinkrail/ui/utils";
 import { type ReactNode, useState, useSyncExternalStore } from "react";
+import { type MessageKey, type TFunction, useT } from "@/i18n";
 import { toast, useAppStore } from "@/store";
 import {
 	deriveSystemThemePair,
@@ -43,6 +44,24 @@ import { SETTINGS_ROWS_CONTAINER, SettingsRow } from "./SettingsRow";
 type Appearance = ThemeDescriptor["appearance"];
 type Contrast = ThemeDescriptor["contrast"];
 type ThemeModeOption = "system" | Appearance;
+
+const THEME_LABEL_KEYS: Partial<Record<ThemeId, MessageKey>> = {
+	"catppuccin-frappe": "theme.catppuccinFrappe",
+	"catppuccin-latte": "theme.catppuccinLatte",
+	"catppuccin-macchiato": "theme.catppuccinMacchiato",
+	"catppuccin-mocha": "theme.catppuccinMocha",
+	dark: "theme.dark",
+	"high-contrast-dark": "theme.highContrastDark",
+	"high-contrast-light": "theme.highContrastLight",
+	light: "theme.light",
+	"minimal-dark": "theme.minimalDark",
+	"minimal-light": "theme.minimalLight",
+};
+
+function themeLabel(id: ThemeId, fallback: string, t: TFunction): string {
+	const key = THEME_LABEL_KEYS[id];
+	return key ? t(key) : fallback;
+}
 
 function familyKey(id: ThemeId): string {
 	return id.replace(/(^|-)(light|dark)$/, "").replace(/^high-contrast-?/, "");
@@ -92,18 +111,27 @@ function ThemeDropdown({
 	disabled: boolean;
 	onSelect: (id: ThemeId) => void;
 }) {
-	const label = appearance === "light" ? "Light theme" : "Dark theme";
+	const t = useT();
+	const label =
+		appearance === "light"
+			? t("settings.appearance.lightTheme")
+			: t("settings.appearance.darkTheme");
 	return (
 		<DropdownMenu>
 			<DropdownMenuTrigger asChild>
 				<Button
 					variant="outline"
 					disabled={disabled}
-					aria-label={`${label}: ${resolution.theme.label}`}
+					aria-label={t("settings.appearance.themeTrigger", {
+						label,
+						theme: themeLabel(resolution.theme.id, resolution.theme.label, t),
+					})}
 					data-testid={`system-theme-${appearance}-trigger`}
 					className="h-32 justify-between"
 				>
-					<span className="truncate">{resolution.theme.label}</span>
+					<span className="truncate">
+						{themeLabel(resolution.theme.id, resolution.theme.label, t)}
+					</span>
 					<ChevronDown className="size-16" />
 				</Button>
 			</DropdownMenuTrigger>
@@ -120,7 +148,7 @@ function ThemeDropdown({
 							) : (
 								<span className="size-14" />
 							)}
-							<span>{theme.label}</span>
+							<span>{themeLabel(theme.id, theme.label, t)}</span>
 						</DropdownMenuRadioItem>
 					))}
 				</DropdownMenuRadioGroup>
@@ -140,6 +168,7 @@ function ThemeList({
 	disabled: boolean;
 	onSelect: (id: ThemeId) => void;
 }) {
+	const t = useT();
 	return (
 		<div className="flex flex-col gap-4">
 			{themes.map(({ id, label, appearance, contrast }) => {
@@ -164,7 +193,7 @@ function ThemeList({
 								: "border-border-default text-text-muted hover:bg-control-bg-hovered hover:text-text-default",
 						)}
 					>
-						<span className="flex-1">{label}</span>
+						<span className="flex-1">{themeLabel(id, label, t)}</span>
 						{active ? <Check className="size-16 shrink-0 text-primary" /> : null}
 					</button>
 				);
@@ -208,6 +237,7 @@ function Disclosure({
 }
 
 export function AppearanceSettings() {
+	const t = useT();
 	const protocolVersion = useAppStore((state) => state.protocolVersion);
 	const theme = useAppStore((state) => state.theme);
 	const themeMode = useAppStore((state) => state.themeMode);
@@ -247,20 +277,41 @@ export function AppearanceSettings() {
 
 	const modeOptions: SegmentedControlOption<ThemeModeOption>[] = [
 		...(systemSupported
-			? [{ id: "system" as const, label: "System", testId: "theme-mode-system" }]
+			? [
+					{
+						id: "system" as const,
+						label: t("settings.appearance.mode.system"),
+						testId: "theme-mode-system",
+					},
+				]
 			: []),
-		{ id: "light", label: "Light", testId: "theme-mode-light", disabled: !modeTarget("light") },
-		{ id: "dark", label: "Dark", testId: "theme-mode-dark", disabled: !modeTarget("dark") },
+		{
+			id: "light",
+			label: t("settings.appearance.mode.light"),
+			testId: "theme-mode-light",
+			disabled: !modeTarget("light"),
+		},
+		{
+			id: "dark",
+			label: t("settings.appearance.mode.dark"),
+			testId: "theme-mode-dark",
+			disabled: !modeTarget("dark"),
+		},
 	];
 
 	const contrastOptions: SegmentedControlOption<Contrast>[] = [
 		{
 			id: "normal",
-			label: "Default",
+			label: t("settings.appearance.contrast.default"),
 			testId: "contrast-default",
 			disabled: !contrastAvailable("normal"),
 		},
-		{ id: "high", label: "High", testId: "contrast-high", disabled: !contrastAvailable("high") },
+		{
+			id: "high",
+			label: t("settings.appearance.contrast.high"),
+			testId: "contrast-high",
+			disabled: !contrastAvailable("high"),
+		},
 	];
 
 	const update = (config: AppConfigUpdate) => {
@@ -268,7 +319,7 @@ export function AppearanceSettings() {
 		setPending(true);
 		getTransport()
 			.request("settings.update", { config })
-			.catch((err: unknown) => toast.error(errorText(err), "Couldn't change theme"))
+			.catch((err: unknown) => toast.error(errorText(err), t("settings.appearance.error.change")))
 			.finally(() => setPending(false));
 	};
 
@@ -318,13 +369,13 @@ export function AppearanceSettings() {
 
 	return (
 		<SettingsPageContainer testId="settings-appearance">
-			<SettingsGroup title="Theme">
+			<SettingsGroup title={t("settings.appearance.themeGroup")}>
 				<SettingsRow
-					label="Theme mode"
+					label={t("settings.appearance.themeMode")}
 					control={
 						<SegmentedControl
 							name="theme-mode"
-							label="Theme mode"
+							label={t("settings.appearance.themeMode")}
 							options={modeOptions}
 							value={effectiveMode}
 							disabled={pending}
@@ -341,38 +392,51 @@ export function AppearanceSettings() {
 								variant="warning"
 								testId="theme-fallback-warning"
 							>
-								Configured {appearance ? `${appearance} ` : ""}theme unavailable in this app
-								version. Using {resolution.theme.label}.
+								{appearance
+									? t("settings.appearance.fallback.appearance", {
+											appearance:
+												appearance === "light"
+													? t("settings.appearance.mode.light")
+													: t("settings.appearance.mode.dark"),
+											theme: themeLabel(resolution.theme.id, resolution.theme.label, t),
+											resolution: themeLabel(resolution.theme.id, resolution.theme.label, t),
+										})
+									: t("settings.appearance.fallback.fixed", {
+											theme: themeLabel(resolution.theme.id, resolution.theme.label, t),
+											resolution: themeLabel(resolution.theme.id, resolution.theme.label, t),
+										})}
 							</SettingsNotice>
 						))}
 					</div>
 				) : null}
 				{systemMode ? (
 					<SettingsRow
-						label="Current on this device"
+						label={t("settings.appearance.currentDevice")}
 						testId="system-theme-current"
 						control={
 							<span className="flex items-center gap-4 tr-text-ui text-text-default">
 								<Device className="size-14 shrink-0 text-text-muted" />
-								{systemAppearance === "light" ? "Light" : "Dark"}
+								{systemAppearance === "light"
+									? t("settings.appearance.mode.light")
+									: t("settings.appearance.mode.dark")}
 								<ArrowRight className="size-14 shrink-0 text-text-muted" />
 								<Palette className="size-14 shrink-0 text-text-muted" />
-								{currentResolution.theme.label}
+								{themeLabel(currentResolution.theme.id, currentResolution.theme.label, t)}
 							</span>
 						}
 					/>
 				) : null}
 				{systemMode ? (
 					<Disclosure
-						label="Theme pair"
-						summary={`${lightResolution.theme.label} / ${darkResolution.theme.label}`}
+						label={t("settings.appearance.themePair")}
+						summary={`${themeLabel(lightResolution.theme.id, lightResolution.theme.label, t)} / ${themeLabel(darkResolution.theme.id, darkResolution.theme.label, t)}`}
 						expanded={expanded}
 						testId="theme-pair-toggle"
 						onToggle={() => setExpanded((value) => !value)}
 					>
 						<div className={cn(SETTINGS_ROWS_CONTAINER, "pb-12")}>
 							<SettingsRow
-								label="Light theme"
+								label={t("settings.appearance.lightTheme")}
 								control={
 									<ThemeDropdown
 										appearance="light"
@@ -384,7 +448,7 @@ export function AppearanceSettings() {
 								}
 							/>
 							<SettingsRow
-								label="Dark theme"
+								label={t("settings.appearance.darkTheme")}
 								control={
 									<ThemeDropdown
 										appearance="dark"
@@ -399,8 +463,8 @@ export function AppearanceSettings() {
 					</Disclosure>
 				) : (
 					<Disclosure
-						label="Theme"
-						summary={activeTheme.label}
+						label={t("settings.appearance.themeGroup")}
+						summary={themeLabel(activeTheme.id, activeTheme.label, t)}
 						expanded={expanded}
 						testId="theme-toggle"
 						onToggle={() => setExpanded((value) => !value)}
@@ -416,11 +480,11 @@ export function AppearanceSettings() {
 					</Disclosure>
 				)}
 				<SettingsRow
-					label="Contrast level"
+					label={t("settings.appearance.contrastGroup")}
 					control={
 						<SegmentedControl
 							name="contrast-level"
-							label="Contrast level"
+							label={t("settings.appearance.contrastGroup")}
 							options={contrastOptions}
 							value={currentContrast}
 							disabled={pending}
@@ -430,7 +494,7 @@ export function AppearanceSettings() {
 					}
 				/>
 			</SettingsGroup>
-			<SettingsGroup title="Editor">
+			<SettingsGroup title={t("settings.appearance.editorGroup")}>
 				<LineWidthControl kind="file" />
 			</SettingsGroup>
 		</SettingsPageContainer>

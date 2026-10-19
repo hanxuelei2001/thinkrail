@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { TableVirtuoso, type TableVirtuosoHandle } from "react-virtuoso";
+import { useT } from "@/i18n";
 import type { ResourceViewProps, ReviewThread } from "@/resources";
 import { ReviewComposer } from "../../ReviewComposer";
 import { ReviewThreadCard } from "../../ReviewThreadCard";
@@ -33,6 +34,7 @@ export default function CsvView({
 	review,
 	onPlacedThreadIds,
 }: ResourceViewProps) {
+	const t = useT();
 	const text = content.kind === "text" ? content.text : "";
 	const table = useMemo(
 		() => parseCsv(text, sniffDelimiter(resource.path, text)),
@@ -181,7 +183,7 @@ export default function CsvView({
 					/>
 				</div>
 			) : (
-				<p className="p-12 tr-text-ui text-text-muted">Empty table</p>
+				<p className="p-12 tr-text-ui text-text-muted">{t("csv.empty")}</p>
 			)}
 			<StaleComposerNotice visible={composer.stale} />
 			{composer.composing && draft && review ? (

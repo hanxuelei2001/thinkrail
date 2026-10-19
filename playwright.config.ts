@@ -66,6 +66,9 @@ export default defineConfig({
 	use: {
 		baseURL: `http://localhost:${PORT}`,
 		trace: "on-first-retry",
+		// The app follows the browser's display language. Existing specs assert English copy, so the
+		// default suite pins the browser locale; a localization spec switches the app locale explicitly.
+		locale: "en-US",
 	},
 	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 	// Self-contained: build the web app, boot the host on an isolated port + state dir, and tear it all

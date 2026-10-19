@@ -15,8 +15,9 @@ import { Button } from "@thinkrail/ui/button";
 import { cn } from "@thinkrail/ui/utils";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoginDialog } from "@/auth";
-import { AUTH_KIND_LABEL } from "@/chat/modelPicker";
+import { authKindLabel } from "@/chat/modelPicker";
 import { SkeletonRows } from "@/components/Skeleton";
+import { useT } from "@/i18n";
 import { selectLoginBusy, toast, useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
 import { JetBrainsAiCard } from "./JetBrainsAiCard";
@@ -26,6 +27,7 @@ const API_KEY_VISIBLE = 8;
 const MAX_REST_NAMES = 5;
 
 export function ProvidersSettings() {
+	const t = useT();
 	const [report, setReport] = useState<ProviderStatusReport | null>(null);
 	const [failed, setFailed] = useState(false);
 	const [refreshing, setRefreshing] = useState(false);
@@ -71,19 +73,25 @@ export function ProvidersSettings() {
 		if (activeLogin?.status === "success") void load();
 	}, [activeLogin?.status, load]);
 
-	const startLogin = useCallback(async (providerId: string, type: "oauth" | "api_key") => {
-		if (!useAppStore.getState().reserveLogin()) return;
-		setBusyProvider(providerId);
-		try {
-			const { loginId } = await getTransport().request("provider.loginStart", { providerId, type });
-			useAppStore.getState().beginLogin(loginId, providerId);
-		} catch (err) {
-			toast.error(errorText(err), "Couldn't start the connection");
-		} finally {
-			useAppStore.getState().finishLoginStart();
-			setBusyProvider(null);
-		}
-	}, []);
+	const startLogin = useCallback(
+		async (providerId: string, type: "oauth" | "api_key") => {
+			if (!useAppStore.getState().reserveLogin()) return;
+			setBusyProvider(providerId);
+			try {
+				const { loginId } = await getTransport().request("provider.loginStart", {
+					providerId,
+					type,
+				});
+				useAppStore.getState().beginLogin(loginId, providerId);
+			} catch (err) {
+				toast.error(errorText(err), t("settings.providers.error.start"));
+			} finally {
+				useAppStore.getState().finishLoginStart();
+				setBusyProvider(null);
+			}
+		},
+		[t],
+	);
 
 	const logout = useCallback(
 		async (providerId: string) => {
@@ -91,24 +99,27 @@ export function ProvidersSettings() {
 			try {
 				await getTransport().request("provider.logout", { providerId });
 			} catch (err) {
-				toast.error(errorText(err), "Couldn't sign out");
+				toast.error(errorText(err), t("settings.providers.error.signOut"));
 				return;
 			} finally {
 				setBusyProvider(null);
 			}
 			await load();
 		},
-		[load],
+		[load, t],
 	);
 
-	const saveQuotaSetting = useCallback(async (config: AppConfigUpdate) => {
-		try {
-			await getTransport().request("settings.update", { config });
-		} catch (error) {
-			toast.error(errorText(error), "Couldn't save JetBrains quota settings");
-			throw error;
-		}
-	}, []);
+	const saveQuotaSetting = useCallback(
+		async (config: AppConfigUpdate) => {
+			try {
+				await getTransport().request("settings.update", { config });
+			} catch (error) {
+				toast.error(errorText(error), t("settings.providers.error.saveQuota"));
+				throw error;
+			}
+		},
+		[t],
+	);
 
 	const quotaSettings =
 		protocolVersion !== null && protocolVersion >= JBCENTRAL_QUOTA_PROTOCOL_VERSION
@@ -136,19 +147,17 @@ export function ProvidersSettings() {
 	return (
 		<div data-testid="settings-providers" className="flex flex-col gap-24">
 			<div className="flex items-center justify-between gap-12">
-				<p className="tr-text-metadata text-text-muted">
-					Connect at least one provider so the agent can run — a subscription or an API key.
-				</p>
+				<p className="tr-text-metadata text-text-muted">{t("settings.providers.intro")}</p>
 				<Button
 					variant="ghost"
 					size="sm"
 					data-testid="providers-refresh"
-					aria-label="Refresh provider status"
+					aria-label={t("settings.providers.refreshAria")}
 					disabled={refreshing}
 					onClick={() => void load()}
 				>
 					<RefreshCw className={cn("size-14", refreshing && "animate-spin")} />
-					Refresh
+					{t("settings.providers.refresh")}
 				</Button>
 			</div>
 
@@ -156,12 +165,12 @@ export function ProvidersSettings() {
 				<SkeletonRows rows={3} />
 			) : failed ? (
 				<p data-testid="providers-error" className="text-text-muted tr-text-ui">
-					Couldn't read the provider status from the host — try Refresh.
+					{t("settings.providers.failed")}
 				</p>
 			) : (
 				<SettingsPageContainer>
 					{configured.length > 0 ? (
-						<SettingsGroup title="Connected">
+						<SettingsGroup title={t("settings.providers.connectedGroup")}>
 							{configured.map((p) => (
 								<ConnectedRow
 									key={p.id}
@@ -184,8 +193,8 @@ export function ProvidersSettings() {
 
 					{subscriptionRows.length > 0 ? (
 						<SettingsGroup
-							title="Subscriptions"
-							description="Use your existing Claude, ChatGPT, or Copilot plan — no API key needed."
+							title={t("settings.providers.subscriptionsGroup")}
+							description={t("settings.providers.subscriptionsDescription")}
 						>
 							{subscriptionRows.map((p) => (
 								<ProviderRow
@@ -200,7 +209,7 @@ export function ProvidersSettings() {
 					) : null}
 
 					{apiKeyRows.length > 0 ? (
-						<SettingsGroup title={`Available (${apiKeyRows.length})`}>
+						<SettingsGroup title={t("settings.providers.available", { count: apiKeyRows.length })}>
 							{shownKeys.map((p) => (
 								<ProviderRow
 									key={p.id}
@@ -218,7 +227,7 @@ export function ProvidersSettings() {
 										data-testid="providers-show-more"
 										onClick={() => setShowAllKeys(true)}
 									>
-										Show {hiddenKeyCount} more
+										{t("settings.providers.showMore", { count: hiddenKeyCount })}
 									</Button>
 								</div>
 							) : null}
@@ -227,8 +236,7 @@ export function ProvidersSettings() {
 
 					{noInApp.length > 0 ? (
 						<p data-testid="providers-more" className="text-text-muted tr-text-metadata">
-							{noInApp.length} more configured outside the app (environment variables or
-							models.json):{" "}
+							{t("settings.providers.moreOutside", { count: noInApp.length })}{" "}
 							{noInApp
 								.slice(0, MAX_REST_NAMES)
 								.map((p) => p.name)
@@ -247,7 +255,7 @@ export function ProvidersSettings() {
 					onReply={(value) => {
 						getTransport()
 							.request("provider.loginReply", { loginId: activeLogin.loginId, value })
-							.catch((err) => toast.error(errorText(err), "Couldn't submit"));
+							.catch((err) => toast.error(errorText(err), t("settings.providers.error.submit")));
 						useAppStore.getState().clearLoginInput();
 					}}
 					onCancel={() => {
@@ -275,11 +283,12 @@ function ConnectedRow({
 	busy: boolean;
 	onSignOut: () => void;
 }) {
-	const label = provider.kind ? AUTH_KIND_LABEL[provider.kind] : "configured";
+	const t = useT();
+	const label = provider.kind ? authKindLabel(provider.kind) : t("settings.providers.configured");
 	const managedTitle =
 		provider.kind === "central"
-			? "Connected through JetBrains AI"
-			: "Configured outside the app (environment / models.json)";
+			? t("settings.providers.managedCentral")
+			: t("settings.providers.managedOutside");
 
 	return (
 		<div
@@ -304,7 +313,7 @@ function ConnectedRow({
 					onClick={onSignOut}
 				>
 					<LogOut className="size-14" />
-					Sign out
+					{t("settings.providers.signOut")}
 				</Button>
 			) : (
 				<span
@@ -312,7 +321,7 @@ function ConnectedRow({
 					title={managedTitle}
 				>
 					<Lock className="size-12" />
-					Managed
+					{t("settings.providers.managed")}
 				</span>
 			)}
 		</div>
@@ -330,6 +339,7 @@ function ProviderRow({
 	onSignIn: () => void;
 	onApiKey: () => void;
 }) {
+	const t = useT();
 	return (
 		<div
 			data-testid="provider-signin-row"
@@ -349,7 +359,7 @@ function ProviderRow({
 						onClick={onSignIn}
 					>
 						<LogIn className="size-14" />
-						Sign in
+						{t("settings.providers.signIn")}
 					</Button>
 				)}
 				{provider.canApiKey && (
@@ -362,7 +372,7 @@ function ProviderRow({
 						onClick={onApiKey}
 					>
 						<KeyRound className="size-14" />
-						API key
+						{t("settings.providers.apiKey")}
 					</Button>
 				)}
 			</div>

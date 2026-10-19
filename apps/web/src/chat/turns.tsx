@@ -30,6 +30,7 @@ import {
 	useState,
 } from "react";
 import { CustomIcon } from "@/components/CustomIcon";
+import { useT } from "@/i18n";
 import { parseSkillInvocation, projectRelativePath, type SkillInvocation, userText } from "@/lib";
 import { ActivityGroup } from "./ActivityGroup";
 import { AssistantMarkdown } from "./assistantLinks";
@@ -398,6 +399,7 @@ function SkillInvocationCard({
 	foldId: string;
 	invocation: SkillInvocation;
 }) {
+	const t = useT();
 	const [expanded, toggle, toggleRef] = useFold(foldId);
 	return (
 		<div
@@ -411,12 +413,16 @@ function SkillInvocationCard({
 				type="button"
 				data-testid="skill-invocation-toggle"
 				aria-expanded={expanded}
-				aria-label={`${expanded ? "Hide" : "Show"} instructions for ${invocation.name}`}
+				aria-label={
+					expanded
+						? t("chat.hideInstructions", { name: invocation.name })
+						: t("chat.showInstructions", { name: invocation.name })
+				}
 				onClick={toggle}
 				className="flex w-full items-center gap-4 px-12 py-8 text-left outline-none transition-colors hover:bg-control-bg-hovered focus-visible:ring-2 focus-visible:ring-primary"
 			>
 				<BookOpen className="size-14 shrink-0 text-text-muted" aria-hidden="true" />
-				<span className="shrink-0 tr-text-ui text-text-muted">Skill</span>
+				<span className="shrink-0 tr-text-ui text-text-muted">{t("chat.skill")}</span>
 				<span className="shrink-0 text-text-subtle" aria-hidden="true">
 					·
 				</span>

@@ -3,6 +3,7 @@ import { Button } from "@thinkrail/ui/button";
 import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { cn } from "@thinkrail/ui/utils";
 import type { ComponentProps } from "react";
+import { useT } from "@/i18n";
 
 export function ResourcesButton({
 	activeCount,
@@ -15,12 +16,16 @@ export function ResourcesButton({
 	open: boolean;
 	working?: boolean;
 }) {
+	const t = useT();
 	const Icon = open ? RiStackFill : RiStackLine;
 	const live = working ?? (activeCount !== null && activeCount > 0);
-	const countLabel = activeCount === null ? "active count unavailable" : `${activeCount} active`;
+	const countLabel =
+		activeCount === null
+			? t("resources.countUnavailable")
+			: t("resources.countLabel", { count: activeCount });
 	return (
 		<IconTooltip
-			label={activeCount === null ? "Resources — active count unavailable" : "Resources"}
+			label={activeCount === null ? t("chat.resourcesUnavailable") : t("chat.resourcesButton")}
 			wrapTrigger
 		>
 			<Button
@@ -33,12 +38,12 @@ export function ResourcesButton({
 				data-testid="resources-trigger"
 				data-active-count={activeCount ?? "unknown"}
 				data-live={live || undefined}
-				aria-label={`Resources, ${countLabel}`}
+				aria-label={t("resources.buttonLabel", { label: countLabel })}
 				aria-expanded={open}
 				{...props}
 			>
 				<Icon className={cn("size-14", live && "motion-safe:animate-working")} />
-				<span className="hidden @[480px]:inline">Resources</span>
+				<span className="hidden @[480px]:inline">{t("chat.resourcesButton")}</span>
 				<span className="tabular-nums">{activeCount ?? "—"}</span>
 			</Button>
 		</IconTooltip>
@@ -46,7 +51,8 @@ export function ResourcesButton({
 }
 
 export function ResourcesAttention({ count, onOpen }: { count: number; onOpen: () => void }) {
-	const label = `${count} MCP server${count === 1 ? " needs" : "s need"} attention — open MCP settings`;
+	const t = useT();
+	const label = t("resources.attentionCount", { count });
 	return (
 		<IconTooltip label={label}>
 			<Button

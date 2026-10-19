@@ -11,11 +11,13 @@ import {
 } from "@thinkrail/ui/dialog";
 import { cn } from "@thinkrail/ui/utils";
 import { type MouseEvent, useRef, useState } from "react";
+import { useT } from "@/i18n";
 import { toast, useAppStore } from "@/store";
 import { errorText, getTransport } from "@/transport";
-import { INTERVIEW_BOOKING_URL, INTERVIEW_INVITATION_COPY } from "./interview";
+import { INTERVIEW_BOOKING_URL, interviewInvitationCopy } from "./interview";
 
 export function InterviewPromptDialog() {
+	const t = useT();
 	const open = useAppStore((state) => state.interviewPromptOpen);
 	const [pendingAction, setPendingAction] = useState<InterviewResponse | null>(null);
 	const pendingRef = useRef(false);
@@ -28,7 +30,7 @@ export function InterviewPromptDialog() {
 		void getTransport()
 			.request("feedback.respond", { action })
 			.then(() => useAppStore.getState().hideInterviewPrompt())
-			.catch((error) => toast.error(errorText(error), "Couldn't save your response"))
+			.catch((error) => toast.error(errorText(error), t("interview.error")))
 			.finally(() => {
 				pendingRef.current = false;
 				setPendingAction(null);
@@ -59,8 +61,8 @@ export function InterviewPromptDialog() {
 				}}
 			>
 				<DialogHeader>
-					<DialogTitle>Help shape ThinkRail</DialogTitle>
-					<DialogDescription>{INTERVIEW_INVITATION_COPY}</DialogDescription>
+					<DialogTitle>{t("interview.title")}</DialogTitle>
+					<DialogDescription>{interviewInvitationCopy()}</DialogDescription>
 				</DialogHeader>
 				<DialogFooter className="flex-col gap-8 sm:flex-row sm:justify-between">
 					<Button
@@ -69,7 +71,7 @@ export function InterviewPromptDialog() {
 						data-testid="interview-never"
 						onClick={() => respond("never")}
 					>
-						Never show again
+						{t("interview.never")}
 					</Button>
 					<div className="flex flex-col gap-8 sm:flex-row">
 						<Button
@@ -79,7 +81,7 @@ export function InterviewPromptDialog() {
 							data-testid="interview-postpone"
 							onClick={() => respond("postpone")}
 						>
-							Not now
+							{t("interview.notNow")}
 						</Button>
 						<a
 							href={INTERVIEW_BOOKING_URL}
@@ -95,7 +97,7 @@ export function InterviewPromptDialog() {
 							onAuxClick={book}
 						>
 							<ExternalLink className="size-14" />
-							Schedule an interview
+							{t("interview.book")}
 						</a>
 					</div>
 				</DialogFooter>

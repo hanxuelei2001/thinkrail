@@ -24,6 +24,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useT } from "@/i18n";
 import { AttentionLine } from "../AttentionLine";
 import { readAskResult, useAskFocusScope, useAskState } from "../askState";
 import { useChatActions } from "../ChatActions";
@@ -343,6 +344,7 @@ export function AskUserQuestionCard({
 	status,
 	streaming,
 }: ToolRenderProps) {
+	const t = useT();
 	const actions = useChatActions();
 	const ask = useAskState(toolCallId);
 	const providedFocusScope = useAskFocusScope();
@@ -496,7 +498,7 @@ export function AskUserQuestionCard({
 	if (submitted) {
 		return (
 			<WaitingCard>
-				<span data-testid="ask-sent">Answer sent — continuing…</span>
+				<span data-testid="ask-sent">{t("chat.ask.answerSent")}</span>
 			</WaitingCard>
 		);
 	}
@@ -507,7 +509,7 @@ export function AskUserQuestionCard({
 	const idx = Math.min(tab, questions.length - 1);
 	const q = questions[idx];
 	const state = stateFor(idx);
-	if (!q) return <WaitingCard>Preparing questions…</WaitingCard>;
+	if (!q) return <WaitingCard>{t("chat.ask.preparing")}</WaitingCard>;
 
 	const showContinue = multipleQuestions && !onReview;
 	const canSubmit =
@@ -569,7 +571,7 @@ export function AskUserQuestionCard({
 				ref={cardRef}
 				data-testid="ask-user-question"
 				data-tone="active"
-				aria-label="Question from agent"
+				aria-label={t("chat.ask.questionFromAgent")}
 				aria-keyshortcuts="Shift+Escape"
 				onKeyDown={onCardKeyDown}
 				className="overflow-hidden rounded-lg border border-primary bg-clip-padding bg-container-elevated-bg ring-2 ring-primary-soft"
@@ -577,7 +579,7 @@ export function AskUserQuestionCard({
 				{multipleQuestions ? (
 					<div
 						role="tablist"
-						aria-label="Questions"
+						aria-label={t("chat.ask.questions")}
 						className="flex items-center gap-4 overflow-x-auto border-border-default border-b px-12 py-8"
 					>
 						{questions.map((question, i) => (
@@ -594,7 +596,7 @@ export function AskUserQuestionCard({
 						<TabChip
 							id={tabDomId(toolCallId, "review")}
 							controls={panelDomId(toolCallId)}
-							label="Review & submit"
+							label={t("chat.ask.reviewSubmit")}
 							active={onReview}
 							answered={false}
 							onClick={() => setTab(reviewTab)}
@@ -661,7 +663,7 @@ export function AskUserQuestionCard({
 								</span>
 							) : null}
 							<span role="status" aria-live="polite" className="sr-only">
-								{nudgeVisible && nudgeSpoken ? "Choose an option first." : ""}
+								{nudgeVisible && nudgeSpoken ? t("chat.ask.chooseOption") : ""}
 							</span>
 							<button
 								type="button"
@@ -701,6 +703,7 @@ export function AskUserQuestionCard({
 }
 
 function SupersededRecord({ questions }: { questions: AskUserQuestionItem[] }) {
+	const t = useT();
 	return (
 		<div
 			data-testid="ask-user-question"
@@ -709,7 +712,7 @@ function SupersededRecord({ questions }: { questions: AskUserQuestionItem[] }) {
 		>
 			<div className="flex items-center gap-4">
 				<SkipForward className="size-14 shrink-0" />
-				Superseded — you replied in chat instead of answering these.
+				{t("chat.ask.superseded")}
 			</div>
 			{questions.map((q) => (
 				<div key={q.question} className="pl-[calc(0.875rem+var(--space-8))] text-text-muted">
@@ -735,9 +738,10 @@ function WaitingCard({ children }: { children: React.ReactNode }) {
 }
 
 function ComposingCard({ count }: { count: number }) {
+	const t = useT();
 	return (
 		<div className="flex flex-col gap-4">
-			<div className="text-text-muted tr-text-metadata">Agent is preparing questions…</div>
+			<div className="text-text-muted tr-text-metadata">{t("chat.ask.agentPreparing")}</div>
 			<div
 				data-testid="ask-user-question"
 				data-tone="pending"
@@ -745,7 +749,8 @@ function ComposingCard({ count }: { count: number }) {
 			>
 				<div className="flex items-center gap-4 text-text-muted tr-text-metadata">
 					<MessageCircleQuestion className="size-14 shrink-0" />
-					Preparing questions…{count > 0 ? ` (${count} ready)` : ""}
+					{t("chat.ask.preparing")}
+					{count > 0 ? ` (${t("chat.ask.readyCount", { count })})` : ""}
 				</div>
 				<div className="flex animate-pulse flex-col gap-4" aria-hidden="true">
 					<div className="h-32 rounded-sm bg-control-bg-selected" />
@@ -873,6 +878,7 @@ function QuestionBody({
 	onCloseNote: () => void;
 	onNote: (label: string, text: string) => void;
 }) {
+	const t = useT();
 	const choiceRefs = useRef<Array<HTMLElement | null>>([]);
 	const noteRef = useRef<HTMLTextAreaElement>(null);
 	const focusNoteAfterRender = useRef(false);
@@ -984,11 +990,11 @@ function QuestionBody({
 												<textarea
 													ref={noteRef}
 													data-testid="ask-note"
-													aria-label={`Note for ${optionText}`}
+													aria-label={t("chat.ask.noteFor", { option: optionText })}
 													aria-keyshortcuts="Enter Shift+Enter Escape"
 													rows={2}
 													value={state.notes[option.label] ?? ""}
-													placeholder="Add a note for the model…"
+													placeholder={t("chat.ask.notePlaceholder")}
 													onChange={(event) => onNote(option.label, event.target.value)}
 													onKeyDown={(event) => {
 														const action = noteKeyAction(
@@ -1008,12 +1014,16 @@ function QuestionBody({
 												<button
 													type="button"
 													data-testid="ask-note-toggle"
-													aria-label={`${noteText ? "Edit" : "Add"} note for ${optionText}`}
+													aria-label={
+														noteText
+															? t("chat.ask.editNoteFor", { option: optionText })
+															: t("chat.ask.addNoteFor", { option: optionText })
+													}
 													onClick={() => openNote(option.label, index)}
 													className="flex items-center gap-4 rounded-sm text-text-muted tr-text-metadata outline-none hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
 												>
 													<Pencil className="size-12" />
-													{noteText ? "Edit note" : "Add note"}
+													{noteText ? t("chat.ask.editNote") : t("chat.ask.addNote")}
 												</button>
 											)}
 										</div>
@@ -1084,6 +1094,7 @@ function OptionRow({
 	onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
 	onClick: () => void;
 }) {
+	const t = useT();
 	const { text, recommended, reason } = readRecommendation({ label, recommendedReason });
 	return (
 		<button
@@ -1124,7 +1135,7 @@ function OptionRow({
 						data-testid="ask-recommended-reason"
 						className="mt-2 text-text-muted tr-text-metadata"
 					>
-						<span className="tr-text-emphasis text-primary">Why:</span> {reason}
+						<span className="tr-text-emphasis text-primary">{t("chat.ask.why")}</span> {reason}
 					</span>
 				) : null}
 			</span>
@@ -1153,6 +1164,7 @@ function OtherOptionRow({
 	onMove: (key: "ArrowUp" | "ArrowDown") => void;
 	onConfirm: () => void;
 }) {
+	const t = useT();
 	const inputId = useId();
 	return (
 		<label
@@ -1170,7 +1182,7 @@ function OtherOptionRow({
 				<button
 					type="button"
 					data-testid="ask-custom-toggle"
-					aria-label={active ? "Exclude your own answer" : "Include your own answer"}
+					aria-label={active ? t("chat.ask.excludeOwn") : t("chat.ask.includeOwn")}
 					onClick={(e) => {
 						e.preventDefault();
 						onToggle();
@@ -1182,16 +1194,16 @@ function OtherOptionRow({
 			) : (
 				<Indicator selected={active} multi={false} className="mt-0" />
 			)}
-			<span className="tr-text-ui text-text-default">Other</span>
+			<span className="tr-text-ui text-text-default">{t("chat.ask.other")}</span>
 			<input
 				ref={inputRef}
 				id={inputId}
 				data-testid="ask-custom"
 				data-ask-page-focus={pageFocus || undefined}
-				aria-label="Other answer"
+				aria-label={t("chat.ask.otherAnswer")}
 				aria-keyshortcuts="ArrowUp ArrowDown Enter Shift+Escape"
 				value={text}
-				placeholder="type your own answer…"
+				placeholder={t("chat.ask.otherPlaceholder")}
 				onChange={(event) => onText(event.target.value)}
 				onKeyDown={(event) => {
 					if (
@@ -1220,7 +1232,8 @@ const RECOMMENDED_PILL =
 	"inline-flex items-center rounded-full bg-primary-subtle px-4 py-0 tr-text-label-pill text-primary";
 
 function RecommendedBadge() {
-	return <span className={RECOMMENDED_PILL}>Recommended</span>;
+	const t = useT();
+	return <span className={RECOMMENDED_PILL}>{t("chat.ask.recommended")}</span>;
 }
 
 function Indicator({
@@ -1267,6 +1280,7 @@ function ReviewView({
 	answers: AskUserQuestionAnswer[];
 	onJump: (index: number) => void;
 }) {
+	const t = useT();
 	const byIndex = new Map(answers.map((a) => [a.questionIndex, a]));
 	const unanswered = questions.map((q, i) => ({ q, i })).filter(({ i }) => !byIndex.has(i));
 	return (
@@ -1280,7 +1294,7 @@ function ReviewView({
 					data-ask-page-focus="true"
 					className="rounded-sm tr-title-dialog text-text-default outline-none focus-visible:ring-2 focus-visible:ring-primary"
 				>
-					Review your answers
+					{t("chat.ask.reviewTitle")}
 				</p>
 			</div>
 			<ul className="flex flex-col gap-12">
@@ -1298,7 +1312,9 @@ function ReviewView({
 					onClick={() => onJump(unanswered[0]?.i ?? 0)}
 					className="self-start rounded-sm text-feedback-warning tr-text-metadata outline-none hover:underline focus-visible:ring-2 focus-visible:ring-primary"
 				>
-					⚠ Unanswered: {unanswered.map(({ q, i }) => q.header || `Q${i + 1}`).join(", ")}
+					{t("chat.ask.unanswered", {
+						list: unanswered.map(({ q, i }) => q.header || `Q${i + 1}`).join(", "),
+					})}
 				</button>
 			) : null}
 		</div>
@@ -1314,6 +1330,7 @@ function ResolvedRecord({
 	result: AskUserQuestionResult | null;
 	rawText: string;
 }) {
+	const t = useT();
 	if (!result) {
 		return (
 			<div
@@ -1321,7 +1338,7 @@ function ResolvedRecord({
 				data-tone="error"
 				className="text-feedback-error tr-text-metadata"
 			>
-				{rawText || "Question closed."}
+				{rawText || t("chat.ask.closed")}
 			</div>
 		);
 	}
@@ -1336,7 +1353,7 @@ function ResolvedRecord({
 				<QuestionRecap key={q.question} question={q} answer={byIndex.get(i)} variant="resolved" />
 			))}
 			{questions.length === 0 ? (
-				<div className="text-text-muted tr-text-metadata">{rawText || "Answered."}</div>
+				<div className="text-text-muted tr-text-metadata">{rawText || t("chat.ask.answered")}</div>
 			) : null}
 		</div>
 	);
@@ -1351,6 +1368,7 @@ function QuestionRecap({
 	answer: AskUserQuestionAnswer | undefined;
 	variant: "review" | "resolved";
 }) {
+	const t = useT();
 	const reviewing = variant === "review";
 	const { selectedLabels, customAnswer, showOptions } = deriveRecapState(answer, variant);
 	const selected = new Set(selectedLabels);
@@ -1390,7 +1408,7 @@ function QuestionRecap({
 										/>
 									)}
 									<span data-testid="ask-selection-status" className="sr-only">
-										{isSel ? "Selected: " : "Not selected: "}
+										{isSel ? t("chat.ask.selectedStatus") : t("chat.ask.notSelectedStatus")}
 									</span>
 									<span>{splitRecommended(opt.label).text}</span>
 								</li>
@@ -1403,7 +1421,7 @@ function QuestionRecap({
 							>
 								<Check aria-hidden="true" className="size-14 shrink-0 text-feedback-success" />
 								<span data-testid="ask-selection-status" className="sr-only">
-									Selected custom answer:{" "}
+									{t("chat.ask.selectedCustom")}{" "}
 								</span>
 								<span>“{customAnswer}”</span>
 							</li>
@@ -1426,7 +1444,7 @@ function QuestionRecap({
 				<div className="flex items-center gap-4 border-border-default border-l-2 pl-8">
 					<Check aria-hidden="true" className="size-14 shrink-0 text-feedback-success" />
 					<span data-testid="ask-selection-status" className="sr-only">
-						Selected custom answer:{" "}
+						{t("chat.ask.selectedCustom")}{" "}
 					</span>
 					<span className="tr-text-ui text-text-default">“{answer.answer}”</span>
 				</div>

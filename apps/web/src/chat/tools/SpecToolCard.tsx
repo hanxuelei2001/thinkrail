@@ -1,5 +1,6 @@
 import { resultText, strArg, type ToolRenderProps } from "@thinkrail/extension-api/web";
 import type { ReactNode } from "react";
+import { useT } from "@/i18n";
 import { Collapsible, countLines } from "./Collapsible";
 import { ToolFileLink } from "./ToolFileLink";
 
@@ -175,12 +176,15 @@ export function SpecToolCard({
 	workspaceRoot,
 	onOpenFile,
 }: ToolRenderProps) {
+	const t = useT();
 	const output = resultText(result);
 	if (status === "running") {
-		return <span className="text-text-muted tr-text-metadata">Inspecting specs…</span>;
+		return <span className="text-text-muted tr-text-metadata">{t("chat.spec.inspecting")}</span>;
 	}
 	if (!output) {
-		return <span className="text-text-muted tr-text-metadata italic">(no result)</span>;
+		return (
+			<span className="text-text-muted tr-text-metadata italic">{t("chat.spec.noResult")}</span>
+		);
 	}
 	const content = (
 		<pre

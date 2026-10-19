@@ -15,6 +15,7 @@ import {
 	DropdownMenuTrigger,
 } from "@thinkrail/ui/dropdown-menu";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { useT } from "@/i18n";
 import { copyText, isPhoneViewport } from "@/lib";
 import type { HunkTriage } from "@/resources";
 import { statusLetter } from "../chat/planView";
@@ -83,6 +84,7 @@ export const ChangesFileSection = memo(function ChangesFileSection({
 	onToggleCollapsed: (change: GitFileChange) => void;
 	onSetViewed: (path: string, viewed: boolean) => void;
 }) {
+	const t = useT();
 	const path = change.path;
 	const onToggleViewed = () => onSetViewed(path, !viewed);
 	const toggleCollapsed = () => onToggleCollapsed(change);
@@ -224,7 +226,11 @@ export const ChangesFileSection = memo(function ChangesFileSection({
 					<button
 						type="button"
 						data-testid="changes-section-toggle"
-						aria-label={collapsed ? `Expand ${base}` : `Collapse ${base}`}
+						aria-label={
+							collapsed
+								? t("changes.file.expand", { name: base })
+								: t("changes.file.collapse", { name: base })
+						}
 						aria-expanded={!collapsed}
 						onClick={toggleCollapsed}
 						className="flex size-20 shrink-0 items-center justify-center rounded-sm text-text-muted outline-none hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary"
@@ -273,7 +279,7 @@ export const ChangesFileSection = memo(function ChangesFileSection({
 					{hunkActions ? (
 						<HeaderIconButton
 							testid="changes-section-revert"
-							label="Revert file"
+							label={t("changes.file.revert")}
 							onClick={() => void hunkActions.revertFile()}
 						>
 							<Revert className="size-14" />
@@ -281,7 +287,7 @@ export const ChangesFileSection = memo(function ChangesFileSection({
 					) : null}
 					<HeaderIconButton
 						testid="changes-section-open-tab"
-						label="Open as its own tab"
+						label={t("changes.file.openTab")}
 						onClick={openAsTab}
 					>
 						<OpenAsTab className="size-14" />
@@ -289,7 +295,7 @@ export const ChangesFileSection = memo(function ChangesFileSection({
 					<DropdownMenu>
 						<DropdownMenuTrigger
 							data-testid="changes-section-menu"
-							aria-label={`Actions for ${path}`}
+							aria-label={t("changes.file.actions", { path })}
 							className="flex size-24 items-center justify-center rounded-sm text-text-muted outline-none hover:bg-control-bg-hovered hover:text-text-default focus-visible:ring-2 focus-visible:ring-primary data-[state=open]:bg-control-bg-selected"
 						>
 							<More className="size-14" />
@@ -315,7 +321,7 @@ export const ChangesFileSection = memo(function ChangesFileSection({
 							) : null}
 							<DropdownMenuItem onSelect={onToggleViewed}>
 								<Check />
-								{viewed ? "Mark as not viewed" : "Mark as viewed"}
+								{viewed ? t("changes.file.markNotViewed") : t("changes.file.markViewed")}
 							</DropdownMenuItem>
 						</DropdownMenuContent>
 					</DropdownMenu>
@@ -347,8 +353,8 @@ export const ChangesFileSection = memo(function ChangesFileSection({
 					>
 						<span>
 							{changedLines > 0
-								? `Large change — ${changedLines} lines, collapsed by default.`
-								: "Collapsed by default."}
+								? t("changes.file.large", { count: changedLines })
+								: t("changes.file.collapsed")}
 						</span>
 						<button
 							type="button"
@@ -372,7 +378,7 @@ export const ChangesFileSection = memo(function ChangesFileSection({
 					data-testid="changes-section-error"
 					className="flex items-center gap-8 px-12 py-8 tr-text-metadata text-feedback-error"
 				>
-					<span>Could not read this diff: {error}</span>
+					<span>{t("changes.file.diffError", { error })}</span>
 					<button
 						type="button"
 						data-testid="changes-section-retry"

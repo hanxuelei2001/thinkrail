@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { t } from "@/i18n";
 import type { ResourceContent } from "@/resources";
 import {
 	type ReviewTextBinding,
@@ -6,7 +7,9 @@ import {
 	useReviewDraftState,
 } from "./reviewDraftState";
 
-export const FILE_CHANGED_NOTICE = "The file changed — select again.";
+export function fileChangedNotice(): string {
+	return t("review.fileChangedNotice");
+}
 
 export function contentStamp(content: ResourceContent): string {
 	return content.kind === "absent"

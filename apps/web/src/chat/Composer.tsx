@@ -23,6 +23,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useT } from "@/i18n";
 import {
 	applyTemplateSlotEdit,
 	beginTemplateSlotSession,
@@ -84,30 +85,6 @@ const SEND_MAIN = cn(
 );
 const SEND_MORE = cn(SEGMENT, "rounded-r-full pr-8 pl-2");
 const KEYCAP = "flex h-16 min-w-16 items-center justify-center rounded-xs bg-on-primary-soft px-2";
-
-const STREAMING_SEND_MODES = [
-	{
-		behavior: "steer" as const,
-		name: "Steer",
-		meaning: "delivers at the agent's next step",
-		keys: "Enter",
-		testid: "send-mode-steer",
-	},
-	{
-		behavior: "followUp" as const,
-		name: "Queue",
-		meaning: "runs after the agent finishes",
-		keys: "Cmd/Ctrl+Enter",
-		testid: "send-mode-queue",
-	},
-	{
-		behavior: "interrupt" as const,
-		name: "Interrupt",
-		meaning: "stops the current response and sends now",
-		keys: "Cmd/Ctrl+Shift+Enter",
-		testid: "send-mode-interrupt",
-	},
-];
 
 export interface MentionCandidate {
 	path: string;
@@ -212,6 +189,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	},
 	handleRef,
 ) {
+	const t = useT();
 	const ref = useRef<HTMLTextAreaElement>(null);
 	const pickerRef = useRef<ModelEffortPickerHandle>(null);
 	const [caret, setCaret] = useState(0);
@@ -225,6 +203,29 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 	const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
 	const [mentionDismissed, setMentionDismissed] = useState(false);
 	const [sendMenuOpen, setSendMenuOpen] = useState(false);
+	const streamingSendModes = [
+		{
+			behavior: "steer" as const,
+			name: t("chat.composer.steer"),
+			meaning: t("chat.composer.steerMeaning"),
+			keys: "Enter",
+			testid: "send-mode-steer",
+		},
+		{
+			behavior: "followUp" as const,
+			name: t("chat.composer.queue"),
+			meaning: t("chat.composer.queueMeaning"),
+			keys: "Cmd/Ctrl+Enter",
+			testid: "send-mode-queue",
+		},
+		{
+			behavior: "interrupt" as const,
+			name: t("chat.composer.interrupt"),
+			meaning: t("chat.composer.interruptMeaning"),
+			keys: "Cmd/Ctrl+Shift+Enter",
+			testid: "send-mode-interrupt",
+		},
+	];
 	const recallIdxRef = useRef<number | null>(null);
 	const [slotSession, setSlotSession] = useState<TemplateSlotSessionState | null>(null);
 	const slots = slotSession?.slots ?? null;
@@ -645,10 +646,10 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 							rows={1}
 							placeholder={
 								isStreaming
-									? "Steer the agent at its next step…"
+									? t("chat.composer.placeholderStreaming")
 									: expanded
-										? "Message the agent…  (@ files · / commands)"
-										: "Message…"
+										? t("chat.composer.placeholderExpanded")
+										: t("chat.composer.placeholder")
 							}
 							className={cn(
 								"absolute inset-0 size-full resize-none overflow-x-hidden overflow-y-auto rounded-sm bg-transparent px-12 py-8 tr-text-ui text-text-default outline-none placeholder:text-text-muted",
@@ -657,12 +658,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 						/>
 					</div>
 					<div className="col-start-3 row-start-2 flex shrink-0 items-center gap-4 self-end">
-						<IconTooltip label="Search history">
+						<IconTooltip label={t("chat.composer.searchHistory")}>
 							<Button
 								variant="ghost"
 								size="icon"
 								data-testid="history-open"
-								aria-label="Search history"
+								aria-label={t("chat.composer.searchHistory")}
 								onClick={openHistory}
 								className="rounded-full"
 							>
@@ -673,12 +674,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 							<button
 								type="button"
 								data-testid="chat-abort"
-								aria-label="Stop"
+								aria-label={t("chat.composer.stop")}
 								onClick={onAbort}
 								className={STOP_PILL}
 							>
 								<StopFill className="size-12" />
-								<span className={WIDE_ONLY}>Stop</span>
+								<span className={WIDE_ONLY}>{t("chat.composer.stop")}</span>
 							</button>
 						) : null}
 						<div
@@ -689,7 +690,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 							<button
 								type="button"
 								data-testid="chat-send"
-								aria-label={isStreaming ? "Steer" : "Send"}
+								aria-label={isStreaming ? t("chat.composer.steer") : t("chat.composer.send")}
 								onClick={() => submit(isStreaming ? "steer" : "send")}
 								disabled={!canSend}
 								className={cn(
@@ -699,19 +700,21 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 								)}
 							>
 								<ArrowUp className={cn("size-16", COMPACT_ONLY)} />
-								<span className={WIDE_ONLY}>{isStreaming ? "Steer" : "Send"}</span>
+								<span className={WIDE_ONLY}>
+									{isStreaming ? t("chat.composer.steer") : t("chat.composer.send")}
+								</span>
 								<kbd aria-hidden className={cn(KEYCAP, WIDE_ONLY)}>
 									<EnterKey className="size-12" />
 								</kbd>
 							</button>
 							{isStreaming ? (
 								<Popover open={sendMenuOpen} onOpenChange={setSendMenuOpen}>
-									<IconTooltip label="Send options" wrapTrigger>
+									<IconTooltip label={t("chat.composer.sendOptions")} wrapTrigger>
 										<PopoverTrigger asChild>
 											<button
 												type="button"
 												data-testid="send-menu"
-												aria-label="Send options"
+												aria-label={t("chat.composer.sendOptions")}
 												className={cn(
 													SEND_MORE,
 													canSend
@@ -725,7 +728,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 									</IconTooltip>
 									<PopoverContent side="top" align="end" className="w-[320px] p-4">
 										<div className="flex flex-col gap-2">
-											{STREAMING_SEND_MODES.map((mode) => (
+											{streamingSendModes.map((mode) => (
 												<button
 													key={mode.behavior}
 													type="button"

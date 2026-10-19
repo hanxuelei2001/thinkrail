@@ -7,7 +7,12 @@ import {
 	WORKSPACE_SETTLE_PROTOCOL_VERSION,
 } from "@thinkrail/contracts";
 import { SettingsSection } from "@/store";
-import { filterSettingsNavGroups, resolveSettingsSection, settingsNavGroups } from "./settingsNav";
+import {
+	filterSettingsNavGroups,
+	resolveSettingsSection,
+	type SettingsNavGroup,
+	settingsNavGroups,
+} from "./settingsNav";
 
 const LATEST = Math.max(
 	DEFAULT_MODEL_PROTOCOL_VERSION,
@@ -28,10 +33,10 @@ const ids = (protocolVersion: number | null, hasUpdates: boolean) =>
 describe("settingsNavGroups", () => {
 	test("current hosts with injected updates list every section in its group", () => {
 		expect(
-			settingsNavGroups(LATEST, true).map((g) => [g.label, g.sections.map((s) => s.id)]),
+			settingsNavGroups(LATEST, true).map((g) => [g.labelKey, g.sections.map((s) => s.id)]),
 		).toEqual([
 			[
-				"Agent",
+				"settings.group.agent",
 				[
 					SettingsSection.Models,
 					SettingsSection.Providers,
@@ -40,16 +45,17 @@ describe("settingsNavGroups", () => {
 				],
 			],
 			[
-				"Interface",
+				"settings.group.interface",
 				[
 					SettingsSection.Chat,
 					SettingsSection.Appearance,
+					SettingsSection.Language,
 					SettingsSection.Layout,
 					SettingsSection.Terminal,
 				],
 			],
 			[
-				"System",
+				"settings.group.system",
 				[
 					SettingsSection.Workspaces,
 					SettingsSection.Github,
@@ -99,26 +105,34 @@ describe("settingsNavGroups", () => {
 	test("groups left without an available section disappear", () => {
 		const groups = [
 			{
-				label: "Gated",
+				labelKey: "settings.group.system",
 				sections: [
 					{
 						id: SettingsSection.Models,
-						label: "Models",
+						labelKey: "settings.nav.models",
 						icon: RiBrainLine,
 						requiresProtocolVersion: DEFAULT_MODEL_PROTOCOL_VERSION,
 					},
 					{
 						id: SettingsSection.Updates,
-						label: "Updates",
+						labelKey: "settings.nav.updates",
 						icon: RiBrainLine,
 						requiresInjectedContent: true as const,
 					},
 				],
 			},
-			{ label: "Open", sections: [{ id: SettingsSection.Chat, label: "Chat", icon: RiBrainLine }] },
-		];
-		expect(filterSettingsNavGroups(groups, 1, false).map((g) => g.label)).toEqual(["Open"]);
-		expect(filterSettingsNavGroups(groups, 1, true).map((g) => g.label)).toEqual(["Gated", "Open"]);
+			{
+				labelKey: "settings.group.interface",
+				sections: [{ id: SettingsSection.Chat, labelKey: "settings.nav.chat", icon: RiBrainLine }],
+			},
+		] satisfies SettingsNavGroup[];
+		expect(filterSettingsNavGroups(groups, 1, false).map((g) => g.labelKey)).toEqual([
+			"settings.group.interface",
+		]);
+		expect(filterSettingsNavGroups(groups, 1, true).map((g) => g.labelKey)).toEqual([
+			"settings.group.system",
+			"settings.group.interface",
+		]);
 		expect(settingsNavGroups(1, false).every((g) => g.sections.length > 0)).toBe(true);
 	});
 });
@@ -160,7 +174,7 @@ describe("resolveSettingsSection", () => {
 	test("without Appearance it falls back to the first available section", () => {
 		const groups = [
 			{
-				label: "Only",
+				labelKey: "settings.group.agent",
 				sections: settingsNavGroups(LATEST, true)
 					.flatMap((g) => g.sections)
 					.filter((s) => s.id === SettingsSection.Privacy),

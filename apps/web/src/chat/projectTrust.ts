@@ -4,6 +4,7 @@ import type {
 	ProjectTrustSummary,
 	WsParams,
 } from "@thinkrail/contracts";
+import { getLocale, t } from "@/i18n";
 
 export type ProjectTrustNotice =
 	| { kind: "hidden" }
@@ -43,39 +44,43 @@ export function deriveProjectTrustNotice(
 	return { kind: "trusted", aliasSkills: summary.aliasSkills.length };
 }
 
-const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
-
 const LOADED_KINDS: ReadonlyArray<[ProjectResourceKind, string]> = [
-	["skills", "skills"],
-	["prompts", "prompts"],
-	["themes", "themes"],
-	["systemPrompt", "system prompt"],
-	["subagents", "subagent definitions"],
+	["skills", "trust.kind.skills"],
+	["prompts", "trust.kind.prompts"],
+	["themes", "trust.kind.themes"],
+	["systemPrompt", "trust.kind.systemPrompt"],
+	["subagents", "trust.kind.subagents"],
 ];
 const CODE_KINDS: ReadonlyArray<[ProjectResourceKind, string]> = [
-	["extensions", "extensions"],
-	["settings", "settings"],
+	["extensions", "trust.kind.extensions"],
+	["settings", "trust.kind.settings"],
 ];
+
+function joinWords(words: readonly string[]): string {
+	if (words.length < 2) return words[0] ?? "";
+	if (getLocale() === "zh-CN") return `${words.slice(0, -1).join("、")}和${words.at(-1)}`;
+	return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+}
 
 function namesOf(
 	kinds: ReadonlyArray<[ProjectResourceKind, string]>,
 	present: ReadonlySet<ProjectResourceKind>,
 ): string {
-	const words = kinds.filter(([kind]) => present.has(kind)).map(([, word]) => word);
-	return words.length < 2
-		? (words[0] ?? "")
-		: `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+	const words = kinds
+		.filter(([kind]) => present.has(kind))
+		.map(([, key]) => t(key as Parameters<typeof t>[0]));
+	return joinWords(words);
 }
 
 export function untrustedNoticeText(
 	notice: Extract<ProjectTrustNotice, { kind: "untrusted" }>,
 ): string {
 	const parts = [
-		...(notice.aliasSkills > 0 ? [plural(notice.aliasSkills, "skill")] : []),
-		...(notice.piResources.length > 0 ? ["its own Pi resources"] : []),
-		...(notice.mcpServers > 0 ? [plural(notice.mcpServers, "MCP server")] : []),
+		...(notice.aliasSkills > 0 ? [t("trust.skill", { count: notice.aliasSkills })] : []),
+		...(notice.piResources.length > 0 ? [t("trust.piResources")] : []),
+		...(notice.mcpServers > 0 ? [t("trust.mcp", { count: notice.mcpServers })] : []),
 	];
-	return `This project ships ${parts.join(" and ")} — off until you trust it.`;
+	return t("trust.notice", { parts: joinWords(parts) });
 }
 
 export function trustEnablesText(
@@ -84,16 +89,16 @@ export function trustEnablesText(
 	const present = new Set(notice.piResources);
 	const loads = namesOf(LOADED_KINDS, present);
 	const runs = namesOf(CODE_KINDS, present);
-	const code = `${runs} run code on this machine`;
+	const code = t("trust.code", { runs });
 	const enables = !runs
 		? loads
-			? `Trust loads its ${loads}.`
+			? t("trust.enables.loads", { loads })
 			: null
 		: loads
-			? `Trust loads its ${loads}, and lets its ${code}.`
-			: `Trust lets its ${code}.`;
+			? t("trust.enables.both", { loads, code })
+			: t("trust.enables.code", { code });
 	if (notice.mcpServers === 0) return enables;
-	const mcp = `Its ${plural(notice.mcpServers, "MCP server")} still need${notice.mcpServers === 1 ? "s" : ""} your approval one by one.`;
+	const mcp = t("trust.mcpApproval", { count: notice.mcpServers });
 	return enables ? `${enables} ${mcp}` : mcp;
 }
 
@@ -112,8 +117,8 @@ export function trustedNoticeText(
 	notice: Extract<ProjectTrustNotice, { kind: "trusted" }>,
 ): string {
 	return notice.aliasSkills > 0
-		? `${plural(notice.aliasSkills, "project skill")} trusted.`
-		: "Project resources trusted.";
+		? t("trust.trustedSkills", { count: notice.aliasSkills })
+		: t("trust.trustedResources");
 }
 
 export function canStopTrusting(project: TrustRecord | undefined): boolean {
@@ -125,6 +130,6 @@ export function stopTrustingText(
 	supportsProjectTrust: boolean,
 ): string {
 	return supportsProjectTrust && project?.piResourceTrust === "granted"
-		? "Its project skills, Pi resources and MCP servers stop loading; running subagents stop and open chats reload when idle."
-		: "Its project skills stop loading in new chats.";
+		? t("trust.stop.granted")
+		: t("trust.stop.skills");
 }

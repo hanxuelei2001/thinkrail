@@ -12,6 +12,7 @@ import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { cn } from "@thinkrail/ui/utils";
 import { useCallback, useEffect, useState } from "react";
 import { LoadingRegion } from "@/components/Skeleton";
+import { useT } from "@/i18n";
 import { toast, useAppStore } from "@/store";
 import { errorText, getTransport, reloadSessionResourcesWithSkillBaseline } from "@/transport";
 import {
@@ -22,12 +23,28 @@ import {
 } from "./projectTrust";
 import { useProjectTrustSummary } from "./useProjectTrustSummary";
 
-const TIER_META: Record<string, { label: string; hint: string; rank: number }> = {
-	bundled: { label: "ThinkRail", hint: "Bundled with the app.", rank: 0 },
-	pi: { label: "Pi", hint: "Pi-native / configured.", rank: 1 },
-	personal: { label: "Personal", hint: "Your own libraries (~/.claude, ~/.codex, …).", rank: 2 },
-	project: { label: "Project", hint: "Committed to the repo — gated behind trust.", rank: 4 },
-};
+function tierMeta(
+	t: ReturnType<typeof useT>,
+): Record<string, { label: string; hint: string; rank: number }> {
+	return {
+		bundled: {
+			label: t("chat.skills.tier.bundled"),
+			hint: t("chat.skills.tier.bundledHint"),
+			rank: 0,
+		},
+		pi: { label: t("chat.skills.tier.pi"), hint: t("chat.skills.tier.piHint"), rank: 1 },
+		personal: {
+			label: t("chat.skills.tier.personal"),
+			hint: t("chat.skills.tier.personalHint"),
+			rank: 2,
+		},
+		project: {
+			label: t("chat.skills.tier.project"),
+			hint: t("chat.skills.tier.projectHint"),
+			rank: 4,
+		},
+	};
+}
 
 interface Group {
 	key: string;
@@ -37,7 +54,7 @@ interface Group {
 	items: SkillCatalogEntry[];
 }
 
-function groupCatalog(entries: SkillCatalogEntry[]): Group[] {
+function groupCatalog(entries: SkillCatalogEntry[], t: ReturnType<typeof useT>): Group[] {
 	const byKey = new Map<string, { isPlugin: boolean; items: SkillCatalogEntry[] }>();
 	for (const entry of entries) {
 		const group = byKey.get(entry.group) ?? { isPlugin: Boolean(entry.plugin), items: [] };
@@ -46,11 +63,11 @@ function groupCatalog(entries: SkillCatalogEntry[]): Group[] {
 	}
 	return [...byKey.entries()]
 		.map(([key, group]) => {
-			const meta = TIER_META[key];
+			const meta = tierMeta(t)[key];
 			return {
 				key,
 				label: meta?.label ?? key,
-				hint: group.isPlugin ? "Claude plugin" : (meta?.hint ?? ""),
+				hint: group.isPlugin ? t("chat.skills.claudePlugin") : (meta?.hint ?? ""),
 				isPlugin: group.isPlugin,
 				items: group.items,
 				rank: group.isPlugin ? 3 : (meta?.rank ?? 5),
@@ -82,6 +99,7 @@ export function SkillsDialog({
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }) {
+	const t = useT();
 	const project = useAppStore((s) => s.projects.find((p) => p.id === projectId));
 	const [entries, setEntries] = useState<SkillCatalogEntry[] | null>(null);
 	const [busy, setBusy] = useState(false);
@@ -128,9 +146,9 @@ export function SkillsDialog({
 				sessionId: workspace.sessionId,
 			});
 			workspace.onReloaded?.(syncedTick);
-			toast.success("This chat now uses the updated skills.", "Skills reloaded");
+			toast.success(t("chat.skills.reloaded"), t("chat.skills.reloadedTitle"));
 		} catch (err) {
-			toast.error(errorText(err), "Couldn't reload skills");
+			toast.error(errorText(err), t("chat.skills.error.reload"));
 		} finally {
 			setBusy(false);
 		}
@@ -139,7 +157,7 @@ export function SkillsDialog({
 	const setGroupEnabled = (group: string, enabled: boolean) =>
 		void mutate(
 			() => getTransport().request("project.setGroupEnabled", { id: projectId, group, enabled }),
-			"Couldn't update group",
+			t("chat.skills.error.group"),
 		);
 
 	const setSkillEnabled = (name: string, enabled: boolean) =>
@@ -152,7 +170,7 @@ export function SkillsDialog({
 							override: enabled ? "on" : "off",
 						})
 					: getTransport().request("project.setSkillEnabled", { id: projectId, name, enabled }),
-			"Couldn't update skill",
+			t("chat.skills.error.skill"),
 		);
 
 	const disabledGroups = new Set(project?.disabledGroups ?? []);
@@ -168,7 +186,7 @@ export function SkillsDialog({
 		},
 	);
 	const trustEnables = trustNotice.kind === "untrusted" ? trustEnablesText(trustNotice) : null;
-	const groups = groupCatalog(entries ?? []);
+	const groups = groupCatalog(entries ?? [], t);
 	const hasPlugins = groups.some((g) => g.isPlugin);
 	const isLeadingKey = (key: string) => key === "bundled" || key === "pi";
 	const leadingGroups = groups.filter((g) => isLeadingKey(g.key));
@@ -198,8 +216,8 @@ export function SkillsDialog({
 					<SkillSwitch
 						checked={groupOn}
 						busy={busy}
-						blockedReason={lockedByMaster ? "Off — turn on All plugins first" : undefined}
-						label={`Enable ${group.label} skill group`}
+						blockedReason={lockedByMaster ? t("chat.skills.offAllPlugins") : undefined}
+						label={t("chat.skills.enableGroup", { group: group.label })}
 						testId="group-toggle"
 						onCheckedChange={(enabled) => setGroupEnabled(group.key, enabled)}
 					/>
@@ -214,8 +232,8 @@ export function SkillsDialog({
 								groupOn
 									? undefined
 									: lockedByMaster
-										? "Off — turn on All plugins first"
-										: `Off — turn on ${group.label} first`
+										? t("chat.skills.offAllPlugins")
+										: t("chat.skills.offTurnOn", { group: group.label })
 							}
 							onToggle={(enabled) => setSkillEnabled(entry.name, enabled)}
 							onAcknowledge={() =>
@@ -225,7 +243,7 @@ export function SkillsDialog({
 											id: projectId,
 											names: [entry.name],
 										}),
-									"Couldn't confirm skill",
+									t("chat.skills.error.confirm"),
 								)
 							}
 						/>
@@ -239,13 +257,15 @@ export function SkillsDialog({
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent data-testid="skills-dialog" className="max-w-[560px] gap-12 p-12">
 				<div className="flex items-center justify-between gap-8 pr-[2rem]">
-					<DialogTitle className="tr-text-ui text-text-default">Skills</DialogTitle>
+					<DialogTitle className="tr-text-ui text-text-default">
+						{t("chat.skills.title")}
+					</DialogTitle>
 					{workspace ? (
 						<IconTooltip
 							label={
 								workspace.streaming
-									? "Available once the current turn finishes"
-									: "Apply to this chat"
+									? t("chat.skills.availableAfterTurn")
+									: t("chat.skills.applyToChat")
 							}
 							wrapTrigger
 						>
@@ -257,7 +277,7 @@ export function SkillsDialog({
 								onClick={() => void reload()}
 							>
 								<RefreshCw className="size-14" />
-								Reload
+								{t("chat.skills.reload")}
 							</Button>
 						</IconTooltip>
 					) : null}
@@ -268,8 +288,9 @@ export function SkillsDialog({
 						data-testid="skills-stale"
 						className="rounded-sm border border-border-default bg-container-elevated-bg px-12 py-8 text-text-muted tr-text-metadata"
 					>
-						This worktree's skills changed on disk —{" "}
-						<span className="text-text-default">Reload</span> to apply them to this chat.
+						{t("chat.skills.staleBefore")}{" "}
+						<span className="text-text-default">{t("chat.skills.reload")}</span>{" "}
+						{t("chat.skills.staleAfter")}
 					</div>
 				) : null}
 
@@ -301,11 +322,11 @@ export function SkillsDialog({
 												"project.setTrust",
 												trustGrantParams(projectId, trustNotice),
 											),
-										"Couldn't trust project",
+										t("chat.skills.error.trust"),
 									)
 								}
 							>
-								Trust project
+								{t("workspace.create.trustProject")}
 							</Button>
 						</div>
 					</div>
@@ -315,7 +336,7 @@ export function SkillsDialog({
 					{entries === null ? (
 						<LoadingRegion rows={4} className="px-8 py-12" />
 					) : entries.length === 0 ? (
-						<p className="px-8 py-12 text-text-muted tr-text-ui">No skills discovered.</p>
+						<p className="px-8 py-12 text-text-muted tr-text-ui">{t("chat.skills.none")}</p>
 					) : (
 						<>
 							{leadingGroups.map(renderGroup)}
@@ -325,12 +346,12 @@ export function SkillsDialog({
 									className="sticky top-0 z-20 flex h-32 items-center gap-8 border-border-default border-y bg-container-header-bg px-8"
 								>
 									<span className="min-w-0 flex-1 tr-text-eyebrow text-text-default">
-										All plugins
+										{t("chat.skills.allPlugins")}
 									</span>
 									<SkillSwitch
 										checked={!pluginsDisabled}
 										busy={busy}
-										label="Enable all plugins"
+										label={t("chat.skills.enableAllPlugins")}
 										testId="all-plugins-toggle"
 										onCheckedChange={(enabled) => setGroupEnabled("@plugins", enabled)}
 									/>
@@ -360,10 +381,11 @@ function SkillSwitch({
 	testId: string;
 	onCheckedChange: (checked: boolean) => void;
 }) {
+	const t = useT();
 	const disabled = busy || blockedReason !== undefined;
 	const tooltip = busy
-		? "Saving skill settings…"
-		: (blockedReason ?? `${checked ? "On" : "Off"} — turn ${checked ? "off" : "on"}`);
+		? t("chat.skills.saving")
+		: (blockedReason ?? (checked ? t("chat.skills.tooltip.on") : t("chat.skills.tooltip.off")));
 	return (
 		<IconTooltip label={tooltip} wrapTrigger={disabled}>
 			<Switch
@@ -392,6 +414,7 @@ function SkillRow({
 	onToggle: (enabled: boolean) => void;
 	onAcknowledge: () => void;
 }) {
+	const t = useT();
 	const loaded = entry.decision === "load";
 	return (
 		<div
@@ -409,16 +432,16 @@ function SkillRow({
 			{entry.decision === "pending-ack" ? (
 				<Button size="sm" data-testid="skill-ack" disabled={busy} onClick={onAcknowledge}>
 					<ShieldCheck className="size-14" />
-					Enable
+					{t("chat.skills.enable")}
 				</Button>
 			) : (
 				<SkillSwitch
 					checked={entry.decision === "untrusted" || blockedReason ? false : loaded}
 					busy={busy}
 					blockedReason={
-						entry.decision === "untrusted" ? "Off — trust this project first" : blockedReason
+						entry.decision === "untrusted" ? t("chat.skills.offTrustProject") : blockedReason
 					}
-					label={`Enable skill ${entry.name}`}
+					label={t("chat.skills.enableSkill", { name: entry.name })}
 					testId="skill-toggle"
 					onCheckedChange={onToggle}
 				/>

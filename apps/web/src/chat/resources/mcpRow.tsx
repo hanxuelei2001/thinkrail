@@ -2,18 +2,17 @@ import { RiPlugLine } from "@remixicon/react";
 import type { McpServerResourceSummary } from "@thinkrail/contracts";
 import { cn } from "@thinkrail/ui/utils";
 import { useId } from "react";
+import { t, useT } from "@/i18n";
 import { type McpStateTone, mcpStateTone, mcpStatusLabel } from "@/lib";
 import type { ResourceActions } from "./resourceRow";
 
 type McpRowActionId = "disable" | "enable" | "reconnect" | "settings";
 
-const DISABLE = { id: "disable", label: "Disable in this chat" } as const;
-
 export function mcpRowActions(
 	server: McpServerResourceSummary,
 ): { id: McpRowActionId; label: string }[] {
 	const actions = stateActions(server.state);
-	return server.registered ? actions.filter((action) => action.id !== DISABLE.id) : actions;
+	return server.registered ? actions.filter((action) => action.id !== "disable") : actions;
 }
 
 function stateActions(
@@ -21,20 +20,26 @@ function stateActions(
 ): { id: McpRowActionId; label: string }[] {
 	switch (state) {
 		case "disabled-in-chat":
-			return [{ id: "enable", label: "Enable in this chat" }];
+			return [{ id: "enable", label: t("chat.mcp.resource.enable") }];
 		case "needs-sign-in":
-			return [{ id: "settings", label: "Sign in" }, DISABLE];
+			return [
+				{ id: "settings", label: t("chat.mcp.resource.signIn") },
+				{ id: "disable", label: t("chat.mcp.resource.disable") },
+			];
 		case "failed":
 		case "disconnected":
-			return [{ id: "reconnect", label: "Reconnect" }, DISABLE];
+			return [
+				{ id: "reconnect", label: t("chat.mcp.resource.reconnect") },
+				{ id: "disable", label: t("chat.mcp.resource.disable") },
+			];
 		case "pending-approval":
-			return [{ id: "settings", label: "Review" }];
+			return [{ id: "settings", label: t("chat.mcp.resource.review") }];
 		case "invalid-config":
-			return [{ id: "settings", label: "Edit" }];
+			return [{ id: "settings", label: t("chat.mcp.resource.edit") }];
 		case "connected":
 		case "starting":
 		case "unknown":
-			return [DISABLE];
+			return [{ id: "disable", label: t("chat.mcp.resource.disable") }];
 		default:
 			return [];
 	}
@@ -75,6 +80,7 @@ function McpRow({
 	describedBy: string;
 	onAction: (id: McpRowActionId) => void;
 }) {
+	const t = useT();
 	const tone = mcpStateTone(server.state, server.toolCount);
 	const action = actions[mcpActionKey(server.name)];
 	return (
@@ -111,8 +117,8 @@ function McpRow({
 				</span>
 				<span className="flex min-w-0 flex-wrap items-center gap-x-8 gap-y-2 text-text-muted tr-text-metadata">
 					<span>
-						{server.transport === "http" ? "HTTP" : "stdio · runs on host"}
-						{server.state === "pending-reload" ? " · applies when the chat is idle" : ""}
+						{server.transport === "http" ? "HTTP" : t("chat.mcp.resource.stdio")}
+						{server.state === "pending-reload" ? ` ${t("chat.mcp.resource.pendingReload")}` : ""}
 					</span>
 					{mcpRowActions(server).map((item) => (
 						<button
@@ -153,11 +159,16 @@ export function McpServerSection({
 	onReconnect: (name: string) => void;
 	onOpenSettings: () => void;
 }) {
+	const t = useT();
 	const hintId = useId();
 	return (
-		<section data-testid="resources-mcp" aria-label="MCP servers" className="flex flex-col gap-2">
+		<section
+			data-testid="resources-mcp"
+			aria-label={t("chat.mcp.resource.servers")}
+			className="flex flex-col gap-2"
+		>
 			<div className="flex items-baseline gap-4 px-8 pt-8 pb-2 text-text-subtle">
-				<h3 className="tr-text-eyebrow">MCP servers</h3>
+				<h3 className="tr-text-eyebrow">{t("chat.mcp.resource.servers")}</h3>
 				<span className="tr-text-metadata">· {servers.length}</span>
 				<span className="flex-1" />
 				<button
@@ -166,11 +177,11 @@ export function McpServerSection({
 					onClick={onOpenSettings}
 					className="rounded-xs px-4 text-primary tr-text-metadata outline-none hover:bg-control-bg focus-visible:ring-2 focus-visible:ring-primary"
 				>
-					Settings
+					{t("chat.mcp.resource.settings")}
 				</button>
 			</div>
 			{servers.length === 0 ? (
-				<p className="px-8 py-4 text-text-subtle tr-text-metadata">No MCP servers in this chat.</p>
+				<p className="px-8 py-4 text-text-subtle tr-text-metadata">{t("chat.mcp.resource.none")}</p>
 			) : (
 				<>
 					<ul className="flex flex-col gap-2">
@@ -190,7 +201,7 @@ export function McpServerSection({
 						))}
 					</ul>
 					<p id={hintId} className="px-8 text-text-subtle tr-text-metadata">
-						Disabling applies when the chat is idle — restarts this chat's other servers.
+						{t("chat.mcp.resource.idleHint")}
 					</p>
 				</>
 			)}

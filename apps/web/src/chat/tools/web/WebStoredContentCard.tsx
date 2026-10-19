@@ -1,5 +1,6 @@
 import { RiLinksLine as LinkIcon } from "@remixicon/react";
 import { numArg, resultText, strArg, type ToolRenderProps } from "@thinkrail/extension-api/web";
+import { useT } from "@/i18n";
 import { WebResultBody } from "./WebResultBody";
 
 function detailString(result: unknown, key: string): string {
@@ -27,6 +28,7 @@ export function storedContentSummary({ args, result }: ToolRenderProps): string 
 }
 
 export function WebStoredContentCard({ toolCallId, args, result, status }: ToolRenderProps) {
+	const t = useT();
 	const responseId = strArg(args, "responseId");
 	const target = storedContentTarget(args, result);
 	const output = resultText(result);
@@ -47,7 +49,7 @@ export function WebStoredContentCard({ toolCallId, args, result, status }: ToolR
 				id={`${toolCallId}:content`}
 				output={output}
 				status={status}
-				runningLabel="Loading stored content…"
+				runningLabel={t("chat.tools.loadingStoredContent")}
 				emptyLabel="(no stored content)"
 			/>
 		</div>

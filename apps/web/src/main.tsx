@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { initChatPreferencesPersistence } from "./chat/chatPreferences";
 import { initModelVisibilityPersistence } from "./chat/modelVisibility";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { initializeI18n } from "./i18n";
 import { initNavigation } from "./navigation";
 import { initProjectExpansionPersistence } from "./panels/projectExpansion";
 import { Shell } from "./shell/Shell";
@@ -13,6 +14,7 @@ import { initTransport } from "./transport";
 
 initializeBundledThemes();
 applyThemePreference(readThemeHint());
+initializeI18n();
 initTransport();
 initChatPreferencesPersistence();
 initModelVisibilityPersistence();

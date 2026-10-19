@@ -1,4 +1,5 @@
 import type { SlashCommandInfo } from "@thinkrail/contracts";
+import { t } from "@/i18n";
 import type { SlashCommandItem } from "@/prompt";
 import { type PreparedChatTitle, prepareChatTitle } from "./chatTitle";
 
@@ -6,7 +7,9 @@ const COMPACT_NAME = "compact";
 const NAME_NAME = "name";
 const MODEL_NAME = "model";
 
-export const COMPACT_IMAGE_ERROR = "Remove images to use /compact";
+export function compactImageError(): string {
+	return t("chat.removeImagesForCommand", { command: "/compact" });
+}
 export const COMPACT_QUEUED_IMAGE_ERROR =
 	"Wait for queued image messages to send before using /compact";
 
@@ -14,7 +17,7 @@ export function compactSubmissionError(
 	hasDraftImages: boolean,
 	hasQueuedImages: boolean,
 ): string | null {
-	if (hasDraftImages) return COMPACT_IMAGE_ERROR;
+	if (hasDraftImages) return compactImageError();
 	return hasQueuedImages ? COMPACT_QUEUED_IMAGE_ERROR : null;
 }
 
@@ -91,7 +94,9 @@ export function parseNativeChatCommand(
 }
 
 export function prepareNameChatCommand(titleInput: string, hasImages: boolean): PreparedChatTitle {
-	return hasImages ? { reason: "Remove images to use /name" } : prepareChatTitle(titleInput);
+	return hasImages
+		? { reason: t("chat.removeImagesForCommand", { command: "/name" }) }
+		: prepareChatTitle(titleInput);
 }
 
 export function mergeNativeChatCommands(

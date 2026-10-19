@@ -1,6 +1,7 @@
 import { RiChatNewLine as MessageSquarePlus } from "@remixicon/react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useT } from "@/i18n";
 import type { ReviewThread, SurfaceReview } from "@/resources";
 import { mapPreviewSelection } from "./previewAnchor";
 import { ReviewComposer } from "./ReviewComposer";
@@ -38,6 +39,7 @@ export function PreviewCommenting({
 	onViewState?: (state: unknown) => void;
 	children: (composer: ComposerInsert | null) => ReactNode;
 }) {
+	const t = useT();
 	const { elementRef: scrollerRef, attach: attachScroller } = useScrollViewState<HTMLDivElement>(
 		viewState,
 		onViewState,
@@ -197,8 +199,8 @@ export function PreviewCommenting({
 					ref={iconRef}
 					type="button"
 					data-testid="review-add-icon"
-					title="Comment on selection"
-					aria-label="Comment on selection"
+					title={t("preview.commentSelection")}
+					aria-label={t("preview.commentSelection")}
 					onMouseDown={(e) => e.preventDefault()}
 					onClick={openComposer}
 					className="review-add-icon review-add-icon-float"

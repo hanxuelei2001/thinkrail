@@ -1,15 +1,17 @@
 import { resultText, strArg, type ToolRenderProps } from "@thinkrail/extension-api/web";
 import { ComparisonCard } from "./ComparisonCard";
 import { DiagramCard } from "./DiagramCard";
+import { useVisualizeT } from "./i18n";
 
 export function VisualizationCard(props: ToolRenderProps) {
+	const t = useVisualizeT();
 	const { args, result, status } = props;
 
 	if (status === "error") {
 		return (
 			<div data-testid="tool-visualize" data-status="error" className="flex flex-col gap-4">
 				<pre className="overflow-auto px-8 py-4 text-feedback-error tr-code-text">
-					{resultText(result) || "Visualization failed."}
+					{resultText(result) || t("visualizationFailed")}
 				</pre>
 			</div>
 		);

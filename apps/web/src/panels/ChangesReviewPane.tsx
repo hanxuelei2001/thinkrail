@@ -10,6 +10,7 @@ import {
 import type { GitFileChange, GitStatus } from "@thinkrail/contracts";
 import { useCallback, useEffect, useInsertionEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
+import { useT } from "@/i18n";
 import { usePhoneViewport } from "@/lib";
 import { LoadingRegion } from "../components/Skeleton";
 import {
@@ -57,6 +58,7 @@ const REVIEW_LIST_COMPONENTS = { Footer: ReviewListFooter };
 const NOOP_TOGGLE = () => {};
 
 export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
+	const t = useT();
 	const { workspaceId, scope } = tab;
 	const mobile = usePhoneViewport();
 	const [status, setStatus] = useState<GitStatus | null>(null);
@@ -103,14 +105,14 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 					setScopeGone(true);
 					setError(
 						scope.kind === "turn"
-							? "That agent turn's snapshot is no longer in this repository."
-							: "That commit is no longer in this branch.",
+							? t("changes.review.unknownTurn")
+							: t("changes.review.unknownCommit"),
 					);
 					return;
 				}
 				if (status && !warnedRef.current) {
 					warnedRef.current = true;
-					toast.error(`Could not refresh the changes: ${errorText(failure)}`);
+					toast.error(t("changes.error.refresh", { error: errorText(failure) }));
 				}
 				setError(errorText(failure));
 			},
@@ -360,11 +362,11 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 
 	const targetLabel =
 		scope.kind === "branch"
-			? `vs ${baseRef}`
+			? t("changes.review.vs", { base: baseRef })
 			: scope.kind === "uncommitted"
-				? "worktree"
+				? t("changes.review.worktree")
 				: scope.kind === "turn"
-					? "agent snapshot"
+					? t("changes.review.agentSnapshot")
 					: null;
 	const showLargeNotice =
 		layout === "stacked" && files.length > LARGE_SCOPE_FILES && !largeNoticeDismissed;
@@ -374,7 +376,7 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 			<div
 				data-testid="changes-review-toolbar"
 				role="toolbar"
-				aria-label="Changes review"
+				aria-label={t("changes.review.aria")}
 				className="flex h-32 shrink-0 items-center gap-4 border-border-default border-b bg-container-header-bg px-12"
 			>
 				<span
@@ -402,13 +404,13 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 					<SendAllReviewsButton
 						workspaceId={workspaceId}
 						testid="changes-review-send"
-						verb="Send review"
+						verb={t("changes.review.send")}
 					/>
 					{layout === "stacked" && files.length > 0 ? (
 						<>
 							<HeaderIconButton
 								testid="changes-review-collapse-all"
-								label="Collapse all files"
+								label={t("changes.review.collapseAll")}
 								onClick={() =>
 									setCollapsed(
 										workspaceId,
@@ -421,7 +423,7 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 							</HeaderIconButton>
 							<HeaderIconButton
 								testid="changes-review-expand-all"
-								label="Expand all files"
+								label={t("changes.review.expandAll")}
 								onClick={() =>
 									setCollapsed(
 										workspaceId,
@@ -437,7 +439,7 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 					{guideAvailable && layout === "stacked" && !mobile ? (
 						<HeaderIconButton
 							testid="changes-review-guide-toggle"
-							label={guideOpen ? "Hide the review guide" : "Show the review guide"}
+							label={guideOpen ? t("changes.review.hideGuide") : t("changes.review.showGuide")}
 							active={guideOpen}
 							onClick={() => setGuideHidden((hidden) => !hidden)}
 						>
@@ -446,7 +448,7 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 					) : null}
 					<HeaderIconButton
 						testid="changes-review-toggle-whitespace"
-						label="Hide whitespace changes"
+						label={t("diff.hideWhitespace")}
 						active={ignoreWhitespace}
 						onClick={() => setIgnoreWhitespace(workspaceId, tab.id, !ignoreWhitespace)}
 					>
@@ -456,13 +458,13 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 						<>
 							<ToggleSegment
 								testid="changes-review-toggle-split"
-								label="Split"
+								label={t("diff.split")}
 								active={view === "split"}
 								onClick={() => setView(workspaceId, tab.id, "split")}
 							/>
 							<ToggleSegment
 								testid="changes-review-toggle-inline"
-								label="Inline"
+								label={t("diff.inline")}
 								active={view === "inline"}
 								onClick={() => setView(workspaceId, tab.id, "inline")}
 							/>
@@ -471,13 +473,13 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 					) : null}
 					<ToggleSegment
 						testid="changes-review-layout-stacked"
-						label="Stacked"
+						label={t("changes.review.stacked")}
 						active={layout === "stacked"}
 						onClick={() => setLayout("stacked")}
 					/>
 					<ToggleSegment
 						testid="changes-review-layout-single"
-						label="One file"
+						label={t("changes.review.oneFile")}
 						active={layout === "single"}
 						onClick={() => setLayout("single")}
 					/>
@@ -486,7 +488,7 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 			{status === null && error !== null ? (
 				<div data-testid="changes-review-error" className="flex flex-col items-start gap-4 p-12">
 					<p className="tr-text-metadata text-feedback-error">
-						{scopeGone ? error : `Could not read the changes: ${error}`}
+						{scopeGone ? error : t("changes.review.readError", { error })}
 					</p>
 					{scopeGone ? (
 						<button
@@ -524,7 +526,7 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 					>
 						<HeaderIconButton
 							testid="changes-review-prev"
-							label="Previous file (Alt+↑)"
+							label={t("changes.review.previousFile")}
 							disabled={currentIndex === 0}
 							onClick={() => step(-1)}
 						>
@@ -538,7 +540,7 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 						</span>
 						<HeaderIconButton
 							testid="changes-review-next"
-							label="Next file (Alt+↓)"
+							label={t("changes.review.nextFile")}
 							disabled={currentIndex >= files.length - 1}
 							onClick={() => step(1)}
 						>
@@ -556,7 +558,9 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 							}`}
 						>
 							<Check className="size-14" />
-							{viewedSet.has(current.path) ? "Viewed" : "Mark viewed"}
+							{viewedSet.has(current.path)
+								? t("changes.review.viewed")
+								: t("changes.review.markViewed")}
 							<kbd className="rounded-xs border border-control-border-default px-4 tr-code-text text-text-subtle">
 								V
 							</kbd>
@@ -669,7 +673,7 @@ export function ChangesReviewPane({ tab }: { tab: ChangesTab }) {
 							</span>
 							<progress
 								data-testid="changes-review-progress"
-								aria-label="Files reviewed"
+								aria-label={t("changes.review.filesReviewed")}
 								max={Math.max(files.length, 1)}
 								value={viewedCount}
 								className="h-4 w-120 min-w-0 shrink appearance-none overflow-hidden rounded-xs bg-control-bg-hovered accent-primary [&::-moz-progress-bar]:bg-primary [&::-webkit-progress-bar]:bg-control-bg-hovered [&::-webkit-progress-value]:bg-primary"

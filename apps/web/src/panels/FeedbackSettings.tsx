@@ -1,13 +1,15 @@
 import { RiExternalLinkLine as ExternalLink } from "@remixicon/react";
 import { buttonVariants } from "@thinkrail/ui/button";
-import { INTERVIEW_BOOKING_URL, INTERVIEW_INVITATION_COPY } from "./interview";
+import { useT } from "@/i18n";
+import { INTERVIEW_BOOKING_URL } from "./interview";
 
 export function FeedbackSettings() {
+	const t = useT();
 	return (
 		<section data-testid="settings-feedback" className="flex flex-col gap-16">
 			<div className="flex flex-col gap-4">
-				<h3 className="tr-title-section text-text-default">Feedback</h3>
-				<p className="text-text-muted tr-text-metadata">{INTERVIEW_INVITATION_COPY}</p>
+				<h3 className="tr-title-section text-text-default">{t("settings.feedback.title")}</h3>
+				<p className="text-text-muted tr-text-metadata">{t("settings.feedback.invitation")}</p>
 			</div>
 			<a
 				data-testid="feedback-schedule-interview"
@@ -17,7 +19,7 @@ export function FeedbackSettings() {
 				className={buttonVariants({ className: "self-start" })}
 			>
 				<ExternalLink className="size-14" />
-				Schedule an interview
+				{t("settings.feedback.schedule")}
 			</a>
 		</section>
 	);

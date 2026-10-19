@@ -21,6 +21,7 @@ import {
 	WORKSPACE_SETTLE_PROTOCOL_VERSION,
 	type Workspace,
 } from "@thinkrail/contracts";
+import { t } from "@/i18n";
 import type { LoginState } from "../auth";
 import {
 	compactAge,
@@ -824,7 +825,7 @@ export function selectChatTitle(
 ): string {
 	const tabs = state.tabsByWorkspace[workspaceId] ?? [];
 	const chatTab = tabs.find((t) => t.kind === "chat" && t.sessionId === sessionId);
-	return (chatTab?.name ?? "Chat").trim() || "Chat";
+	return (chatTab?.name ?? t("chat.defaultName")).trim() || t("chat.defaultName");
 }
 
 export function selectCompactionTurnIds(

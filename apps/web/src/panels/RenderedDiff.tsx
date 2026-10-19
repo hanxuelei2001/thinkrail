@@ -2,6 +2,7 @@ import { RiExpandUpDownLine as Expand } from "@remixicon/react";
 import { diffArrays } from "diff";
 import { createElement, type ReactNode, useEffect, useMemo, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { t } from "@/i18n";
 import type { ResourceDiffProps } from "@/resources";
 import { MarkdownDocument } from "./MarkdownPreview";
 import { focusSegments } from "./renderedDiffFocus";
@@ -291,7 +292,7 @@ export default function RenderedDiff({
 		);
 	}
 	if (view === null) {
-		return <Placeholder testid="rendered-diff-loading">Rendering diff…</Placeholder>;
+		return <Placeholder testid="rendered-diff-loading">{t("renderedDiff.loading")}</Placeholder>;
 	}
 
 	return (

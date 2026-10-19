@@ -15,6 +15,7 @@ import {
 	useMemo,
 	useState,
 } from "react";
+import { useT } from "@/i18n";
 import { prepareChatTitle } from "../chat/chatTitle";
 import { useAutoPlanSummary } from "../chat/useChatTodos";
 import { ErrorBoundary } from "../components/ErrorBoundary";
@@ -108,8 +109,13 @@ const PlanRailPane = lazy(() => import("../panels/PlanRailPane"));
 const NO_EDITOR_TABS: EditorTab[] = [];
 
 function MissingResource({ label }: { label: string }) {
+	const t = useT();
 	return (
-		<LoadingRegion rows={12} label={`Restoring ${label}`} className="h-full overflow-hidden p-16" />
+		<LoadingRegion
+			rows={12}
+			label={t("shell.resource.restoring", { label })}
+			className="h-full overflow-hidden p-16"
+		/>
 	);
 }
 
@@ -134,6 +140,7 @@ function findEditorResource(
 }
 
 function EditorResourceBody({ workspaceId, tab }: { workspaceId: string; tab: EditorResourceTab }) {
+	const t = useT();
 	const identity = layoutResourceIdentity(tab);
 	const editor = useAppStore((state) =>
 		findEditorResource(state.tabsByWorkspace[workspaceId] ?? NO_EDITOR_TABS, tab.id, identity),
@@ -141,13 +148,19 @@ function EditorResourceBody({ workspaceId, tab }: { workspaceId: string; tab: Ed
 	if (!editor) {
 		return (
 			<MissingResource
-				label={tab.kind === "file" ? "file" : tab.kind === "changes" ? "changes" : "diff"}
+				label={
+					tab.kind === "file"
+						? t("shell.resource.file")
+						: tab.kind === "changes"
+							? t("shell.resource.changes")
+							: t("shell.resource.diff")
+				}
 			/>
 		);
 	}
 	return (
 		<ErrorBoundary label="editor" resetKeys={[workspaceId, tab.id]}>
-			<Suspense fallback={<MissingResource label="editor" />}>
+			<Suspense fallback={<MissingResource label={t("shell.resource.editor")} />}>
 				{editor.kind === "file" ? (
 					<FilePane tab={editor} />
 				) : editor.kind === "diff" ? (
@@ -171,6 +184,7 @@ function ChatResourceBody({
 	tab: Extract<LayoutCenterTab, { kind: "chat" }>;
 	onOpenFile: (path: string) => void;
 }) {
+	const t = useT();
 	const available = useAppStore((state) => state.sessions[tab.sessionId] !== undefined);
 	const [stalled, setStalled] = useState(false);
 	useEffect(() => {
@@ -182,7 +196,7 @@ function ChatResourceBody({
 	if (available) {
 		return (
 			<ErrorBoundary label="chat" resetKeys={[workspaceId, tab.id]}>
-				<Suspense fallback={<MissingResource label="chat" />}>
+				<Suspense fallback={<MissingResource label={t("shell.resource.chat")} />}>
 					<ChatView sessionId={tab.sessionId} workspaceId={workspaceId} onOpenFile={onOpenFile} />
 				</Suspense>
 			</ErrorBoundary>
@@ -198,7 +212,10 @@ function ChatResourceBody({
 					!state.removedWorkspaceIds[workspaceId] &&
 					!state.deletedSessionsByWorkspace[workspaceId]?.[tab.sessionId]
 				) {
-					toast.error("The chat could not be restored.", "Couldn't restore the chat");
+					toast.error(
+						t("shell.workspace.chatRestoreError"),
+						t("shell.workspace.restoreChatFailed"),
+					);
 				}
 			})
 			.catch((error) => {
@@ -208,26 +225,27 @@ function ChatResourceBody({
 					!state.removedWorkspaceIds[workspaceId] &&
 					!state.deletedSessionsByWorkspace[workspaceId]?.[tab.sessionId]
 				) {
-					toast.error(errorText(error), "Couldn't restore the chat");
+					toast.error(errorText(error), t("shell.workspace.restoreChatFailed"));
 				}
 			});
 	};
-	if (!stalled) return <MissingResource label="chat" />;
+	if (!stalled) return <MissingResource label={t("shell.resource.chat")} />;
 	return (
 		<div className="flex h-full flex-col items-center justify-center gap-8 text-text-muted">
-			<span className="tr-text-ui">The chat is taking longer than usual to restore.</span>
+			<span className="tr-text-ui">{t("shell.workspace.chatRestoring")}</span>
 			<button
 				type="button"
 				onClick={retry}
 				className="rounded-sm border border-border-default px-8 py-4 tr-text-ui hover:bg-control-bg-hovered"
 			>
-				Retry
+				{t("common.retry")}
 			</button>
 		</div>
 	);
 }
 
 function useTerminalReservation(workspaceId: string): void {
+	const t = useT();
 	const status = useAppStore((state) => state.status);
 	const connectionGeneration = useAppStore((state) => state.connectionGeneration);
 	const pendingIntent = useAppStore((state) =>
@@ -275,15 +293,16 @@ function useTerminalReservation(workspaceId: string): void {
 				);
 				if (!stillPending) return;
 				state.rejectTerminalReservation(workspaceId, pendingIntent.tabKey);
-				toast.error(errorText(error), "Couldn't create the terminal");
+				toast.error(errorText(error), t("shell.workspace.createTerminalFailed"));
 			});
 		return () => {
 			current = false;
 		};
-	}, [connectionGeneration, pendingIntent, status, workspaceId]);
+	}, [connectionGeneration, pendingIntent, status, t, workspaceId]);
 }
 
 export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
+	const t = useT();
 	const status = useAppStore((state) => state.status);
 	const connectionGeneration = useAppStore((state) => state.connectionGeneration);
 	const canRenameChat = useAppStore(selectCanRenameChat);
@@ -320,9 +339,9 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 			if ("reason" in prepared || prepared.title === currentTitle) return;
 			void getTransport()
 				.request("session.rename", { workspaceId, sessionId, title: prepared.title })
-				.catch((error) => toast.error(errorText(error), "Couldn't rename the chat"));
+				.catch((error) => toast.error(errorText(error), t("shell.workspace.renameChatFailed")));
 		},
-		[workspaceId],
+		[workspaceId, t],
 	);
 	const activeReviewedPath = useAppStore((state) => selectActiveReviewedPath(state, workspaceId));
 	const readActiveReviewedPath = useCallback(
@@ -528,10 +547,11 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 				return <ChatResourceBody workspaceId={workspaceId} tab={tab} onOpenFile={openToolFile} />;
 			}
 			if (tab.kind === "document") {
-				if (deletedSessions?.[tab.sourceId]) return <MissingResource label="plan" />;
+				if (deletedSessions?.[tab.sourceId])
+					return <MissingResource label={t("shell.resource.plan")} />;
 				return (
 					<ErrorBoundary label="plan" resetKeys={[workspaceId, tab.id]}>
-						<Suspense fallback={<MissingResource label="plan" />}>
+						<Suspense fallback={<MissingResource label={t("shell.resource.plan")} />}>
 							<PlanPane workspaceId={workspaceId} sessionId={tab.sourceId} />
 						</Suspense>
 					</ErrorBoundary>
@@ -552,14 +572,14 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 								}
 							/>
 						) : (
-							<MissingResource label="terminal" />
+							<MissingResource label={t("shell.resource.terminal")} />
 						)}
 					</ErrorBoundary>
 				);
 			}
 			return <EditorResourceBody workspaceId={workspaceId} tab={tab} />;
 		},
-		[deletedSessions, document, openToolFile, terminalByKey, workspaceId],
+		[deletedSessions, document, openToolFile, terminalByKey, t, workspaceId],
 	);
 	const renderTabBody = useCallback(
 		(tab: LayoutCenterTab | Extract<LayoutTab, { kind: "terminal" }>) => (
@@ -593,7 +613,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 			review: <ReviewPanel key={workspaceId} workspaceId={workspaceId} failed={review.failed} />,
 			plan: railPlanSessionId ? (
 				<ErrorBoundary label="plan rail" resetKeys={[workspaceId, railPlanSessionId]}>
-					<Suspense fallback={<MissingResource label="plan" />}>
+					<Suspense fallback={<MissingResource label={t("shell.resource.plan")} />}>
 						<PlanRailPane workspaceId={workspaceId} sessionId={railPlanSessionId} />
 					</Suspense>
 				</ErrorBoundary>
@@ -602,7 +622,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 					data-testid="plan-rail-empty"
 					className="flex h-full items-center justify-center p-16 text-text-subtle tr-text-ui"
 				>
-					Open a chat to see its plan here.
+					{t("shell.workspace.openChatForPlan")}
 				</div>
 			),
 		};
@@ -614,7 +634,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 			);
 		}
 		return bodies;
-	}, [railPlanSessionId, review.failed, specs.failed, specs.reload, workspaceId]);
+	}, [railPlanSessionId, review.failed, specs.failed, specs.reload, t, workspaceId]);
 	const renderToolBody = useCallback((tool: LayoutToolId) => toolBodies[tool], [toolBodies]);
 
 	const isDefault = workspace != null && isDefaultWorkspace(workspace);
@@ -654,11 +674,11 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 							: "shrink-0 tr-text-eyebrow text-text-subtle"
 					}
 				>
-					Review
+					{t("shell.workspace.reviewFlag")}
 				</span>
 			) : null;
 		},
-		[reviewDraftCount, reviewFlagByPath],
+		[reviewDraftCount, reviewFlagByPath, t],
 	);
 
 	const renderEmptyCenter = useCallback(
@@ -668,7 +688,11 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 				className="flex h-full flex-col items-center justify-center gap-4 px-16 text-center"
 			>
 				<span className="tr-text-eyebrow text-text-muted">
-					{isDefault ? "Default workspace" : isExternal ? "Existing worktree" : "Workspace ready"}
+					{isDefault
+						? t("shell.workspace.defaultWorkspace")
+						: isExternal
+							? t("shell.workspace.existingWorktree")
+							: t("shell.workspace.ready")}
 				</span>
 				{workspace ? (
 					<>
@@ -678,11 +702,15 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 						<p className="flex max-w-full items-center gap-4 tr-text-metadata text-text-muted">
 							<GitBranch className="size-14 shrink-0" />
 							{isDefault || isExternal ? (
-								<span className="truncate">on {workspace.branch}</span>
+								<span className="truncate">
+									{t("shell.workspace.onBranch", { branch: workspace.branch })}
+								</span>
 							) : (
 								<>
 									<span className="truncate">{workspace.branch}</span>
-									<span className="shrink-0 text-text-muted">· from {workspace.baseBranch}</span>
+									<span className="shrink-0 text-text-muted">
+										{t("shell.workspace.fromBranch", { base: workspace.baseBranch })}
+									</span>
 								</>
 							)}
 						</p>
@@ -690,8 +718,8 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 				) : null}
 				<p className="mt-4 tr-text-ui text-text-muted">
 					{isDefault
-						? "Chats, changes, and terminals run directly in your project folder."
-						: "Files, chats, changes, and terminals are scoped to this workspace."}
+						? t("shell.workspace.defaultDescription")
+						: t("shell.workspace.scopedDescription")}
 				</p>
 				<button
 					type="button"
@@ -703,17 +731,18 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 				>
 					{chatStarting ? (
 						<>
-							<Loader2 className="size-14 animate-spin motion-reduce:animate-none" /> Starting chat…
+							<Loader2 className="size-14 animate-spin motion-reduce:animate-none" />{" "}
+							{t("shell.workspace.startingChat")}
 						</>
 					) : (
 						<>
-							<MessageSquarePlus className="size-14" /> New chat
+							<MessageSquarePlus className="size-14" /> {t("shell.workspace.newChat")}
 						</>
 					)}
 				</button>
 			</div>
 		),
-		[chatStarting, contextProject, isDefault, isExternal, startChat, workspace],
+		[chatStarting, contextProject, isDefault, isExternal, startChat, t, workspace],
 	);
 
 	const renderCenterActions = useCallback(
@@ -725,11 +754,11 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 					targetGroupId={groupId}
 					{...(canRenameChat ? { onRenameChat: requestRenameChat } : {})}
 				/>
-				<IconTooltip label="New terminal in this group">
+				<IconTooltip label={t("shell.workspace.newTerminal")}>
 					<button
 						type="button"
 						data-testid="new-terminal"
-						aria-label="New terminal in this group"
+						aria-label={t("shell.workspace.newTerminal")}
 						onClick={() => useAppStore.getState().addTerminal(workspaceId, undefined, groupId)}
 						className="flex w-panel-header-row shrink-0 items-center justify-center border-border-default border-l text-text-muted hover:bg-control-bg-hovered hover:text-text-default"
 					>
@@ -738,13 +767,13 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 				</IconTooltip>
 			</>
 		),
-		[canRenameChat, requestRenameChat, workspaceId],
+		[canRenameChat, requestRenameChat, t, workspaceId],
 	);
 
 	if (!rendered) {
 		return (
 			<div className="flex h-full items-center justify-center bg-container-content-bg tr-text-ui text-text-muted">
-				Restoring workspace layout…
+				{t("shell.workspace.restoringLayout")}
 			</div>
 		);
 	}
@@ -861,7 +890,7 @@ export function WorkspaceWorkbench({ workspaceId }: { workspaceId: string }) {
 							options?.newPaneBelow === true,
 						)
 				}
-				onGestureCanceled={() => toast.info("The layout changed. Your drag was canceled.")}
+				onGestureCanceled={() => toast.info(t("shell.workspace.dragCanceled"))}
 			/>
 			{terminalClose.confirmation}
 		</div>
