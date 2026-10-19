@@ -14,6 +14,7 @@ import {
 import { IconTooltip } from "@thinkrail/ui/tooltip";
 import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useNow } from "@/components/useNow";
+import { fileName, platformShortcutLabel, relativeTime } from "@/lib";
 import { useT } from "@/i18n";
 import { platformShortcutLabel, relativeTime } from "@/lib";
 import {
@@ -270,7 +271,7 @@ function MessageRow({
 			>
 				<span className="flex items-center gap-4 text-text-muted tr-text-metadata">
 					<span className="truncate">
-						{hit.sessionTitle || hit.cwd.split("/").pop() || t("chat.history.sessionFallback")}
+						{hit.sessionTitle || fileName(hit.cwd) || t("chat.history.sessionFallback")}
 					</span>
 					<span>·</span>
 					<span>{hit.role}</span>
@@ -343,7 +344,7 @@ function HistoryPreview({
 }
 
 function messageCrumb(hit: MessageHit, now: number, t: ReturnType<typeof useT>): string {
-	return `${hit.sessionTitle || hit.cwd.split("/").pop() || t("chat.history.sessionFallback")} · ${hit.role} · ${relativeTime(hit.timestamp, now)}`;
+	return `${hit.sessionTitle || fileName(hit.cwd) || t("chat.history.sessionFallback")} · ${hit.role} · ${relativeTime(hit.timestamp, now)}`;
 }
 
 export interface HistoryOverlayProps {
