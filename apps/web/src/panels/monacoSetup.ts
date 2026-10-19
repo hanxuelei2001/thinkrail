@@ -87,7 +87,7 @@ function cssVar(name: string): string | undefined {
 }
 
 export function fileEditorOptions(lineWidth: number, bounded: boolean, path: string) {
-	const fontSize = Number.parseFloat(cssVar("--tr-font-size-s11") ?? "") || 11;
+	const fontSize = Number.parseFloat(cssVar("--tr-font-size-s14") ?? "") || 11;
 	const lineHeight = Number.parseFloat(cssVar("--tr-line-height-default") ?? "") || undefined;
 	const paddingTop = Number.parseFloat(cssVar("--space-8") ?? "");
 	const options: editor.IStandaloneEditorConstructionOptions = {

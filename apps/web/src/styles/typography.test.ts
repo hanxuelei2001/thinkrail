@@ -427,13 +427,13 @@ describe("generated CSS", () => {
 
 	it("exposes the code family + size tokens Monaco and xterm read", () => {
 		expect(GENERATED).toContain("--tr-font-family-code:");
-		expect(GENERATED).toContain("--tr-font-size-s11: 11px;");
+		expect(GENERATED).toContain("--tr-font-size-s14: 14px;");
 		expect(GENERATED).toContain("--tr-font-size-s13: 13px;");
 		expect(GENERATED).toContain("--tr-line-height-default: 1.3;");
 		expect(GENERATED).toContain("--tr-code-row-height: 14px;");
 		const monaco = read(join(SRC, "panels/monacoSetup.ts"));
 		const xterm = read(join(SRC, "panels/TerminalInstance.tsx"));
-		expect(monaco).toContain('cssVar("--tr-font-size-s11")');
+		expect(monaco).toContain('cssVar("--tr-font-size-s14")');
 		expect(xterm).toContain('cssVar("--tr-font-size-s13")');
 		for (const file of [monaco, xterm]) {
 			expect(file).toContain('cssVar("--tr-font-family-code")');

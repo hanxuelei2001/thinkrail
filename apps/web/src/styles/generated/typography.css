@@ -31,10 +31,10 @@
 
 	/* Font sizes (px) */
 	--tr-font-size-s10: 10px;
-	--tr-font-size-s11: 14px;
+	--tr-font-size-s11: 11px;
 	--tr-font-size-s12: 12px;
 	--tr-font-size-s13: 13px;
-	--tr-font-size-s14: 16px;
+	--tr-font-size-s14: 14px;
 	--tr-font-size-s16: 16px;
 	--tr-font-size-s18: 18px;
 	--tr-font-size-s20: 20px;
@@ -150,7 +150,7 @@
 }
 .tr-title-compact {
 	font-family: var(--tr-font-family-interface);
-	font-size: var(--tr-font-size-s12);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-medium);
 	line-height: var(--tr-line-height-default);
 	letter-spacing: var(--tr-letter-spacing-normal);
@@ -177,7 +177,7 @@
 }
 .tr-text-metadata {
 	font-family: var(--tr-font-family-interface);
-	font-size: var(--tr-font-size-s12);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-light);
 	line-height: var(--tr-line-height-metadata);
 	letter-spacing: var(--tr-letter-spacing-normal);
@@ -186,7 +186,7 @@
 }
 .tr-text-eyebrow {
 	font-family: var(--tr-font-family-interface);
-	font-size: var(--tr-font-size-s12);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-medium);
 	line-height: var(--tr-line-height-relaxed);
 	letter-spacing: var(--tr-letter-spacing-loose);
@@ -195,7 +195,7 @@
 }
 .tr-text-label-pill {
 	font-family: var(--tr-font-family-interface);
-	font-size: var(--tr-font-size-s12);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-medium);
 	line-height: var(--tr-line-height-relaxed);
 	letter-spacing: var(--tr-letter-spacing-loose);
@@ -213,7 +213,7 @@
 }
 .tr-text-action {
 	font-family: var(--tr-font-family-interface);
-	font-size: var(--tr-font-size-s12);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-medium);
 	line-height: var(--tr-line-height-default);
 	letter-spacing: var(--tr-letter-spacing-normal);
@@ -222,7 +222,7 @@
 }
 .tr-text-emphasis {
 	font-family: var(--tr-font-family-interface);
-	font-size: var(--tr-font-size-s12);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-medium);
 	line-height: var(--tr-line-height-default);
 	letter-spacing: var(--tr-letter-spacing-normal);
@@ -267,7 +267,7 @@
 }
 .tr-code-text-small {
 	font-family: var(--tr-font-family-code);
-	font-size: var(--tr-font-size-s11);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-regular);
 	line-height: var(--tr-line-height-code);
 	letter-spacing: var(--tr-letter-spacing-normal);
@@ -305,7 +305,7 @@
 }
 .tr-prose-chat h3 {
 	font-family: var(--tr-font-family-interface);
-	font-size: var(--tr-font-size-s12);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-semibold);
 	line-height: var(--tr-line-height-default);
 	letter-spacing: var(--tr-letter-spacing-normal);
@@ -314,7 +314,7 @@
 }
 .tr-prose-chat h4 {
 	font-family: var(--tr-font-family-interface);
-	font-size: var(--tr-font-size-s12);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-medium);
 	line-height: var(--tr-line-height-default);
 	letter-spacing: var(--tr-letter-spacing-normal);
@@ -323,7 +323,7 @@
 }
 .tr-prose-chat h5 {
 	font-family: var(--tr-font-family-interface);
-	font-size: var(--tr-font-size-s12);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-medium);
 	line-height: var(--tr-line-height-default);
 	letter-spacing: var(--tr-letter-spacing-normal);
@@ -377,7 +377,7 @@
 }
 .tr-prose-chat :is(table, td) {
 	font-family: var(--tr-font-family-interface);
-	font-size: var(--tr-font-size-s12);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-light);
 	line-height: var(--tr-line-height-metadata);
 	letter-spacing: var(--tr-letter-spacing-normal);
@@ -386,7 +386,7 @@
 }
 .tr-prose-chat th {
 	font-family: var(--tr-font-family-interface);
-	font-size: var(--tr-font-size-s12);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-semibold);
 	line-height: var(--tr-line-height-default);
 	letter-spacing: var(--tr-letter-spacing-normal);
@@ -395,7 +395,7 @@
 }
 .tr-prose-chat :is(td, th) > code {
 	font-family: var(--tr-font-family-code);
-	font-size: var(--tr-font-size-s11);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-regular);
 	line-height: var(--tr-line-height-code);
 	letter-spacing: var(--tr-letter-spacing-normal);
@@ -464,7 +464,7 @@
 }
 .tr-prose-doc h6 {
 	font-family: var(--tr-font-family-interface);
-	font-size: var(--tr-font-size-s12);
+	font-size: var(--tr-font-size-s14);
 	font-weight: var(--tr-font-weight-semibold);
 	line-height: var(--tr-line-height-compact);
 	letter-spacing: var(--tr-letter-spacing-wide);
