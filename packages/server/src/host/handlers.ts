@@ -108,6 +108,7 @@ import {
 	inspectProjectPath,
 	listProjects,
 	openProject,
+	renameProject,
 	setProjectGroupEnabled,
 	setProjectSkillEnabled,
 	setProjectTrust,
@@ -202,6 +203,7 @@ import {
 	mcpReadOutput,
 	mcpReconnect,
 	mcpRemove,
+	mcpRevokeToolGrant,
 	mcpSetProjectOverride,
 	mcpSetSessionOverride,
 	mcpShareWithRepo,
@@ -445,6 +447,7 @@ const handlers: WsHandlers = {
 		closeProject(params.id);
 		return { ok: true } as const;
 	},
+	"project.rename": (params) => renameProject(params.id, params.name),
 	"project.setTrust": async (p) => {
 		const project = listProjects().find((candidate) => candidate.id === p.id);
 		if (!project) throw new Error(`Unknown project: ${p.id}`);
@@ -945,6 +948,7 @@ const handlers: WsHandlers = {
 	"mcp.update": (params) => mcpUpdate(params),
 	"mcp.remove": (params) => mcpRemove(params),
 	"mcp.setProjectOverride": (params) => mcpSetProjectOverride(params),
+	"mcp.revokeToolGrant": (params) => mcpRevokeToolGrant(params),
 	"mcp.setSessionOverride": (params) => mcpSetSessionOverride(params),
 	"mcp.approve": (params) => mcpApprove(params),
 	"mcp.shareWithRepo": (params) => mcpShareWithRepo(params),

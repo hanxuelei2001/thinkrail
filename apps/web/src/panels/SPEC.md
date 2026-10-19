@@ -40,7 +40,10 @@ treatment.
   ~700ms long press is its touch equivalent. With a project-name button focused, the standard Context Menu
   key or Shift+F10 opens the same menu for keyboard-only use; arrow/activate/Escape keys work normally.
   The menu is neutral: **Plus Create workspace**, **FolderOpen Open existing worktree…**, separator,
-  **X Close project**. Create is exactly the direct `+` flow. Open existing worktree opens the
+  **Pencil Rename** (only when the host's protocol is at least `PROJECT_RENAME_PROTOCOL_VERSION`), **X Close
+  project**. Rename swaps the project name for the same inline input as workspace rename (Enter/blur
+  commits a changed trimmed name via `project.rename`, Escape cancels) and waits for the `project.updated`
+  push — no optimistic label; rejection raises an error toast. Create is exactly the direct `+` flow. Open existing worktree opens the
   `ExistingWorktreeDialog` chooser fed by `workspace.listExisting` (branch + absolute path per row;
   detached-HEAD rows stay visible but disabled); choosing one calls `workspace.openExisting`, then expands
   the project and activates the attached row without starting a chat. Close
@@ -63,7 +66,7 @@ treatment.
   `workspace.openIn`, while terminal-kind Vim activates the workspace and runs through `addTerminal`'s
   one-shot `initialCommand`. Copy writes `worktreePath`; Reveal calls `workspace.reveal`. These requests,
   `editor.list`, the project workspace-list load, the remove confirm (`RemoveWorkspaceDialog`), and the
-  inline-rename controller below (`createRenameController` / `useWorkspaceRename`) live once in
+  inline-rename controller below (`createRenameController` / `useInlineRename`, shared with project rename) live once in
   `workspaceActions.ts` so the shell's topbar workspace menu ([[submodule-web-shell-location-bar]]) offers
   the same actions — including the capability-aware pending rename — without a second implementation. The
   controller dispatches to the workspace captured when the edit started and resets when the hook's
@@ -513,8 +516,8 @@ a project picker, the prompt hero, and the reused
   toast. Open a chat closes Settings and starts a chat in the workspace through `openChat`'s
   `startChatInTab`, the same path as the workbench's New chat. Show log opens `McpLogDialog`: pi's last
   report for the server (`detail`, with a stdio server's stderr tail) and its lines from pi's `mcp.log`
-  (`mcp.readLog`, masked by the host). Details lists no tools: no payload carries tool names yet (pi's
-  `/mcp` text and `SessionResources` report a count). Attention
+  (`mcp.readLog`, masked by the host). Details lists no tools: apart from always-allowed ones, no payload
+  carries tool names yet (pi's `/mcp` text and `SessionResources` report a count). Attention
   rows sort first and disabled rows stay listed last; `handledElsewhere` makes the section read-only with a
   notice (`mcpHandledElsewhereText`): "MCP is handled by <path> in this workspace; ThinkRail's MCP
   management is read-only." for a replacing extension, and for the host's `by: "pi settings
@@ -590,8 +593,13 @@ a project picker, the prompt hero, and the reused
   `mcp.login` / `mcp.testConnection` and reuse `auth/LoginDialog` as Providers does: the login state keeps
   the push's `target`, so only an MCP login for this workspace opens this section's dialog (Providers
   ignores it, and so does the section shown for another workspace), and the sign-in page opens only from
-  the dialog's button. A banner reads "ThinkRail asks before MCP calls that may
-  change data (per chat); no saved rules yet"; the empty state offers presets, the form, JSON import and a
+  the dialog's button. A banner reads "ThinkRail asks in the chat before MCP calls that may change data.
+  Always allow trusts a tool in every chat of this project; those tools are listed on their server
+  below." A row whose summary carries `alwaysAllowed` shows an **Always allowed in this project:** line
+  of tool chips (the host's `label`, the pi tool name as title) — the scope is spelled out because the
+  row's USER chip describes the server, not the grant; each chip's × ("Ask again before <tool> in this
+  project") sends `mcp.revokeToolGrant` through `requestMcpList` and is
+  disabled while the row is read-only or busy. This is the only place grants are revoked. The empty state offers presets, the form, JSON import and a
   host notice. Live sections: **`ProvidersSettings`** (the in-app
   provider-auth surface — a header line with an in-page **Refresh** (`providers-refresh`, disabled while a
   status read is in flight) over the groups **Connected** (each row with a **Sign-out only when

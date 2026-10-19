@@ -176,7 +176,15 @@ default, narrow cross-ring guards, and the quit-confirmation rule both clients d
     workspace coupling, or new push channel crosses the wire; session ids remain canonical.
   - the **extension-UI frames** **`ExtUiRequest`** / **`ExtUiResponse`** — our wire shape for pi's in-process
     `uiContext` calls (`select`/`confirm`/`input`/`editor` round-trip; `notify`/`setStatus`/`setWidget`/
-    `setTitle`/`dismiss` are fire-and-forget), carried on the `pi.extensionUi` channel.
+    `setTitle`/`dismiss` are fire-and-forget), carried on the `pi.extensionUi` channel. A round-trip
+    request's optional `toolCallId` names the tool call it is about; absent, it is tied to none (the host
+    anchors a dialog only when it knows the call: explicitly, or while exactly one call runs). An explicit
+    anchor may add `toolInput` — the input that call will run with, as the asking host saw it — which the
+    client lists in full inside the prompt. Both fields are additive: an older client ignores them, an
+    older host never sends them. A pending dialog ends with the
+    client's `session.extUiReply` or a host `dismiss` frame; the host dismisses it on abort, dispose, or
+    when it accepts a user message for that chat (a message an extension handles or preflight rejects
+    leaves it pending), so a client never treats its own message send as an answer.
   - the **`ask_user_question`** wire types — **`AskUserQuestionArgs`** (`AskUserQuestionItem` + `AskUserQuestionOption`
     — the latter carries an optional `recommendedReason` the card renders inline as a `Why:` line under the
     option: the questions the agent authors, what the tool card reads from the `toolCall` block),
@@ -495,7 +503,7 @@ default, narrow cross-ring guards, and the quit-confirmation rule both clients d
   ready, and installing are distinct states. The window-controls bridge exposes the same
   snapshot/action/subscription shape for window state. The shortcuts bridge pushes quit-hint changes
   (`hidden` / `armed` / `release` / `quitting`) and `NativeCommand` ids (today `close-item`, close the
-  focused in-app item), and its one action `quit()` asks the host for an ordinary coordinated quit. The
+  focused in-app item, and `open-settings`, open Settings unless a modal is open), and its one action `quit()` asks the host for an ordinary coordinated quit. The
   notification bridge exposes `show({ title, subtitle?, body, silent? })` (fire-and-forget OS notification,
   no callback or id) and an optional `isWindowFocused()` that reports OS-level window focus — true even
   when DevTools has renderer focus, unlike `document.hasFocus()`. A browser
@@ -515,7 +523,10 @@ default, narrow cross-ring guards, and the quit-confirmation rule both clients d
   `host.update`; no output, arbitrary diagnostic, feed URL, artifact, platform path, or shell command crosses
   the wire.
 - **wsProtocol.ts** — `WS_METHODS` (`project.*` — incl. **`project.close`** (mark the stable record
-  closed without deleting associated state), **`project.inspect`** (classify a path) + **`project.init`**
+  closed without deleting associated state), **`project.rename`** (`{ id, name }` → the updated `Project`;
+  changes only the display `name` — path, slug, and id stay — and broadcasts the full `project.updated`;
+  `PROJECT_RENAME_PROTOCOL_VERSION` pins its v85 introduction so a newer client omits the action against
+  an older host), **`project.inspect`** (classify a path) + **`project.init`**
   (`git init` + commit, then open) + **`project.hasSpecs`** (lazy per-project "contains a registered
   spec?" for the Welcome screen — a full-tree walk, so requested only for the shown project,
   never eagerly for every project) / `workspace.*` — notably **`workspace.list { projectId,
@@ -808,7 +819,9 @@ contracts only.
   `Project.mcpApprovals` maps a repo-defined server name to the fingerprint of its whole `.pi/mcp.json`
   entry (the entry loads only while it still has that fingerprint, so an edit lapses the approval), and
   `Project.mcpOverrides` holds the project's enablement and exposure of user-level servers, never written
-  to `.pi/mcp.json`; `ProjectTrustSummary.mcpServers` counts the repository's entries (see Project trust).
+  to `.pi/mcp.json`; `Project.mcpToolGrants` (`McpToolGrant`: the "Always allow" pi tool names plus the
+  `target` hash of the command + args or URL they were granted for) is likewise record-only;
+  `ProjectTrustSummary.mcpServers` counts the repository's entries (see Project trust).
   That count is optional because project-trust hosts predating MCP omit it; clients interpret absence as zero.
 - Every request names its target: `workspaceId` for configuration (project scope = that workspace's
   `.pi/mcp.json`; `user` = the global file), plus `sessionId` for per-session actions (`reconnect`,
@@ -833,7 +846,11 @@ contracts only.
   are read even with no chat open (`by: "pi settings (-builtin:mcp)"` — Settings recognises that exact
   value to say which entry to remove, so it stays stable), a replacing extension is seen through a live
   chat (`by` = its path).
-- Mutations (`add`, `update`, `remove`, `setProjectOverride`, `approve`, `shareWithRepo`) re-check that
+- `MCP_TOOL_GRANTS_PROTOCOL_VERSION` (84) adds the optional `McpServerSummary.alwaysAllowed`
+  (`{ tool, label }`: grants still valid for the effective entry, listed on that row only) and
+  `mcp.revokeToolGrant { workspaceId, name, tool }`, a record-only mutation like `setProjectOverride`.
+  An older host never lists grants, so a client needs no gate to hide the revoke.
+- Mutations (`add`, `update`, `remove`, `setProjectOverride`, `approve`, `shareWithRepo`, `revokeToolGrant`) re-check that
   ownership and the current project policy in the same synchronous step as the write and fail with `MCP_HANDLED_ELSEWHERE` where
   `mcp.list` would set `handledElsewhere`, so a stale client cannot write while another manager owns MCP; they return the fresh
   list without waiting for the open chats to reload; `mcp.status` pushes report each reload, so the returned

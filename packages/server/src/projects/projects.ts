@@ -2,7 +2,12 @@ import { randomUUID } from "node:crypto";
 import { rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import type { McpProjectOverride, Project, ProjectPathStatus } from "@thinkrail/contracts";
+import type {
+	McpProjectOverride,
+	McpToolGrant,
+	Project,
+	ProjectPathStatus,
+} from "@thinkrail/contracts";
 import { CodedError } from "@thinkrail/shared/codedError";
 import { canonicalPath, git } from "../git";
 import { loadProjects, loadWorkspaces, saveProjects } from "../persistence";
@@ -136,6 +141,22 @@ export function closeProject(id: string): Project {
 	return project;
 }
 
+const PROJECT_NAME_MAX_LENGTH = 100;
+
+export function renameProject(id: string, requestedName: string): Project {
+	const name = requestedName.replace(/\s+/g, " ").trim();
+	if (!name || name.length > PROJECT_NAME_MAX_LENGTH)
+		throw new Error(`Invalid project name: ${requestedName}`);
+	const projects = getProjects();
+	const project = projects.find((candidate) => candidate.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	if (project.name === name) return project;
+	project.name = name;
+	saveProjects(projects);
+	emit(project);
+	return project;
+}
+
 export function setProjectTrust(
 	id: string,
 	trusted: boolean,
@@ -206,6 +227,49 @@ export function setProjectMcpOverride(
 	}
 	if (Object.keys(overrides).length === 0) delete project.mcpOverrides;
 	else project.mcpOverrides = overrides;
+	saveProjects(projects);
+	return project;
+}
+
+function setOwn<T>(record: Record<string, T>, key: string, value: T): void {
+	Object.defineProperty(record, key, {
+		value,
+		enumerable: true,
+		configurable: true,
+		writable: true,
+	});
+}
+
+export function grantProjectMcpTool(
+	id: string,
+	name: string,
+	target: string,
+	tool: string,
+): Project {
+	const projects = getProjects();
+	const project = projects.find((p) => p.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	const grants: Record<string, McpToolGrant> = { ...project.mcpToolGrants };
+	const current = Object.hasOwn(grants, name) ? grants[name] : undefined;
+	const tools = current?.target === target ? current.tools.filter((t) => t !== tool) : [];
+	setOwn(grants, name, { target, tools: [...tools, tool] });
+	project.mcpToolGrants = grants;
+	saveProjects(projects);
+	return project;
+}
+
+export function revokeProjectMcpTool(id: string, name: string, tool: string): Project {
+	const projects = getProjects();
+	const project = projects.find((p) => p.id === id);
+	if (!project) throw new Error(`Unknown project: ${id}`);
+	const grants: Record<string, McpToolGrant> = { ...project.mcpToolGrants };
+	const current = Object.hasOwn(grants, name) ? grants[name] : undefined;
+	if (!current) return project;
+	const tools = current.tools.filter((t) => t !== tool);
+	if (tools.length === 0) delete grants[name];
+	else setOwn(grants, name, { target: current.target, tools });
+	if (Object.keys(grants).length === 0) delete project.mcpToolGrants;
+	else project.mcpToolGrants = grants;
 	saveProjects(projects);
 	return project;
 }

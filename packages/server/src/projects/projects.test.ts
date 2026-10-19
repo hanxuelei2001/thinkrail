@@ -10,16 +10,20 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Project } from "@thinkrail/contracts";
 import {
 	approveProjectMcpServer,
 	closeProject,
 	getProjects,
+	grantProjectMcpTool,
 	initProject,
 	inspectProjectPath,
 	isProjectTrusted,
 	listProjects,
 	listRecentProjects,
 	openProject,
+	renameProject,
+	revokeProjectMcpTool,
 	setPiTrustSeed,
 	setProjectMcpOverride,
 	setProjectPublisher,
@@ -282,6 +286,29 @@ test("closeProject rejects an unknown id instead of reporting a success with no 
 	expect(published).toEqual([]);
 });
 
+test("renameProject changes only the display name, publishes it, and survives close/reopen", () => {
+	const repo = join(dataDir, "repo");
+	makeRepo(repo);
+	const project = openProject(repo);
+	const published: string[] = [];
+	setProjectPublisher((snapshot) => published.push(snapshot.name));
+
+	const renamed = renameProject(project.id, "  My\n  Project  ");
+
+	expect(renamed).toMatchObject({
+		id: project.id,
+		name: "My Project",
+		path: project.path,
+		slug: project.slug,
+	});
+	expect(published).toEqual(["My Project"]);
+	closeProject(project.id);
+	expect(openProject(repo).name).toBe("My Project");
+	expect(() => renameProject(project.id, "   ")).toThrow("Invalid project name");
+	expect(() => renameProject(project.id, "x".repeat(101))).toThrow("Invalid project name");
+	expect(() => renameProject("missing", "Name")).toThrow("Unknown project: missing");
+});
+
 test("setProjectTrust: persists a revocable, fail-closed trust decision", () => {
 	const repo = join(dataDir, "repo");
 	makeRepo(repo);
@@ -341,7 +368,9 @@ function writeProjects(records: object[]): void {
 	writeFileSync(join(dataDir, "projects.json"), JSON.stringify(records));
 }
 
-function storedProjects(): Array<{ id: string; piResourceTrust?: string; trusted?: boolean }> {
+function storedProjects(): Array<
+	Pick<Project, "mcpToolGrants"> & { id: string; piResourceTrust?: string; trusted?: boolean }
+> {
 	return JSON.parse(readFileSync(join(dataDir, "projects.json"), "utf8"));
 }
 
@@ -404,4 +433,30 @@ test("MCP approvals and per-project overrides persist in the project record and 
 	expect(cleared.mcpOverrides).toBeUndefined();
 	expect(storedProjects()[0]).not.toHaveProperty("mcpOverrides");
 	expect(() => approveProjectMcpServer("nope", "x", "y")).toThrow();
+});
+
+test("MCP tool grants: deduplicated per server, reset by a new target, removed with the last tool", () => {
+	const repo = join(dataDir, "mcp-grants");
+	makeRepo(repo);
+	const project = openProject(repo);
+
+	grantProjectMcpTool(project.id, "linear", "t1", "mcp__linear__create_issue");
+	grantProjectMcpTool(project.id, "linear", "t1", "mcp__linear__create_issue");
+	grantProjectMcpTool(project.id, "linear", "t1", "mcp__linear__comment");
+	grantProjectMcpTool(project.id, "__proto__", "t9", "mcp____proto____x");
+	expect(storedProjects()[0]?.mcpToolGrants).toEqual({
+		linear: { target: "t1", tools: ["mcp__linear__create_issue", "mcp__linear__comment"] },
+		["__proto__"]: { target: "t9", tools: ["mcp____proto____x"] },
+	});
+
+	const moved = grantProjectMcpTool(project.id, "linear", "t2", "mcp__linear__comment");
+	expect(moved.mcpToolGrants?.linear).toEqual({ target: "t2", tools: ["mcp__linear__comment"] });
+
+	expect(
+		revokeProjectMcpTool(project.id, "linear", "missing").mcpToolGrants?.linear?.tools,
+	).toEqual(["mcp__linear__comment"]);
+	revokeProjectMcpTool(project.id, "linear", "mcp__linear__comment");
+	const cleared = revokeProjectMcpTool(project.id, "__proto__", "mcp____proto____x");
+	expect(cleared.mcpToolGrants).toBeUndefined();
+	expect(storedProjects()[0]).not.toHaveProperty("mcpToolGrants");
 });

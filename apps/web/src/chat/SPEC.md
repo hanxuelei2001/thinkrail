@@ -350,9 +350,50 @@ because pi names MCP tools per server), else the default. Exact names always win
 matches, and extension descriptors stay exact-name only.
 
 Unregistered tools fall back to `DefaultToolRenderer`. Tools needing user input mid-run either route
-through the extension-UI bridge (`pi.extensionUi` → `ExtUiDialog`) or — for a rich inline card — render
-from their `toolCall` args and reply through **`ChatActions`** (see below). Worked example: the
+through the extension-UI bridge (`pi.extensionUi` → `ExtUiPrompt`, below) or — for a rich inline card —
+render from their `toolCall` args and reply through **`ChatActions`** (see below). Worked example: the
 `ask_user_question` flow in [tools/SPEC.md](tools/SPEC.md).
+
+**Extension dialogs ask inside the chat, never in a modal** (`ExtUiPrompt.tsx`). Every pi
+`select`/`confirm`/`input`/`editor` request renders as an inline prompt under the shared
+`AttentionLine` ("Your input is needed · Agent is waiting", also used by `ask_user_question`): a select is
+one button per option in the extension's order with no extra Cancel (a chat message is the escape: the
+host cancels every pending dialog when it accepts a user message, and the prompt says so in a footer
+hint — "Sending a chat message cancels this request."), confirm is Cancel/OK, input and editor a field
+plus Cancel/Submit. The title's first line is the question and names the region and its fields
+(`aria-labelledby`, the hint as `aria-describedby`); later lines are muted supporting text, so a host
+can add context without a contract field. Option buttons wrap long labels, and below a 28rem prompt
+(`@container` / `@max-md`) every row stacks into one column so no two choices sit side by side by
+accident (the MCP order keeps Deny furthest from Always allow). It never takes focus from the composer.
+**Arrival:** `ChatTranscript` keeps one always-mounted polite live region outside virtualization and
+fills it a frame after each new request ("Your input is needed: <question>"), once per request; an
+anchored prompt's first mount reveals itself (`revealChatElement`, `automatic-attention`, `block:
+"nearest"` under the breadcrumb inset; the first pointer/key/wheel yields), later remounts do not
+(`PendingExtUi.claimReveal`). A row virtualized away gets no reveal, as with `ask_user_question`; the live
+region and the needs-input marker still tell the user. **Bounds:** the docked prompt is capped at 60% of
+the chat height (`max-h-[60cqh]`); its body (question, field, select options) scrolls while Cancel/Submit
+and the hint stay put, and the editor is capped at 40%. On the way out it follows the
+`ask_user_question` hand-off ([tools/SPEC.md](tools/SPEC.md)): answering unmounts the focused control, so
+when the prompt still holds `:focus-visible` focus it hands focus back to the composer
+(`ChatActions.focusComposer`) instead of stranding it on `<body>`; a tap/click answer leaves focus alone. `ChatTranscript` owns the session's
+`pendingExtUi`, its `session.extUiReply`, and `PendingExtUiContext`. The typed input/editor draft lives
+in that per-request `PendingExtUi` (`draft()` / `rememberDraft`), not in the prompt: folding a group
+open or shut, virtualization and the dock-to-card move remount the prompt, and the draft must survive
+them; a reply or dismissal ends the request and its draft with it. The draft is not persisted across a
+chat-view remount. A request whose `toolCallId` is in the
+rows (`rowsHaveToolCall`) asks **on that tool**: the tool shell — `ToolCard`, the routine step row and a
+bare tool's wrapper — renders `ToolPromptSlot` under its header regardless of the tool's own fold, so no
+renderer needs prompt code (the MCP approval included). A request carrying `toolInput` lists it **inside
+the prompt frame**, between the question and the options: one `ToolArgList` row per argument (the
+`key / value` list `McpArgs` shares), wrapping, bounded to 40vh with its own scroll — never truncated,
+never behind "Show more" — so what is approved sits inside the box the user answers, whether the prompt is
+anchored or docked. The tool card keeps the reader's fold. *Rejected:* auto-expanding the awaiting card —
+the arguments landed outside the prompt, and a call the transcript does not hold (an MCP `codemode`
+nested call) has no card at all. A collapsed Activity or thinking group shows just the awaiting step under
+its header (`AwaitingStep`) and folds back once answered; it never writes fold state, so the reader's
+manual collapse survives. Any other request (no anchor, or one the transcript does not hold) docks under the transcript, above the composer, outside the virtualized list so it is visible in
+both message orders. *Rejected:* keeping the modal for non-MCP extensions — every dialog had the same
+"strange popup" problem, and an anchored prompt shows exactly what is being approved.
 
 ## Interaction seams
 
@@ -727,8 +768,11 @@ from their `toolCall` args and reply through **`ChatActions`** (see below). Work
   "All models" row while a shortlist exists and expanded by search. Each provider group is collapsible: its
   header is itself a cmdk row (`model-group-toggle`, `aria-expanded`, Enter toggles) carrying the match
   count, and a picker opens with every group collapsed except the current model's (none when that model
-  is pinned); a search opens every matching group, each still collapsible for that search. Pinned models
-  are never repeated inside groups. Headers, counts and rows are matched by the pickers' own cmdk `filter`
+  is pinned); a search opens every matching group, each still collapsible for that search. The header
+  reads as a section header (emphasis-weight name, vendor glyph), each group after the first is set
+  off by a divider, and its rows are indented under the header and drop their own vendor glyph and
+  provider word (the header carries both) — a flat, unpadded list made headers and models hard to tell
+  apart. Pinned models are never repeated inside groups. Headers, counts and rows are matched by the pickers' own cmdk `filter`
   (`chat/pickerGroups.ts`, a port of cmdk's default scorer), so a header matches when any of its models
   does and its count equals the rows it reveals. With no query and no models the list reads "No models to
   show. Connect a provider, or show hidden models in Settings → Models → Visible models."; "No models
@@ -764,7 +808,7 @@ from their `toolCall` args and reply through **`ChatActions`** (see below). Work
   and constrained widths clip/truncate TODO + status/usage text while preserving the trailing Skills
   action. Its **Skills** button is the presentational **`SkillsButton`**
   primitive — a `BookOpen` pill, badged when a skill dir changed on disk — also shared with
-  `NewWorkspaceDialog` so the two triggers cannot drift), `ExtUiDialog`, and **`SkillsDialog`** (the **Skills manager**: a catalog
+  `NewWorkspaceDialog` so the two triggers cannot drift), and **`SkillsDialog`** (the **Skills manager**: a catalog
   grouped by source with **sticky section headers** — the first-party **ThinkRail** and **Pi** groups lead
   (above the All-plugins master, which governs only the plugin groups), then Personal / **a group per
   installed Claude plugin** / the repo's Project skills last — each with its admission verdict,
@@ -1391,7 +1435,8 @@ Unknown custom messages retain their existing behavior.
   `prompt` module; `store` + `transport`
   (**app-integration files only** — a renderer that takes props must never reach for either. Today that
   is `ChatView.tsx`, **`ChatTranscript.tsx`** (the churn-isolated transcript child — the Virtuoso list, scroll
-  control, transcript sync, completion-ack, and the `ChatActions`/`AskStatesContext` providers),
+  control, transcript sync, completion-ack, the extension-dialog reply, and the
+  `ChatActions`/`AskStatesContext`/`PendingExtUiContext` providers),
   `chatPreferences.ts` (the client-local persistence adapter), plus the hooks and dialogs
   it composes: `useChatTodos.ts`, `useHistorySearch.ts`,
   `useModelCatalog.ts`, **`useChatResources.ts`** (the Resources hydration/control/log-read seam),
