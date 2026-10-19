@@ -16,13 +16,24 @@ fixed id plus fixed/system mode and optional light/dark pair; this module owns w
 this client, including operating-system color-scheme observation and same-appearance fallback. **Adding a
 theme = adding one `bundled/*.theme.json` file** (a PR + rebuild) — no code, contract, CSS, or test changes.
 
-Six manifests ship: the standard **Dark** and **Light** (the configured default and its pair, unchanged),
+Ten manifests ship: the standard **Dark** and **Light** (the configured default and its pair, unchanged),
 **Minimal Dark** and **Minimal Light** (the quiet neutral surface hierarchy, restrained green accent and
 neutral `bubbleAccent` of the Minimal interface study, sharing the standard pair's syntax and terminal
-palettes), and the two High Contrast palettes with their stricter accessibility contract. Minimal is a
-palette a user picks in Appearance and nothing more: every theme renders the same roles, so a component
-never branches on the active theme or its contrast metadata to drop a fill or a border. What a palette
-cannot express through the manifest keys is a product decision for all themes, not a theme.
+palettes), the two High Contrast palettes with their stricter accessibility contract, and the four
+**Catppuccin** flavors — **Latte** (light), **Frappé**, **Macchiato**, and **Mocha** (dark) — carrying the
+upstream UI, terminal ANSI, and syntax palettes. Minimal and Catppuccin are palettes a user picks in
+Appearance and nothing more: every theme renders the same roles, so a component never branches on the
+active theme or its contrast metadata to drop a fill or a border. What a palette cannot express through the
+manifest keys is a product decision for all themes, not a theme.
+
+Catppuccin Latte ships three UI roles darker than the published palette: `accent` / `accentSolid`
+(`#802fe6` rather than mauve `#8839ef`), `accentHover` (`#6f27cf` rather than lavender `#7287fd`), and
+`success` (`#256b19` rather than green `#40a02b`). The published accent and green fall short of the 4.5
+resting floor against Latte's `mantle` surfaces, and the published lavender hover step cannot carry the
+base-colored primary label at 4.5. `hint` is the quietest official entry that clears the 3.0 subtle floor
+on every resting surface and on hover, which differs by flavor (`subtext0` for Latte, `overlay2` for
+Frappé, `overlay1` for Macchiato and Mocha). The syntax and ANSI palettes keep the upstream colors; only
+the UI roles the contrast suite governs are adjusted.
 
 ## Boundary
 
