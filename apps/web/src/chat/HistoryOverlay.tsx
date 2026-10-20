@@ -16,7 +16,6 @@ import { type KeyboardEvent, useEffect, useMemo, useRef, useState } from "react"
 import { useNow } from "@/components/useNow";
 import { fileName, platformShortcutLabel, relativeTime } from "@/lib";
 import { useT } from "@/i18n";
-import { platformShortcutLabel, relativeTime } from "@/lib";
 import {
 	type ChatLocationRequest,
 	type HistorySearchState,
