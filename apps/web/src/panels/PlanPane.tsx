@@ -659,6 +659,7 @@ function PlanSessionLive({ sessionId }: { workspaceId: string; sessionId: string
 			cancelAutomaticReveal: () => {},
 			focusComposer: () => {},
 			openSubagentTranscript: () => {},
+			resultOpener: () => undefined,
 			revealChatElement: () => {},
 		}),
 		[sessionId],

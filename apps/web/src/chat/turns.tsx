@@ -34,7 +34,7 @@ import { useT } from "@/i18n";
 import { parseSkillInvocation, projectRelativePath, type SkillInvocation, userText } from "@/lib";
 import { ActivityGroup } from "./ActivityGroup";
 import { AssistantMarkdown } from "./assistantLinks";
-import { BackgroundCommandCompletion } from "./BackgroundCommandCompletion";
+import { BackgroundCommandResult, SubagentResult } from "./BackgroundResult";
 import { CopyButton } from "./CopyButton";
 import { ToolPromptSlot } from "./ExtUiPrompt";
 import { FileChip } from "./FileChip";
@@ -47,7 +47,6 @@ import { formatElapsed, formatTokens } from "./SessionStatsBar";
 import { ToolCard } from "./ToolCard";
 import { ToolRendererBody } from "./ToolRendererBody";
 import { getToolChrome, getToolSummary } from "./toolRegistry";
-import { SubagentCompletionCard } from "./tools/subagent/SubagentCompletionCard";
 import type { CompactionState } from "./types";
 
 function ChatTurnViewImpl({
@@ -141,9 +140,9 @@ function ChatTurnViewImpl({
 				</div>
 			);
 		case "backgroundCommandCompletion":
-			return <BackgroundCommandCompletion details={row.details} />;
+			return <BackgroundCommandResult id={row.id} details={row.details} />;
 		case "subagentCompletion":
-			return <SubagentCompletionCard id={row.id} details={row.details} text={row.text} />;
+			return <SubagentResult id={row.id} details={row.details} text={row.text} />;
 		case "reviewFix":
 			return <ReviewFixCard id={row.id} details={row.details} />;
 		case "tool":

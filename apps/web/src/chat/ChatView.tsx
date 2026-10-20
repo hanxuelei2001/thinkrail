@@ -34,6 +34,7 @@ import {
 	useAppStore,
 } from "@/store";
 import { errorText, getTransport, watchMcpWorkspace } from "@/transport";
+import type { ResultTarget } from "./ChatActions";
 import { ChatHeader } from "./ChatHeader";
 import ChatTranscript, { type ChatTranscriptHandle } from "./ChatTranscript";
 import {
@@ -279,6 +280,26 @@ export default function ChatView({
 			getTransport().request("mcp.readOutput", { workspaceId, sessionId, toolCallId }),
 		[workspaceId, sessionId],
 	);
+
+	const resultOpener = useMemo(() => {
+		const { commands, finishedCommands, subagents, finishedSubagents } = resources.groups;
+		const commandIds = new Set(
+			resources.visible ? [...commands, ...finishedCommands].map((command) => command.id) : [],
+		);
+		const subagentIds = new Set(
+			resources.visible
+				? [...subagents, ...finishedSubagents].map((child) => child.childSessionId)
+				: [],
+		);
+		return (target: ResultTarget): (() => void) | undefined => {
+			if (target.kind === "command")
+				return commandIds.has(target.id) ? () => openInspector(target.id) : undefined;
+			const { childSessionId } = target;
+			return subagentIds.has(childSessionId)
+				? () => openInspector(childSessionId)
+				: () => setTranscriptChildId(childSessionId);
+		};
+	}, [resources.visible, resources.groups, openInspector, setTranscriptChildId]);
 
 	const stillRunning = useMemo(
 		() =>
@@ -714,6 +735,7 @@ export default function ChatView({
 					workspaceRoot={workspaceRoot}
 					focusComposer={focusComposer}
 					openSubagentTranscript={setTranscriptChildId}
+                    resultOpener={resultOpener}
 					onTryAgain={onTryAgain}
 					historyOpen={historyState.open}
 					inspectorOpen={inspectorOpen}
