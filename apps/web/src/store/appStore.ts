@@ -60,6 +60,7 @@ import type { LoginState } from "../auth";
 import { assistantFailureText } from "../chat/assistantFailure";
 import type { ChatMessageOrder } from "../chat/chatPreferences";
 import type { HydratedRuntime } from "../chat/hydrate";
+import { insertRoundCloser } from "../chat/roundCloser";
 import type {
 	ChatAttachment,
 	ChatTurn,
@@ -782,12 +783,12 @@ export function reduceSessionEvent(rt: SessionRuntime, event: PiEvent): SessionR
 				: { kind: "system", id: crypto.randomUUID(), text: "✓ Done", endedAt: Date.now() };
 			return {
 				...rt,
-				turns: [
-					...clearCompactionResuming(clearTurnStreaming(rt.turns)).filter(
+				turns: insertRoundCloser(
+					clearCompactionResuming(clearTurnStreaming(rt.turns)).filter(
 						(turn) => turn.kind !== "retry",
 					),
 					closer,
-				],
+				),
 				isStreaming: false,
 				settlementTick: rt.settlementTick + 1,
 				currentAssistantId: null,
