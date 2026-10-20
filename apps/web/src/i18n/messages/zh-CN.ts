@@ -458,6 +458,7 @@ export const zhCN = {
 	"shell.projects.keepActiveAria": "保持 {name} 活跃",
 	"shell.projects.settleBlocked": "请先完成或查看结果",
 	"shell.projects.settle": "归档",
+	"shell.projects.keepactive": "保持激活",
 	"shell.projects.settleAria": "归档 {name}",
 	"shell.projects.workspaceName": "工作区名称",
 	"shell.projects.actionsFor": "{name} 的操作",

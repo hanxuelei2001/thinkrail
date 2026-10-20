@@ -978,7 +978,7 @@ function WorkspaceRow({
 										onSelect={onKeepActive}
 									>
 										<ArrowGoBack />
-										Keep active
+										{t("shell.projects.keepactive")}
 									</DropdownMenuItem>
 								) : (
 									<DropdownMenuItem

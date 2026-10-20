@@ -479,6 +479,7 @@ export const en = {
 	"shell.projects.keepActiveAria": "Keep {name} active",
 	"shell.projects.settleBlocked": "Finish or read the result first",
 	"shell.projects.settle": "Settle",
+	"shell.projects.keepactive": "Keep active",
 	"shell.projects.settleAria": "Settle {name}",
 	"shell.projects.workspaceName": "Workspace name",
 	"shell.projects.actionsFor": "Actions for {name}",
